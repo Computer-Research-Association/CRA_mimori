@@ -18,10 +18,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config.config_cilent import CLEANED_COLLECTION
 from DB.mongo_client import get_collection
 from preprocessing.pipeline import preprocess_documents
+from preprocessing.parent_lookup import get_parent
 
 
 def _print_sample_preview(keyword: str | None, limit: int = 2):
-    """방금 처리된 결과 중 일부를 전/후 비교로 터미널에 출력."""
+    """방금 처리된 결과 중 일부를 전/후 비교 + parent_id 매핑 검증으로 출력."""
     collection = get_collection(CLEANED_COLLECTION)
     query = {"keyword": keyword} if keyword else {}
     samples = list(collection.find(query).sort("processed_at", -1).limit(limit))
@@ -37,10 +38,33 @@ def _print_sample_preview(keyword: str | None, limit: int = 2):
         print("[AFTER] 정제 (앞 200자)")
         print(doc["clean_content"][:200])
         print()
-        if doc["chunks"]:
-            first_chunk = doc["chunks"][0]
-            print(f"[청크 예시 0/{doc['chunk_count']}] (section={first_chunk['section_title']})")
-            print(first_chunk["text"][:200])
+
+        chunks = doc.get("chunks", [])
+        if not chunks:
+            continue
+
+        first_chunk = chunks[0]
+        print(f"[청크 예시 0/{doc['chunk_count']}] (section={first_chunk['section_title']})")
+        print(first_chunk["text"][:200])
+        print()
+
+        # child → parent 매핑 검증
+        parent_id = first_chunk.get("parent_id")
+        parent_doc = get_parent(parent_id)
+        if parent_doc is None:
+            print(f"[검증 실패] parent_id={parent_id} → memes 컬렉션에서 찾을 수 없음")
+        else:
+            chunk_text = first_chunk["text"]
+            # clean_content 기준으로 확인 (전처리 후 텍스트이므로)
+            haystack = parent_doc.get("content", "")
+            # 청크 텍스트 앞 30자를 원본에서 검색 (overlap 때문에 완전 일치 대신 부분 검색)
+            needle = chunk_text[:30]
+            if needle in haystack:
+                print(f"[검증 OK] parent_id={parent_id} → 원본 문서에서 청크 텍스트 확인됨")
+            else:
+                print(f"[검증 주의] parent_id={parent_id} → 원본에서 앞 30자 미발견 (정제 과정에서 변형됐을 수 있음)")
+            print(f"           원본 제목: {parent_doc.get('title', '(없음)')}")
+
     print("-" * 60)
 
 
@@ -60,7 +84,8 @@ if __name__ == "__main__":
     print()
 
     if chunks:
-        print("샘플 미리보기 (전/후 비교):")
+        print("샘플 미리보기 (전/후 비교 + 매핑 검증):")
         _print_sample_preview(target_keyword)
     else:
         print("처리할 문서가 없습니다.")
+

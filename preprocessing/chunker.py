@@ -9,6 +9,10 @@ chunker.py
   - 그 외(커뮤니티/댓글형 소스, 마커 없는 짧은 나무위키 문서)
     -> 재귀적 분할만 적용. 구분자 우선순위에 "[댓글]" 경계를 포함해
        본문과 댓글이 같은 청크에서 최대한 섞이지 않도록 함
+
+parent_id 필드: 청크가 속한 원본 문서의 MongoDB _id.
+  부모 문서는 별도로 청킹하지 않는다 — memes 컬렉션에 이미 존재하는
+  원본 문서 자체가 부모. parent_lookup.py로 재조회.
 """
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -55,6 +59,9 @@ def chunk_document(doc: dict) -> list[dict]:
     doc은 다음 필드를 포함해야 함:
       _id, source, keyword, url, title, published_date, crawled_at,
       clean_content(없으면 content로 대체)
+
+    반환 딕셔너리의 parent_id는 원본 문서의 _id.
+    청크 검색 히트 후 원본 문서가 필요하면 parent_lookup.py로 재조회.
     """
     text = doc.get("clean_content") or doc.get("content") or ""
     if not text.strip():
@@ -71,15 +78,15 @@ def chunk_document(doc: dict) -> list[dict]:
     chunks = []
     for i, (section_title, chunk_text) in enumerate(pieces):
         chunks.append({
-            "doc_id": doc.get("_id"),
-            "chunk_index": i,
-            "text": chunk_text,
-            "source": doc.get("source"),
-            "keyword": doc.get("keyword"),
-            "url": doc.get("url"),
-            "title": doc.get("title"),
+            "parent_id":     doc.get("_id"),
+            "chunk_index":   i,
+            "text":          chunk_text,
+            "source":        doc.get("source"),
+            "keyword":       doc.get("keyword"),
+            "url":           doc.get("url"),
+            "title":         doc.get("title"),
             "section_title": section_title,
             "published_date": doc.get("published_date"),
-            "crawled_at": doc.get("crawled_at"),
+            "crawled_at":    doc.get("crawled_at"),
         })
     return chunks

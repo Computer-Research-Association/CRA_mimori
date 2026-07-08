@@ -56,7 +56,7 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
             "content": raw_content,
             "clean_content": clean_content,
             # Qdrant 임베딩 단계에서 페이로드로 그대로 쓸 수 있도록 chunk_document()가
-            # 만든 필드(doc_id, source, keyword, url, title, published_date, crawled_at 등)를
+            # 만든 필드(parent_id, source, keyword, url, title, published_date, crawled_at 등)를
             # 축약하지 않고 전부 저장한다.
             "chunks": chunks,
             "chunk_count": len(chunks),
