@@ -77,16 +77,18 @@ def chunk_document(doc: dict) -> list[dict]:
 
     chunks = []
     for i, (section_title, chunk_text) in enumerate(pieces):
+        if len(chunk_text.strip()) < 10:  # 노이즈 청크 제거
+            continue
         chunks.append({
-            "parent_id":     doc.get("_id"),
-            "chunk_index":   i,
-            "text":          chunk_text,
-            "source":        doc.get("source"),
-            "keyword":       doc.get("keyword"),
-            "url":           doc.get("url"),
-            "title":         doc.get("title"),
+            "parent_id": doc.get("_id"),
+            "chunk_index": i,
+            "text": chunk_text,
+            "source": doc.get("source"),
+            "keyword": doc.get("keyword"),
+            "url": doc.get("url"),
+            "title": doc.get("title"),
             "section_title": section_title,
             "published_date": doc.get("published_date"),
-            "crawled_at":    doc.get("crawled_at"),
+            "crawled_at": doc.get("crawled_at"),
         })
     return chunks
