@@ -5,6 +5,7 @@ tavily-python==0.7.26
 google-api-python-client==2.197.0
 pymongo==4.17.0
 python-dotenv==1.2.2
+Brotli==1.2.0
 
 # === 전처리 / 임베딩 (다음 단계: BGE-M3 파이프라인) ===
 FlagEmbedding==1.4.0
