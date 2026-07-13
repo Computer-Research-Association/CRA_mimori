@@ -10,6 +10,7 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 MONGO_URI = os.getenv("MONGODB_URI", "")
 MONGO_DB = "mimori"
 MONGO_COLLECTION = "memes"
+CLEANED_COLLECTION = "cleaned_memes"  # 전처리/청킹 결과 저장용 (원본 memes와 분리)
 
 # 검색 설정
 TAVILY_MAX_RESULTS = 20
@@ -27,6 +28,16 @@ CRAWL_DELAY_MAX = 4.0       # 요청 사이 최대 대기 (초)
 CRAWL_MAX_RETRIES = 3       # 실패 시 최대 재시도 횟수
 CRAWL_MAX_POSTS = 20        # 사이트당 최대 수집 게시글 수
 
+# 전처리 / 청킹 설정
+CHUNK_SIZE = 500            # 청크 최대 글자 수 (RecursiveCharacterTextSplitter 기준)
+CHUNK_OVERLAP = 50           # 청크 간 중복 글자 수
+REPEAT_CHAR_LIMIT = 3        # 동일 문자 반복 시 축약할 최대 개수 (예: "ㅋㅋㅋㅋㅋ" -> "ㅋㅋㅋ")
+
+# 나무위키 크롤러가 섹션 헤딩 자리에 남기는 마커.
+# preprocessing/chunker.py가 이 마커를 기준으로 문서 구조 기반 청킹을 수행하므로
+# 크롤러와 전처리 모듈이 같은 값을 공유해야 함 -> config에 정의.
+NAMUWIKI_SECTION_MARKER = "[[SECTION]] "
+
 # 브라우저처럼 보이기 위한 User-Agent 목록
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -35,3 +46,4 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
 ]
+

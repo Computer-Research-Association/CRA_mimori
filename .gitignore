@@ -5,3 +5,5 @@ __pycache__/
 data/
 _archive/
 .claude
+.idea/
+current_packages.txt

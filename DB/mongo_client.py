@@ -9,8 +9,8 @@ def get_db():
         _client = MongoClient(MONGO_URI)
     return _client[MONGO_DB]
 
-def get_collection():
-    return get_db()[MONGO_COLLECTION]
+def get_collection(name: str = MONGO_COLLECTION):
+    return get_db()[name]
 
 def close():
     global _client

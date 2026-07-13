@@ -17,9 +17,13 @@ from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
-from config.config_cilent import CRAWL_MAX_POSTS
+from config.config_cilent import CRAWL_MAX_POSTS, NAMUWIKI_SECTION_MARKER
 from crawlers.base import make_session, safe_get
 from DB.mongo_client import get_collection
+
+# 구조 기반 청킹(preprocessing/chunker.py)이 섹션 경계를 인식할 수 있도록
+# 본문 텍스트에 삽입하는 구분자. config에서 관리 (chunker.py와 값 공유).
+SECTION_MARKER = NAMUWIKI_SECTION_MARKER
 
 
 def make_doc_id(keyword: str, url: str) -> str:
@@ -65,6 +69,27 @@ def _extract_article_body(soup: BeautifulSoup) -> str:
         parent = tag.parent
         if parent:
             parent.decompose()
+
+    headings = article_node.find_all(re.compile(r"^h[1-6]$"))
+
+    # 목차(TOC) 상자 제거: 나무위키 문서 상단의 <details><summary> 목차 박스는
+    # 모든 헤딩 번호(#s-N)를 다시 나열하므로 그대로 두면 본문에 중복 텍스트가 섞임.
+    # 클래스명은 신뢰할 수 없으므로(빌드마다 변경), 위치 기준으로 판별한다:
+    # 문서 순서상 가장 먼저 나오는 <details>이면서, 첫 헤딩보다 앞에 있으면 TOC로 간주.
+    # (본문 중간의 접기/스포일러 details는 항상 첫 헤딩 뒤에 오므로 영향 없음)
+    details_tags = article_node.find_all("details")
+    if details_tags and headings:
+        first_details = details_tags[0]
+        if headings[0] in first_details.find_all_next():
+            first_details.decompose()
+
+    # 섹션 헤딩(h1~h6)을 SECTION_MARKER + 제목 텍스트로 통째로 교체.
+    # (insert_before로 마커만 추가하면 원본 헤딩의 번호/제목 조각이 뒤에 그대로
+    #  남아 중복되므로 replace_with로 헤딩 자체를 대체한다.)
+    for heading in headings:
+        label = heading.get_text(separator=" ", strip=True)
+        label = re.sub(r"\s+", " ", label).strip()
+        heading.replace_with(f"{SECTION_MARKER}{label}" if label else "")
 
     text = article_node.get_text(separator="\n", strip=True)
 
