@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11,<3.12"
 
 dependencies = [
+    # base.py가 Accept-Encoding에 br을 보내므로 brotli 디코더가 반드시 필요
+    "brotli>=1.1.0",
     "flagembedding>=1.4.0",
     "flask>=3.1.3",
     "google-api-python-client>=2.198.0",
