@@ -193,6 +193,8 @@ git add analysis/pipeline.py
 git commit -m "feat: add fetch_keyword_chunks for LLM meme analysis"
 ```
 
+> **실행 중 발견된 이슈 (2026-07-15):** Qdrant가 인덱스 없는 필드로 scroll/filter하면 400을 반환해서, `fetch_keyword_chunks`가 실패했다. `DB/drant_clitent.py::ensure_collection()`을 수정해 `keyword` 필드에 payload 인덱스를 생성하도록 하고, `fetch_keyword_chunks` 시작 부분에서 `ensure_collection()`을 호출하도록 했다 (`embedding/pipeline.py::embed_documents()`가 upsert 전에 하는 것과 동일 패턴). 커밋 `fb61ba4`.
+
 ---
 
 ### Task 4: `build_prompt(keyword, chunks)` 구현
