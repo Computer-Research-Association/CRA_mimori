@@ -55,3 +55,7 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
 ]
 
+# LLM 분석 설정
+ANALYSIS_MODEL = "qwen3:latest"
+ANALYSIS_PROMPT_PATH = "analysis/prompt_template.md"
+
