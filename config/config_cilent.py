@@ -56,6 +56,6 @@ USER_AGENTS = [
 ]
 
 # LLM 분석 설정
-ANALYSIS_MODEL = "qwen3:latest"
+ANALYSIS_MODEL = ("qwen3:8b")
 ANALYSIS_PROMPT_PATH = "analysis/prompt_template.md"
 
