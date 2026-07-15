@@ -33,6 +33,14 @@ CHUNK_SIZE = 500            # 청크 최대 글자 수 (RecursiveCharacterTextSp
 CHUNK_OVERLAP = 50           # 청크 간 중복 글자 수
 REPEAT_CHAR_LIMIT = 3        # 동일 문자 반복 시 축약할 최대 개수 (예: "ㅋㅋㅋㅋㅋ" -> "ㅋㅋㅋ")
 
+# 임베딩 / Qdrant 설정
+EMBEDDING_MODEL = "BAAI/bge-m3"
+EMBEDDING_DENSE_DIM = 1024          # BGE-M3 dense 벡터 차원 (고정값)
+EMBEDDING_BATCH_SIZE = 16           # encode() 1회 호출당 청크 수 (VRAM 6GB 기준)
+QDRANT_COLLECTION = "mimori_chunks"
+QDRANT_DENSE_VECTOR_NAME = "dense"
+QDRANT_SPARSE_VECTOR_NAME = "sparse"
+
 # 나무위키 크롤러가 섹션 헤딩 자리에 남기는 마커.
 # preprocessing/chunker.py가 이 마커를 기준으로 문서 구조 기반 청킹을 수행하므로
 # 크롤러와 전처리 모듈이 같은 값을 공유해야 함 -> config에 정의.
@@ -46,4 +54,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0",
 ]
+
+# LLM 분석 설정
+ANALYSIS_MODEL = "qwen3:latest"
+ANALYSIS_PROMPT_PATH = "analysis/prompt_template.md"
 
