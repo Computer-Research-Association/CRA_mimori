@@ -1,4 +1,0 @@
-::1 - - [15/Jul/2026 19:20:22] "GET /index.html HTTP/1.1" 200 -
-::1 - - [15/Jul/2026 19:20:22] "GET /style.css HTTP/1.1" 200 -
-::1 - - [15/Jul/2026 19:20:23] "GET /script.js HTTP/1.1" 200 -
-::1 - - [15/Jul/2026 19:20:23] "GET /data.json HTTP/1.1" 200 -
