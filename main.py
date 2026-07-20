@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import os
 
@@ -9,13 +10,14 @@ from crawlers.youtube_crawler import crawl_youtube
 from crawlers.namuwiki_crawler import crawl_namuwiki
 from crawlers.natepann_crawler import crawl_natepann
 from crawlers.dcinside_crawler import crawl_dcinside
+from trend.trend_service import get_meme_trend
 
 CRAWLERS = {
-    "tavily":     crawl,
-    "youtube":    crawl_youtube,
-    "namuwiki":   crawl_namuwiki,
-    "natepann":   crawl_natepann,
-    "dcinside":   crawl_dcinside,
+    "tavily":    crawl,
+    "youtube":   crawl_youtube,
+    "namuwiki":  crawl_namuwiki,
+    "natepann":  crawl_natepann,
+    "dcinside":  crawl_dcinside,
 }
 
 KEYWORDS_PATH = os.path.join(BASE_DIR, "crawlers", "Keywords.md")
