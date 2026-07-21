@@ -13,8 +13,8 @@ from config.config_cilent import (
 load_dotenv()
 
 client = QdrantClient(
-    url=os.getenv("QDRANT_URL"),
-    api_key=os.getenv("QDRANT_API_KEY")
+    host=QDRANT_HOST,
+    port=QDRANT_PORT
 )
 
 
