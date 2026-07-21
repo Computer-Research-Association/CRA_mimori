@@ -62,3 +62,10 @@ USER_AGENTS = [
 ANALYSIS_MODEL = ("qwen3:8b")
 ANALYSIS_PROMPT_PATH = "analysis/prompt_template.md"
 
+# RAG 질의응답 설정
+RAG_TOP_K = 5
+RAG_PROMPT_PATH = "analysis/rag_prompt_template.md"
+
+#nvidia_api
+NIM_KEY = os.getenv("NIM_KEY", "")
+
