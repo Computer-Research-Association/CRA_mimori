@@ -8,7 +8,10 @@ from config.config_cilent import (
     QDRANT_COLLECTION,
     QDRANT_DENSE_VECTOR_NAME,
     QDRANT_SPARSE_VECTOR_NAME,
+    QDRANT_HOST,
+    QDRANT_PORT,
 )
+
 
 load_dotenv()
 
