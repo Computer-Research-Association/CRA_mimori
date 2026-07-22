@@ -10,3 +10,5 @@ current_packages.txt
 .superpowers/
 scheduler/scheduler.db
 scheduler/status.txt
+.venv/
+mongo_dump/
