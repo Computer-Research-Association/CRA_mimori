@@ -60,7 +60,11 @@ print("스케줄러 시작!")
 
 try:
     scheduler.start()
+    log_status("스케줄러 정상 시작")
     while True:
         time.sleep(1)
 except KeyboardInterrupt:
     scheduler.shutdown()
+except Exception as e:
+    log_status(f"스케줄러 시작 실패: {e}")
+    raise
