@@ -1,8 +1,35 @@
 services:
+  flask:
+    build: .
+    container_name: mimori-flask
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongo
+      - qdrant
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  mongo:
+    image: mongo:8
+    container_name: mimori-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant
+    container_name: mimori-qdrant
     ports:
       - "6333:6333"
     volumes:
       - ./qdrant_storage:/qdrant/storage
     restart: unless-stopped
+
+volumes:
+  mongo_data:

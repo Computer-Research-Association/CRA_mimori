@@ -37,9 +37,12 @@ REPEAT_CHAR_LIMIT = 3        # 동일 문자 반복 시 축약할 최대 개수 
 EMBEDDING_MODEL = "BAAI/bge-m3"
 EMBEDDING_DENSE_DIM = 1024          # BGE-M3 dense 벡터 차원 (고정값)
 EMBEDDING_BATCH_SIZE = 16           # encode() 1회 호출당 청크 수 (VRAM 6GB 기준)
+
 QDRANT_COLLECTION = "mimori_chunks"
 QDRANT_DENSE_VECTOR_NAME = "dense"
 QDRANT_SPARSE_VECTOR_NAME = "sparse"
+QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
+QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 
 # 나무위키 크롤러가 섹션 헤딩 자리에 남기는 마커.
 # preprocessing/chunker.py가 이 마커를 기준으로 문서 구조 기반 청킹을 수행하므로
