@@ -13,7 +13,9 @@ from config.config_cilent import (
     YOUTUBE_API_KEY,
     YOUTUBE_MAX_RESULTS,
     YOUTUBE_MAX_COMMENTS,
+    YOUTUBE_ORDER,
 )
+from crawlers.base import get_date_cutoff
 from DB.mongo_client import get_collection
 
 
@@ -28,8 +30,13 @@ def _build_youtube_client():
 
 
 def search_videos(youtube, keyword: str, max_results: int = YOUTUBE_MAX_RESULTS):
-    """키워드로 YouTube 영상 검색"""
+    """
+    키워드로 YouTube 영상 검색.
+    - order: YOUTUBE_ORDER 설정값 (relevance / date / viewCount / rating)
+    - publishedAfter: 날짜 하한선보다 오래된 영상 제외 (밈 생명주기 고려)
+    """
     query = f"{keyword} 뜻 유래 밈"
+    published_after = get_date_cutoff().strftime("%Y-%m-%dT%H:%M:%SZ")
     response = (
         youtube.search()
         .list(
@@ -38,7 +45,8 @@ def search_videos(youtube, keyword: str, max_results: int = YOUTUBE_MAX_RESULTS)
             type="video",
             maxResults=max_results,
             relevanceLanguage="ko",
-            order="relevance",
+            order=YOUTUBE_ORDER,
+            publishedAfter=published_after,
         )
         .execute()
     )
@@ -49,6 +57,7 @@ def search_videos(youtube, keyword: str, max_results: int = YOUTUBE_MAX_RESULTS)
             {
                 "video_id": item["id"]["videoId"],
                 "title": item["snippet"]["title"],
+                "published_at": item["snippet"].get("publishedAt"),
             }
         )
     return videos
@@ -97,7 +106,7 @@ def build_document(keyword: str, video: dict, comments: list[dict]) -> dict:
         "title": video["title"],
         "content": content,
         "score": 0.0,  # YouTube는 Tavily relevance score 없음 -> 0.0으로 통일
-        "published_date": None,
+        "published_date": video.get("published_at"),
         "crawled_at": datetime.now(timezone.utc),
         "is_embedded": False,
     }

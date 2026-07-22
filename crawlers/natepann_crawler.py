@@ -3,7 +3,8 @@ natepann_crawler.py
 키워드 검색 → 네이트판 게시글+댓글 수집 → MongoDB 저장
 
 URL 구조:
-  검색: https://pann.nate.com/search/talk?q={키워드}&page={n}
+  검색: https://pann.nate.com/search/talk?q={키워드}&sort={정렬}&page={n}
+        (sort: PD 정확도 / DD 최신 / HD 인기 / VD 조회 / CD 댓글)
   게시글: https://pann.nate.com/talk/{숫자}
 
 HTML 구조 (파악 기준):
@@ -20,8 +21,12 @@ from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup
 
-from config.config_cilent import CRAWL_MAX_POSTS
-from crawlers.base import make_session, safe_get
+from config.config_cilent import (
+    CRAWL_MAX_POSTS,
+    CRAWL_MAX_SEARCH_PAGES,
+    NATEPANN_SORT,
+)
+from crawlers.base import make_session, safe_get, get_date_cutoff
 from DB.mongo_client import get_collection
 
 BASE_URL = "https://pann.nate.com"
@@ -32,21 +37,42 @@ def make_doc_id(keyword: str, url: str) -> str:
     return hashlib.md5(raw.encode()).hexdigest()
 
 
-def _get_post_urls(session, keyword: str, max_posts: int) -> list[str]:
+def _parse_search_date(text: str) -> datetime | None:
     """
-    검색 결과 페이지에서 게시글 URL 목록 수집.
+    검색 결과의 span.date 텍스트를 datetime으로 변환.
+    형식: "08.04.18 14:00" (YY.MM.DD HH:MM) 또는 "08.04.18"
+    파싱 실패(오늘 글은 "14:00"처럼 시각만 표시) 시 None 반환 → 최근 글로 간주.
+    """
+    text = text.strip()
+    for fmt in ("%y.%m.%d %H:%M", "%y.%m.%d"):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return None
+
+
+def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, datetime | None]]:
+    """
+    검색 결과 페이지에서 (게시글 URL, 작성일) 목록 수집.
+
+    필터링 기준:
+    - 정렬: NATEPANN_SORT (기본 HD=인기순) → 커뮤니티가 검증한 글 우선.
+    - 날짜: get_date_cutoff()보다 오래된 글은 제외.
+      인기순은 시간 순서가 아니므로 오래된 글이 나와도 중단하지 않고 건너뜀.
 
     페이지네이션:
     - ?page=1, ?page=2, ... 파라미터로 다음 페이지 접근.
-    - ul.s_list 안의 a[href=/talk/숫자] 링크가 실제 검색 결과.
-    - 결과가 없는 페이지가 나오면 수집 중단 (중복 포함 가능성 있어 set으로 관리).
+    - ul.s_list 안의 li 항목마다 a[href=/talk/숫자] 링크 + span.date 날짜.
+    - 날짜 필터로 인해 페이지를 무한정 넘길 수 있어 CRAWL_MAX_SEARCH_PAGES로 상한.
     """
-    urls = []
+    cutoff = get_date_cutoff()
+    posts = []
     seen = set()
     page = 1
 
-    while len(urls) < max_posts:
-        search_url = f"{BASE_URL}/search/talk?q={quote(keyword)}&page={page}"
+    while len(posts) < max_posts and page <= CRAWL_MAX_SEARCH_PAGES:
+        search_url = f"{BASE_URL}/search/talk?q={quote(keyword)}&sort={NATEPANN_SORT}&page={page}"
         resp = safe_get(session, search_url, referer=BASE_URL)
         if resp is None:
             break
@@ -56,30 +82,38 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[str]:
         if not result_ul:
             break
 
-        links = result_ul.find_all("a", href=re.compile(r"/talk/\d+"))
-        if not links:
-            break  # 더 이상 결과 없음
+        new_found = 0    # 이번 페이지에서 처음 본 URL 수 (날짜 필터와 무관 — 루프 종료 판단용)
+        old_skipped = 0  # 날짜 필터로 제외된 글 수
 
-        new_found = 0
-        for a in links:
-            href = a["href"]
+        for li in result_ul.find_all("li", recursive=False):
+            a = li.find("a", href=re.compile(r"/talk/\d+"))
+            if not a:
+                continue
             # 절대 URL로 변환 (/talk/123 → https://pann.nate.com/talk/123)
-            full_url = urljoin(BASE_URL, href.split("#")[0])  # 댓글 앵커(#commentBox) 제거
-            if full_url not in seen:
-                seen.add(full_url)
-                urls.append(full_url)
-                new_found += 1
-                if len(urls) >= max_posts:
-                    break
+            full_url = urljoin(BASE_URL, a["href"].split("#")[0])  # 댓글 앵커(#commentBox) 제거
+            if full_url in seen:
+                continue
+            seen.add(full_url)
+            new_found += 1
 
-        print(f"[네이트판] 페이지 {page}: {new_found}개 URL 수집 (누적: {len(urls)}개)")
+            date_span = li.find("span", class_="date")
+            pub_date = _parse_search_date(date_span.get_text()) if date_span else None
+            if pub_date and pub_date < cutoff:
+                old_skipped += 1
+                continue
+
+            posts.append((full_url, pub_date))
+            if len(posts) >= max_posts:
+                break
+
+        print(f"[네이트판] 페이지 {page}: {new_found - old_skipped}개 수집, {old_skipped}개 날짜 제외 (누적: {len(posts)}개)")
 
         if new_found == 0:
             break  # 새 URL 없으면 중단
 
         page += 1
 
-    return urls
+    return posts
 
 
 def _parse_post(soup: BeautifulSoup) -> tuple[str, str]:
@@ -140,13 +174,13 @@ def crawl_natepann(keyword: str) -> list[dict]:
     collection = get_collection()
 
     print(f"[네이트판] '{keyword}' 검색 시작...")
-    post_urls = _get_post_urls(session, keyword, CRAWL_MAX_POSTS)
-    print(f"[네이트판] 총 {len(post_urls)}개 URL 수집 완료")
+    posts = _get_post_urls(session, keyword, CRAWL_MAX_POSTS)
+    print(f"[네이트판] 총 {len(posts)}개 URL 수집 완료")
 
     saved, skipped, failed = 0, 0, 0
     documents = []
 
-    for url in post_urls:
+    for url, pub_date in posts:
         resp = safe_get(session, url, referer=f"{BASE_URL}/search/talk?q={quote(keyword)}")
         if resp is None:
             failed += 1
@@ -171,7 +205,7 @@ def crawl_natepann(keyword: str) -> list[dict]:
             "title": title,
             "content": content,
             "score": 0.0,
-            "published_date": None,
+            "published_date": pub_date,
             "crawled_at": datetime.now(timezone.utc),
             "is_embedded": False,
         }
