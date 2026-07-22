@@ -28,6 +28,16 @@ CRAWL_DELAY_MAX = 4.0       # 요청 사이 최대 대기 (초)
 CRAWL_MAX_RETRIES = 3       # 실패 시 최대 재시도 횟수
 CRAWL_MAX_POSTS = 20        # 사이트당 최대 수집 게시글 수
 
+# 크롤링 필터링 기준
+# 밈은 생명주기가 있어 오래된 글은 현재 맥락과 다를 수 있음 → 날짜 하한선 적용
+CRAWL_MAX_AGE_YEARS = 3       # 이보다 오래된 게시글은 수집 제외
+CRAWL_MAX_SEARCH_PAGES = 10   # 검색 결과 페이지 탐색 상한 (날짜 필터로 인한 무한 탐색 방지)
+
+# 소스별 정렬 기준 (각 사이트가 지원하는 값이 다름)
+NATEPANN_SORT = "HD"          # PD 정확도 / DD 최신 / HD 인기 / VD 조회 / CD 댓글
+DCINSIDE_SORT = "accuracy"    # accuracy 정확도 / latest 최신 (디시 검색은 인기순 미지원)
+YOUTUBE_ORDER = "relevance"   # relevance / date / viewCount / rating
+
 # 전처리 / 청킹 설정
 CHUNK_SIZE = 500            # 청크 최대 글자 수 (RecursiveCharacterTextSplitter 기준)
 CHUNK_OVERLAP = 50           # 청크 간 중복 글자 수
@@ -61,4 +71,11 @@ USER_AGENTS = [
 # LLM 분석 설정
 ANALYSIS_MODEL = ("qwen3:8b")
 ANALYSIS_PROMPT_PATH = "analysis/prompt_template.md"
+
+# RAG 질의응답 설정
+RAG_TOP_K = 5
+RAG_PROMPT_PATH = "analysis/rag_prompt_template.md"
+
+#nvidia_api
+NIM_KEY = os.getenv("NIM_KEY", "")
 

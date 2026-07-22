@@ -12,13 +12,24 @@ base.py
 import random
 import time
 import requests
+from datetime import datetime, timedelta, timezone
 
 from config.config_cilent import (
     CRAWL_DELAY_MIN,
     CRAWL_DELAY_MAX,
     CRAWL_MAX_RETRIES,
+    CRAWL_MAX_AGE_YEARS,
     USER_AGENTS,
 )
+
+
+def get_date_cutoff() -> datetime:
+    """
+    수집 대상 게시글의 날짜 하한선 반환.
+    이 날짜보다 오래된 게시글은 크롤링에서 제외한다.
+    (밈은 생명주기가 있어 옛날 글은 현재 쓰임새와 다를 수 있음)
+    """
+    return datetime.now(timezone.utc) - timedelta(days=CRAWL_MAX_AGE_YEARS * 365)
 
 
 # ── 1. 랜덤 딜레이 ────────────────────────────────────────────────────────────

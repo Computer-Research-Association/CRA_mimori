@@ -13,6 +13,8 @@ from config.config_cilent import (
     YOUTUBE_API_KEY,
     YOUTUBE_MAX_RESULTS,
     YOUTUBE_MAX_COMMENTS,
+    YOUTUBE_MIN_COMMENTS,
+    YOUTUBE_ORDER,
 )
 from DB.mongo_client import get_collection
 
@@ -28,7 +30,12 @@ def _build_youtube_client():
 
 
 def search_videos(youtube, keyword: str, max_results: int = YOUTUBE_MAX_RESULTS):
-    """키워드로 YouTube 영상 검색"""
+    """
+    키워드로 YouTube 영상 검색.
+    - order: YOUTUBE_ORDER 설정값 (relevance / date / viewCount / rating)
+    - 날짜 필터는 두지 않음: 밈이 유행하던 당시 영상이 가장 좋은 설명 소스이므로
+      오래된 영상도 수집 대상. 품질은 댓글 수 하한선(YOUTUBE_MIN_COMMENTS)으로 거름.
+    """
     query = f"{keyword} 뜻 유래 밈"
     response = (
         youtube.search()
@@ -38,7 +45,7 @@ def search_videos(youtube, keyword: str, max_results: int = YOUTUBE_MAX_RESULTS)
             type="video",
             maxResults=max_results,
             relevanceLanguage="ko",
-            order="relevance",
+            order=YOUTUBE_ORDER,
         )
         .execute()
     )
@@ -49,6 +56,7 @@ def search_videos(youtube, keyword: str, max_results: int = YOUTUBE_MAX_RESULTS)
             {
                 "video_id": item["id"]["videoId"],
                 "title": item["snippet"]["title"],
+                "published_at": item["snippet"].get("publishedAt"),
             }
         )
     return videos
@@ -97,7 +105,7 @@ def build_document(keyword: str, video: dict, comments: list[dict]) -> dict:
         "title": video["title"],
         "content": content,
         "score": 0.0,  # YouTube는 Tavily relevance score 없음 -> 0.0으로 통일
-        "published_date": None,
+        "published_date": video.get("published_at"),
         "crawled_at": datetime.now(timezone.utc),
         "is_embedded": False,
     }
@@ -120,7 +128,8 @@ def crawl_youtube(keyword: str) -> list[dict]:
 
     for video in videos:
         comments = fetch_comments(youtube, video["video_id"])
-        if not comments:
+        # 댓글이 기준치 미만이면 키워드 관련 반응이 없는 영상으로 보고 제외
+        if len(comments) < YOUTUBE_MIN_COMMENTS:
             empty += 1
             continue
 
@@ -137,7 +146,7 @@ def crawl_youtube(keyword: str) -> list[dict]:
             # _id 중복 = 이미 존재하는 문서 → skip
             skipped += 1
 
-    print(f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개 / 댓글없음: {empty}개")
+    print(f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개 / 댓글부족(<{YOUTUBE_MIN_COMMENTS}개): {empty}개")
     return documents
 
 
