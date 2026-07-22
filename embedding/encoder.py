@@ -39,3 +39,20 @@ def encode_batch(texts: list[str]) -> tuple[list[list[float]], list[dict[str, fl
         return_colbert_vecs=False,
     )
     return output["dense_vecs"].tolist(), output["lexical_weights"]
+
+
+def unload_model() -> None:
+    """
+    GPU에 올라간 모델을 내려 VRAM을 비운다.
+
+    embed_main.py처럼 encode_batch()를 반복 호출하는 배치 작업에서는 매번 모델을
+    다시 로드하게 되므로 호출하면 안 된다. rag_main.py처럼 인코딩을 한 번만 하고
+    바로 이어서 다른 GPU 작업(Ollama 등)을 해야 할 때, VRAM 부족으로 인한 충돌을
+    피하기 위해 명시적으로 호출한다.
+    """
+    global _model
+    if _model is not None:
+        del _model
+        _model = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

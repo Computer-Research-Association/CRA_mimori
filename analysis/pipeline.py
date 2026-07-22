@@ -4,9 +4,10 @@ analysis/pipeline.py
 """
 
 import ollama
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from qdrant_client.http import models
 
-from config.config_cilent import ANALYSIS_MODEL, ANALYSIS_PROMPT_PATH, QDRANT_COLLECTION
+from config.config_cilent import ANALYSIS_MODEL, ANALYSIS_PROMPT_PATH, NIM_KEY, QDRANT_COLLECTION
 from DB.drant_clitent import client, ensure_collection
 from DB.mongo_client import get_collection
 
@@ -59,5 +60,17 @@ def build_prompt(keyword: str, chunks: list[str]) -> str:
 
 def analyze(prompt: str, model: str = ANALYSIS_MODEL) -> str:
     """prompt를 model에 보내 분석 결과 텍스트를 반환."""
-    response = ollama.chat(model=model, messages=[{"role": "user", "content": prompt}])
-    return response.message.content
+    """로컬 말고 nvidia api 호츌"""
+
+    nvidia_client = ChatNVIDIA(
+        model="deepseek-ai/deepseek-v4-flash",
+        api_key=NIM_KEY,
+        temperature=1,
+        top_p=0.95,
+        max_completion_tokens=16384,
+        timeout=6000
+    )
+
+
+    response = nvidia_client.invoke( [{"role": "user", "content": prompt}])
+    return response.content

@@ -25,8 +25,12 @@ from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup
 
-from config.config_cilent import CRAWL_MAX_POSTS
-from crawlers.base import make_session, safe_get, random_delay
+from config.config_cilent import (
+    CRAWL_MAX_POSTS,
+    CRAWL_MAX_SEARCH_PAGES,
+    DCINSIDE_SORT,
+)
+from crawlers.base import make_session, safe_get, random_delay, get_date_cutoff
 from DB.mongo_client import get_collection
 
 SEARCH_BASE = "https://search.dcinside.com"
@@ -40,21 +44,50 @@ def make_doc_id(keyword: str, url: str) -> str:
 
 # ── 1. 검색 결과 URL 수집 ─────────────────────────────────────────────────────
 
-def _get_post_urls(session, keyword: str, max_posts: int) -> list[str]:
+def _parse_search_date(text: str) -> datetime | None:
     """
-    통합 검색 페이지에서 게시글 URL 목록 수집.
+    검색 결과의 span.date_time 텍스트를 datetime으로 변환.
+    형식: "2026.07.22 11:35" (YYYY.MM.DD HH:MM)
+    파싱 실패 시 None 반환 → 최근 글로 간주하고 수집.
+    """
+    text = text.strip()
+    for fmt in ("%Y.%m.%d %H:%M", "%Y.%m.%d"):
+        try:
+            return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
+        except ValueError:
+            pass
+    return None
 
-    페이지네이션: /post/q/{키워드}/p/{n} 형식 (1부터 시작).
-    각 li > a.tit_txt 가 게시글 링크.
-    중복 제거를 위해 set으로 관리.
+
+def _search_url(keyword: str, page: int) -> str:
     """
-    urls = []
+    정렬 기준에 따른 검색 URL 생성.
+    - 정확도순: /post/p/{n}/sort/accuracy/q/{키워드}
+    - 최신순(기본): /post/q/{키워드}/p/{n}  (디시 검색은 인기순 미지원)
+    """
+    if DCINSIDE_SORT == "accuracy":
+        return f"{SEARCH_BASE}/post/p/{page}/sort/accuracy/q/{quote(keyword)}"
+    return f"{SEARCH_BASE}/post/q/{quote(keyword)}/p/{page}"
+
+
+def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, datetime | None]]:
+    """
+    통합 검색 페이지에서 (게시글 URL, 작성일) 목록 수집.
+
+    필터링 기준:
+    - 정렬: DCINSIDE_SORT (기본 accuracy=정확도순) → 키워드 관련성 높은 글 우선.
+    - 날짜: get_date_cutoff()보다 오래된 글은 제외 (건너뜀).
+
+    각 li 안에 a.tit_txt (게시글 링크) + span.date_time (작성일)이 있음.
+    날짜 필터로 페이지를 무한정 넘길 수 있어 CRAWL_MAX_SEARCH_PAGES로 상한.
+    """
+    cutoff = get_date_cutoff()
+    posts = []
     seen = set()
     page = 1
 
-    while len(urls) < max_posts:
-        search_url = f"{SEARCH_BASE}/post/q/{quote(keyword)}/p/{page}"
-        resp = safe_get(session, search_url, referer=SEARCH_BASE)
+    while len(posts) < max_posts and page <= CRAWL_MAX_SEARCH_PAGES:
+        resp = safe_get(session, _search_url(keyword, page), referer=SEARCH_BASE)
         if resp is None:
             break
 
@@ -63,28 +96,36 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[str]:
         if not result_ul:
             break
 
-        links = result_ul.find_all("a", class_="tit_txt")
-        if not links:
-            break
+        new_found = 0    # 이번 페이지에서 처음 본 URL 수 (루프 종료 판단용)
+        old_skipped = 0  # 날짜 필터로 제외된 글 수
 
-        new_found = 0
-        for a in links:
+        for li in result_ul.find_all("li"):
+            a = li.find("a", class_="tit_txt")
+            if not a:
+                continue
             href = a.get("href", "")
             if not href or href in seen:
                 continue
             seen.add(href)
-            urls.append(href)
             new_found += 1
-            if len(urls) >= max_posts:
+
+            date_span = li.find("span", class_="date_time")
+            pub_date = _parse_search_date(date_span.get_text()) if date_span else None
+            if pub_date and pub_date < cutoff:
+                old_skipped += 1
+                continue
+
+            posts.append((href, pub_date))
+            if len(posts) >= max_posts:
                 break
 
-        print(f"[디시인사이드] 페이지 {page}: {new_found}개 URL 수집 (누적: {len(urls)}개)")
+        print(f"[디시인사이드] 페이지 {page}: {new_found - old_skipped}개 수집, {old_skipped}개 날짜 제외 (누적: {len(posts)}개)")
 
         if new_found == 0:
             break
         page += 1
 
-    return urls
+    return posts
 
 
 # ── 2. 게시글 파싱 ────────────────────────────────────────────────────────────
@@ -181,13 +222,13 @@ def crawl_dcinside(keyword: str) -> list[dict]:
     collection = get_collection()
 
     print(f"[디시인사이드] '{keyword}' 검색 시작...")
-    post_urls = _get_post_urls(session, keyword, CRAWL_MAX_POSTS)
-    print(f"[디시인사이드] 총 {len(post_urls)}개 URL 수집 완료")
+    posts = _get_post_urls(session, keyword, CRAWL_MAX_POSTS)
+    print(f"[디시인사이드] 총 {len(posts)}개 URL 수집 완료")
 
     saved, skipped, failed = 0, 0, 0
     documents = []
 
-    for url in post_urls:
+    for url, pub_date in posts:
         # 마이너 갤러리 여부 판별 (URL에 'mgallery'가 있으면 M 타입)
         gallery_type = "M" if "mgallery" in url else "G"
 
@@ -223,7 +264,7 @@ def crawl_dcinside(keyword: str) -> list[dict]:
             "title":          title,
             "content":        content,
             "score":          0.0,
-            "published_date": None,
+            "published_date": pub_date,
             "crawled_at":     datetime.now(timezone.utc),
             "is_embedded":    False,
         }
