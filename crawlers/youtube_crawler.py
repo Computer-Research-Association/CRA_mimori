@@ -13,9 +13,9 @@ from config.config_cilent import (
     YOUTUBE_API_KEY,
     YOUTUBE_MAX_RESULTS,
     YOUTUBE_MAX_COMMENTS,
+    YOUTUBE_MIN_COMMENTS,
     YOUTUBE_ORDER,
 )
-from crawlers.base import get_date_cutoff
 from DB.mongo_client import get_collection
 
 
@@ -33,10 +33,10 @@ def search_videos(youtube, keyword: str, max_results: int = YOUTUBE_MAX_RESULTS)
     """
     키워드로 YouTube 영상 검색.
     - order: YOUTUBE_ORDER 설정값 (relevance / date / viewCount / rating)
-    - publishedAfter: 날짜 하한선보다 오래된 영상 제외 (밈 생명주기 고려)
+    - 날짜 필터는 두지 않음: 밈이 유행하던 당시 영상이 가장 좋은 설명 소스이므로
+      오래된 영상도 수집 대상. 품질은 댓글 수 하한선(YOUTUBE_MIN_COMMENTS)으로 거름.
     """
     query = f"{keyword} 뜻 유래 밈"
-    published_after = get_date_cutoff().strftime("%Y-%m-%dT%H:%M:%SZ")
     response = (
         youtube.search()
         .list(
@@ -46,7 +46,6 @@ def search_videos(youtube, keyword: str, max_results: int = YOUTUBE_MAX_RESULTS)
             maxResults=max_results,
             relevanceLanguage="ko",
             order=YOUTUBE_ORDER,
-            publishedAfter=published_after,
         )
         .execute()
     )
@@ -129,7 +128,8 @@ def crawl_youtube(keyword: str) -> list[dict]:
 
     for video in videos:
         comments = fetch_comments(youtube, video["video_id"])
-        if not comments:
+        # 댓글이 기준치 미만이면 키워드 관련 반응이 없는 영상으로 보고 제외
+        if len(comments) < YOUTUBE_MIN_COMMENTS:
             empty += 1
             continue
 
@@ -146,7 +146,7 @@ def crawl_youtube(keyword: str) -> list[dict]:
             # _id 중복 = 이미 존재하는 문서 → skip
             skipped += 1
 
-    print(f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개 / 댓글없음: {empty}개")
+    print(f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개 / 댓글부족(<{YOUTUBE_MIN_COMMENTS}개): {empty}개")
     return documents
 
 
