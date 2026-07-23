@@ -39,7 +39,7 @@ scheduler = BackgroundScheduler(jobstores=jobstores,timezone='Asia/Seoul')
 
 scheduler.add_job(
     crawlrun,
-    CronTrigger(hour=14, minute=0),
+    CronTrigger(hour=14, minute=0, timezone='Asia/Seoul'),
     id='crawl_job',
     coalesce=True,
     misfire_grace_time=3600,
