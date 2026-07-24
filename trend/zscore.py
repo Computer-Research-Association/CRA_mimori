@@ -79,8 +79,9 @@ def zscore_from_series(daily_ratios: list[dict]) -> float:
     가장 최신 날짜의 ratio를 today_value, 나머지를 baseline으로 사용한다.
     데이터가 없으면 0.0(중립)을 반환한다.
 
-    datalab(검색량 상대값)과 kakao(언급 건수) 모두 이 함수로 처리한다 -
-    robust scaling 은 스케일 불변이라 두 소스를 같은 z 단위로 환산해준다.
+    datalab/google trends(검색량 상대값)와 kakao(언급 건수) 모두 이 함수로
+    처리한다(내부적으로 동일한 robust_zscore + MIN_IQR 바닥값 적용) -
+    robust scaling 은 스케일 불변이라 모든 소스를 같은 z 단위로 환산해준다.
     """
     if not daily_ratios:
         return 0.0

@@ -12,3 +12,4 @@ scheduler/scheduler.db
 scheduler/status.txt
 .venv/
 mongo_dump/
+.google_trends_cache.json
