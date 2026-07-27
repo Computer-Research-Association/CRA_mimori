@@ -14,6 +14,8 @@ trend_service.py
 앙상블 가중치: naver 0.4 / kakao 0.3 / google 0.2 (활성 소스 가중치 합으로 정규화)
   - google 제외 시: naver 0.6 / kakao 0.4 (스펙 명시 폴백)
   - kakao 까지 제외 시: naver 단독
+  - naver 마저 무신호(API 실패/키워드 없음)면 활성 소스 0개 → status="데이터 부족"
+    (무신호 z=0.0 을 classify_trend 가 "유행 중"으로 오판하지 않도록 판정을 보류)
 google(pytrends)은 비공식 라이브러리라 레이트리밋/차단이 잦다 → 실패·표본 부족 시
 자동 제외하고 ensemble_note 에 사유를 남긴다. (가중치는 초기값, 실측 재보정 대상.)
 
@@ -26,7 +28,12 @@ from itertools import combinations
 from trend.datalab_client import DataLabClient
 from trend.google_client import GoogleTrendsClient
 from trend.kakao_client import KakaoSearchClient, merge_daily_series
-from trend.zscore import classify_trend, drop_incomplete_today, zscore_from_series
+from trend.zscore import (
+    STATUS_INSUFFICIENT,
+    classify_trend,
+    drop_incomplete_today,
+    zscore_from_series,
+)
 
 # 앙상블 가중치(전 소스 활성 기준). 계산 시 활성 소스 가중치 합으로 정규화한다.
 NAVER_WEIGHT = 0.4
@@ -65,7 +72,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
             "keyword": str,
             "z_score": float,        # = final_z (기존 호환 별칭)
             "final_z": float,        # 최종 판정에 쓴 z값
-            "status": str,           # 핫함 / 유행 중 / 감소 / 소멸
+            "status": str,           # 핫함 / 유행 중 / 감소 / 소멸 / 데이터 부족
             "naver_z": float,        # 검색 수요 z
             "kakao_z": float,        # blog_z/cafe_z 합산 (제외 시에도 참고용으로 기록)
             "blog_z": float,         # 카카오 블로그 채널 z
@@ -87,11 +94,15 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     note_parts: list[str] = []
 
     # ── 네이버 데이터랩 (주 지표) ──────────────────────────────────────────
-    naver_ratios = DataLabClient().get_recent_ratios(
-        keyword, related_keywords=related_keywords
-    )
+    naver_ratios = _safe_naver_ratios(keyword, related_keywords)
     # 미완성 당일은 판정에서 제외(완성된 최근일을 today_value로)
-    naver_z = zscore_from_series(drop_incomplete_today(naver_ratios))
+    naver_scored = drop_incomplete_today(naver_ratios)
+    naver_z = zscore_from_series(naver_scored)
+    # 주 지표도 무신호(API 실패/키워드 없음)면 게이트로 제외한다.
+    # 이 경우 naver_z=0.0 이 그대로 앙상블에 들어가 "유행 중"으로 둔갑하는 걸 막는다.
+    naver_usable = _has_signal(naver_scored)
+    if not naver_usable:
+        note_parts.append("naver_excluded_no_signal")
 
     # ── 카카오 블로그/카페 (보조 지표, 채널 분리) ─────────────────────────
     channels = _safe_kakao_channels(keyword)
@@ -137,8 +148,11 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
             google_usable = True
 
     # ── 앙상블 (활성 소스 가중치 합으로 정규화) ───────────────────────────
-    weights = {"naver": NAVER_WEIGHT}
-    zs = {"naver": naver_z}
+    weights: dict[str, float] = {}
+    zs: dict[str, float] = {}
+    if naver_usable:
+        weights["naver"] = NAVER_WEIGHT
+        zs["naver"] = naver_z
     if kakao_usable:
         weights["kakao"] = KAKAO_WEIGHT
         zs["kakao"] = kakao_z
@@ -146,12 +160,19 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         weights["google"] = GOOGLE_WEIGHT
         zs["google"] = google_z
 
-    if set(weights) == {"naver", "kakao"}:
-        weights = dict(FALLBACK_NAVER_KAKAO)  # 스펙 명시 폴백(0.6/0.4)
+    if not weights:
+        # 활성 소스가 하나도 없음 → z를 신뢰할 수 없어 판정 보류.
+        final_z = 0.0
+        status = STATUS_INSUFFICIENT
+        sources: list[str] = []
+    else:
+        if set(weights) == {"naver", "kakao"}:
+            weights = dict(FALLBACK_NAVER_KAKAO)  # 스펙 명시 폴백(0.6/0.4)
+        total_w = sum(weights.values())
+        final_z = sum(weights[s] * zs[s] for s in weights) / total_w
+        status = classify_trend(final_z)
+        sources = [s for s in ("naver", "kakao", "google") if s in weights]
 
-    total_w = sum(weights.values())
-    final_z = sum(weights[s] * zs[s] for s in weights) / total_w
-    sources = [s for s in ("naver", "kakao", "google") if s in weights]
     ensemble_note = "ensemble" if not note_parts else "+".join(note_parts)
 
     # ── 수요/공급 발산 플래그 (활성 소스 pairwise) ────────────────────────
@@ -160,7 +181,9 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     # 게이트를 통과해 앙상블에 실제 반영된 소스들만 비교한다
     # (저baseline 소스의 불안정한 z로 플래그가 오발되는 것을 방지).
     dominant_channel_z = blog_z if abs(blog_z) >= abs(cafe_z) else cafe_z
-    div_values = {"naver": naver_z}
+    div_values: dict[str, float] = {}
+    if naver_usable:
+        div_values["naver"] = naver_z
     if kakao_usable:
         div_values["kakao"] = dominant_channel_z
     if google_usable:
@@ -177,7 +200,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         "keyword": keyword,
         "z_score": final_z,  # 기존 호환 별칭
         "final_z": final_z,
-        "status": classify_trend(final_z),
+        "status": status,
         "naver_z": naver_z,
         "kakao_z": kakao_z,
         "blog_z": blog_z,
@@ -192,6 +215,20 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         "cafe_counts": cafe_counts,
         "google_ratios": google_ratios,
     }
+
+
+def _safe_naver_ratios(keyword: str, related_keywords: list[str]) -> list[dict]:
+    """
+    네이버 데이터랩 시계열을 수집하되, 네트워크/키 오류 시 빈 리스트를 반환한다.
+    주 지표가 실패하면 빈 시계열 → 무신호로 게이트에서 제외되고 상태는 '데이터 부족'이 된다.
+    """
+    try:
+        return DataLabClient().get_recent_ratios(
+            keyword, related_keywords=related_keywords
+        )
+    except Exception as exc:  # noqa: BLE001 - 실패를 판정 불가로 흡수(크래시 방지)
+        print(f"[trend_service] 네이버 지표 수집 실패, 제외 진행: {exc}")
+        return []
 
 
 def _safe_kakao_channels(keyword: str) -> dict:

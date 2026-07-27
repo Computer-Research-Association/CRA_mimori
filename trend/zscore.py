@@ -17,6 +17,12 @@ from datetime import date
 # 상수로 분리해 실측 후 튜닝 가능하게 둔다.
 MIN_IQR = 2.0
 
+# 활성 소스가 하나도 없을 때의 상태 라벨.
+# zscore_from_series 는 데이터가 없거나 baseline 이 부족하면 0.0(중립)을 반환하는데,
+# classify_trend(0.0) 은 "유행 중"이라 '무신호'가 '유행 중'으로 둔갑한다.
+# 이를 구분하기 위해 판정 자체를 보류하는 별도 라벨을 둔다.
+STATUS_INSUFFICIENT = "데이터 부족"
+
 
 def drop_incomplete_today(daily_ratios: list[dict]) -> list[dict]:
     """
