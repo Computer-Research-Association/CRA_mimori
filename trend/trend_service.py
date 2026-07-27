@@ -15,7 +15,8 @@ trend_service.py
   - google 제외 시: naver 0.6 / kakao 0.4 (스펙 명시 폴백)
   - kakao 까지 제외 시: naver 단독
   - naver 마저 무신호(API 실패/키워드 없음)면 활성 소스 0개 → status="데이터 부족"
-    (무신호 z=0.0 을 classify_trend 가 "유행 중"으로 오판하지 않도록 판정을 보류)
+    (무신호 z=0.0 은 이제 중립 밴드로 "평상"이 되지만, '진짜 평상'과 구분하기 위해
+     활성 소스가 0개일 때는 판정 자체를 보류한다)
 google(pytrends)은 비공식 라이브러리라 레이트리밋/차단이 잦다 → 실패·표본 부족 시
 자동 제외하고 ensemble_note 에 사유를 남긴다. (가중치는 초기값, 실측 재보정 대상.)
 
@@ -48,8 +49,21 @@ FALLBACK_NAVER_KAKAO = {"naver": 0.6, "kakao": 0.4}
 KAKAO_BLOG_WEIGHT = 0.5
 KAKAO_CAFE_WEIGHT = 0.5
 
-# 보조 소스 시계열이 이보다 적으면 신뢰할 수 없어 해당 소스를 제외한다.
-KAKAO_MIN_POINTS = 7
+# 시계열이 이 포인트 수보다 적으면 신뢰할 수 없어 해당 소스를 게이트에서 제외한다.
+# 네이버/카카오/구글 세 소스의 _has_signal 게이트가 공용으로 쓴다.
+MIN_SERIES_POINTS = 7
+
+# 소스별 IQR 바닥값(robust z 분모 하한).
+# robust scaling 은 IQR 이 분모로 실제 쓰이는 구간에서만 스케일 불변이다.
+# 저빈도 키워드처럼 바닥값이 걸리는 구간에서는 분모가 상수로 고정되므로,
+# 소스의 값 스케일에 맞춘 서로 다른 바닥값이 필요하다.
+#   - 네이버/구글: 0~100 상대 검색량 → 2.0
+#   - 카카오: 언급 '건수'(상대값보다 스케일이 크고 분산도 큼) → 5.0
+# 모두 초기값이며 실측 후 재보정 대상. (기존엔 셋 다 zscore.MIN_IQR=2.0 을 공유해
+# 카카오 저빈도 구간의 z 스케일이 검색량 소스와 어긋나던 문제를 분리했다.)
+NAVER_MIN_IQR = 2.0
+GOOGLE_MIN_IQR = 2.0
+KAKAO_MIN_IQR = 5.0
 
 # baseline 평균 하한(저빈도 키워드의 z 불안정 방지). 카카오/구글 동일 패턴.
 KAKAO_MIN_BASELINE_AVG = 10
@@ -72,7 +86,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
             "keyword": str,
             "z_score": float,        # = final_z (기존 호환 별칭)
             "final_z": float,        # 최종 판정에 쓴 z값
-            "status": str,           # 핫함 / 유행 중 / 감소 / 소멸 / 데이터 부족
+            "status": str,           # 핫함 / 유행 중 / 평상 / 감소 / 소멸 / 데이터 부족
             "naver_z": float,        # 검색 수요 z
             "kakao_z": float,        # blog_z/cafe_z 합산 (제외 시에도 참고용으로 기록)
             "blog_z": float,         # 카카오 블로그 채널 z
@@ -97,7 +111,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     naver_ratios = _safe_naver_ratios(keyword, related_keywords)
     # 미완성 당일은 판정에서 제외(완성된 최근일을 today_value로)
     naver_scored = drop_incomplete_today(naver_ratios)
-    naver_z = zscore_from_series(naver_scored)
+    naver_z = zscore_from_series(naver_scored, min_iqr=NAVER_MIN_IQR)
     # 주 지표도 무신호(API 실패/키워드 없음)면 게이트로 제외한다.
     # 이 경우 naver_z=0.0 이 그대로 앙상블에 들어가 "유행 중"으로 둔갑하는 걸 막는다.
     naver_usable = _has_signal(naver_scored)
@@ -116,8 +130,12 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
 
     # 채널별 z (합산이 활성일 때만 계산; 아니면 0.0)
     if kakao_active:
-        blog_z = zscore_from_series(drop_incomplete_today(blog_counts))
-        cafe_z = zscore_from_series(drop_incomplete_today(cafe_counts))
+        blog_z = zscore_from_series(
+            drop_incomplete_today(blog_counts), min_iqr=KAKAO_MIN_IQR
+        )
+        cafe_z = zscore_from_series(
+            drop_incomplete_today(cafe_counts), min_iqr=KAKAO_MIN_IQR
+        )
         kakao_z = KAKAO_BLOG_WEIGHT * blog_z + KAKAO_CAFE_WEIGHT * cafe_z
     else:
         blog_z = cafe_z = kakao_z = 0.0
@@ -139,7 +157,11 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         google_scored = drop_incomplete_today(google_ratios)
         google_active = _has_signal(google_scored)
         google_baseline_avg = _baseline_avg(google_scored) if google_active else 0.0
-        google_z = zscore_from_series(google_scored) if google_active else 0.0
+        google_z = (
+            zscore_from_series(google_scored, min_iqr=GOOGLE_MIN_IQR)
+            if google_active
+            else 0.0
+        )
         if not google_active:
             note_parts.append("google_excluded_no_signal")
         elif google_baseline_avg < GOOGLE_MIN_BASELINE_AVG:
@@ -257,10 +279,10 @@ def _safe_google_ratios(keyword: str) -> list[dict] | None:
 
 def _has_signal(counts: list[dict]) -> bool:
     """
-    보조 소스 시계열이 앙상블에 쓸 만한지 판단한다(카카오/구글 공용).
-    최소 포인트 수를 채우고, 값이 전부 0이 아니어야 유효 신호로 본다.
+    시계열이 앙상블에 쓸 만한지 판단한다(네이버/카카오/구글 공용 게이트).
+    최소 포인트 수(MIN_SERIES_POINTS)를 채우고, 값이 전부 0이 아니어야 유효 신호로 본다.
     """
-    if len(counts) < KAKAO_MIN_POINTS:
+    if len(counts) < MIN_SERIES_POINTS:
         return False
     return any(row["ratio"] > 0 for row in counts)
 
