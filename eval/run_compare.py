@@ -72,9 +72,14 @@ def main() -> None:
 
     judge = Judge()
 
+    # latency 왜곡 방지: 첫 검색이 Qdrant 연결 셋업 비용을 뒤집어쓰지 않도록
+    # 측정 밖에서 워밍업 1회 (결과는 버림)
+    retrieve("dense", queries[0].keyword, dense_vecs[0], sparse_weights[0])
+
     per_query_rows: list[dict] = []          # CSV 한 줄 = (쿼리, 방식) 지표
     method_metric_acc: dict[str, dict] = {   # 방식별 지표 누적
         m: {"latency_ms": [], "mrr": [], **{f"p@{k}": [] for k in K_VALUES},
+            **{f"avgrel@{k}": [] for k in K_VALUES},
             **{f"ndcg@{k}": [] for k in K_VALUES}}
         for m in METHODS
     }
@@ -113,10 +118,13 @@ def main() -> None:
             method_metric_acc[m]["mrr"].append(metrics.mrr(rels))
             for k in K_VALUES:
                 p = metrics.precision_at_k(rels, k)
+                a = metrics.mean_relevance_at_k(rels, k)
                 n = metrics.ndcg_at_k(rels, pool_rels, k)
                 row[f"p@{k}"] = round(p, 4)
+                row[f"avgrel@{k}"] = round(a, 4)
                 row[f"ndcg@{k}"] = round(n, 4)
                 method_metric_acc[m][f"p@{k}"].append(p)
+                method_metric_acc[m][f"avgrel@{k}"].append(a)
                 method_metric_acc[m][f"ndcg@{k}"].append(n)
             per_query_rows.append(row)
 
@@ -158,7 +166,8 @@ def _write_outputs(per_query_rows: list[dict], summary: dict) -> None:
 
 def _print_summary(summary: dict, skipped: list[str]) -> None:
     k_values = summary["k_values"]
-    cols = ["method"] + [f"p@{k}" for k in k_values] + [f"ndcg@{k}" for k in k_values] + ["mrr", "latency_ms"]
+    cols = (["method"] + [f"p@{k}" for k in k_values] + [f"avgrel@{k}" for k in k_values]
+            + [f"ndcg@{k}" for k in k_values] + ["mrr", "latency_ms"])
     widths = {c: max(len(c), 10) for c in cols}
 
     print("\n" + "=" * 60)

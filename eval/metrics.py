@@ -5,15 +5,18 @@ metrics.py
 라벨은 union 풀(세 방식이 뽑은 청크 전체)을 LLM으로 채점한 값이므로, nDCG의
 IDCG는 그 풀에서 얻을 수 있는 이상적 순위 기준으로 계산한다(pooled nDCG).
 
-- Precision@k : 상위 k개 중 관련(rel>=1) 비율
+- Precision@k : 상위 k개 중 관련(rel>=THRESHOLD) 비율
+- AvgRel@k    : 상위 k개 관련도(0~2)의 평균 — 이진 기준 없이 등급을 그대로 반영
 - nDCG@k      : 등급 관련도(gain=rel)를 반영한 순위 품질
-- MRR         : 첫 관련(rel>=1) 문서의 역순위
+- MRR         : 첫 관련(rel>=THRESHOLD) 문서의 역순위
 """
 
 import math
 
 # rel 이 이 값 이상이면 "관련 있음"으로 본다 (Precision/MRR 용).
-RELEVANT_THRESHOLD = 1
+# 검색이 keyword 필터를 먼저 거치므로 후보가 전부 해당 밈 관련 문서다.
+# 기준을 1(부분 관련)로 두면 거의 다 통과해 점수가 포화됨 → 2(명확히 관련)로 강화.
+RELEVANT_THRESHOLD = 2
 
 
 def precision_at_k(rels: list[int], k: int) -> float:
@@ -23,6 +26,13 @@ def precision_at_k(rels: list[int], k: int) -> float:
     top = rels[:k]
     hits = sum(1 for r in top if r >= RELEVANT_THRESHOLD)
     return hits / k
+
+
+def mean_relevance_at_k(rels: list[int], k: int) -> float:
+    """상위 k개 관련도(0~2)의 평균. 결과가 k개 미만이면 부족분은 0으로 채워 계산."""
+    if k <= 0:
+        return 0.0
+    return sum(rels[:k]) / k
 
 
 def _dcg(rels: list[int], k: int) -> float:
