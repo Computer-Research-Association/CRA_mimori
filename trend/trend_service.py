@@ -274,6 +274,34 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     }
 
 
+def format_trend_context(keyword: str) -> str:
+    """
+    get_meme_trend() 결과를 LLM 프롬프트에 넣기 좋은 짧은 문자열로 요약한다.
+    (analysis/pipeline.py, analysis/rag_pipeline.py 가 프롬프트 조립 시 사용)
+
+    상태가 STATUS_INSUFFICIENT("데이터 부족")이거나 조회 중 예외가 나면 ""을 반환한다.
+    ""으로 통일하는 이유: 트렌드는 어디까지나 보조 지표라, 판정할 근거가 없을 때
+    "데이터 부족" 문구를 그대로 보여주는 것보다 그냥 안 보여주는 편이 프롬프트를
+    깔끔하게 유지한다(LLM이 그 문구 자체를 유행 근거로 오인할 여지도 없앤다).
+    """
+    try:
+        result = get_meme_trend(keyword)
+    except Exception as exc:  # noqa: BLE001 - 트렌드 조회 실패가 분석/RAG 자체를 막으면 안 됨
+        print(f"[trend_service] format_trend_context 실패, 빈 문자열 반환: {exc}")
+        return ""
+
+    if result["status"] == STATUS_INSUFFICIENT:
+        return ""
+
+    sources_str = "+".join(result["sources"]) if result["sources"] else "없음"
+    flag_str = f" ({', '.join(result['flags'])})" if result["flags"] else ""
+
+    return (
+        "[참고: 최근 검색/언급량 기반 유행 상태 앙상블 판정 — 정성적 분석의 보조 지표로만 활용]\n"
+        f"상태: {result['status']} (robust z-score: {result['final_z']:.2f}, 반영 소스: {sources_str}){flag_str}"
+    )
+
+
 def save_trend_score(result: dict) -> None:
     """
     get_meme_trend 결과를 trend_scores 컬렉션에 저장한다.
