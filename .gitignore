@@ -14,4 +14,5 @@ scheduler/last_crawl_at.txt
 .venv/
 mongo_dump/
 .idea
-PROJECT_STUDY.md
+PROJECT_STUDY.mdembed_log.txt
+qdrant_storage/
