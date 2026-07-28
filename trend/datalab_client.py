@@ -57,6 +57,7 @@ class DataLabClient:
          합산해야 실제 관심도를 더 잘 반영한다. 데이터랩은 그룹당 최대 5개 키워드 허용.)
 
         반환 형식: [{"date": "YYYY-MM-DD", "ratio": float}, ...]  (날짜 오름차순)
+        데이터랩이 생략하는 검색량 0인 날은 ratio=0.0 으로 채운다(카카오 시계열과 동일).
         """
         keywords = [keyword]
         if related_keywords:
@@ -87,10 +88,27 @@ class DataLabClient:
             return []
 
         data = results[0].get("data", [])
-        return [
-            {"date": point["period"], "ratio": float(point["ratio"])}
-            for point in data
-        ]
+        if not data:
+            return []
+
+        # 데이터랩은 검색량이 0(임계 미만)인 날을 응답에서 아예 생략한다.
+        # 그대로 두면 저빈도/신생 밈은 baseline 이 '검색된 날'로만 채워져 위로 편향되고,
+        # 그러면 오늘의 급등이 상대적으로 눌려 z 가 과소평가된다. 카카오 시계열처럼
+        # 빠진 날을 0.0 으로 채워 baseline 이 실제 분포(0 포함)를 반영하게 한다.
+        #
+        # 다만 데이터랩은 1~2일 발행 지연이 있어, '아직 안 나온' 최근일을 0 으로
+        # 채우면 today_value 가 가짜 0 이 될 수 있다. 그래서 채우는 범위를
+        # [요청 시작일, 응답에 존재하는 최신일] 로 제한한다(그 이후는 미발행으로 간주).
+        ratio_by_date = {p["period"]: float(p["ratio"]) for p in data}
+        last_date = date.fromisoformat(max(ratio_by_date))
+        cursor = date.fromisoformat(start_str)
+
+        series: list[dict] = []
+        while cursor <= last_date:
+            iso = cursor.isoformat()
+            series.append({"date": iso, "ratio": ratio_by_date.get(iso, 0.0)})
+            cursor += timedelta(days=1)
+        return series
 
 
 if __name__ == "__main__":

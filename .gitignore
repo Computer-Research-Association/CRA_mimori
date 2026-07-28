@@ -13,6 +13,4 @@ scheduler/status.txt
 scheduler/last_crawl_at.txt
 .venv/
 mongo_dump/
-.idea
-PROJECT_STUDY.mdembed_log.txt
-qdrant_storage/
+.google_trends_cache.json
