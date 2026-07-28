@@ -13,3 +13,4 @@ scheduler/status.txt
 .venv/
 mongo_dump/
 .idea
+eval/results/
