@@ -15,9 +15,10 @@ trend_service.py
 앙상블 가중치: naver 0.4 / kakao 0.3 / google 0.2 (활성 소스 가중치 합으로 정규화)
   - google 제외 시: naver 0.6 / kakao 0.4 (스펙 명시 폴백)
   - kakao 까지 제외 시: naver 단독
-  - naver 마저 무신호(API 실패/키워드 없음)면 활성 소스 0개 → status="데이터 부족"
-    (무신호 z=0.0 은 이제 중립 밴드로 "평상"이 되지만, '진짜 평상'과 구분하기 위해
-     활성 소스가 0개일 때는 판정 자체를 보류한다)
+  - naver 무신호(API 실패/키워드 없음)면 보조 소스(kakao/google)가 살아 있어도
+    판정하지 않는다 → status="데이터 부족". 네이버는 주 지표라 없으면 판정을 보류한다
+    (보조 소스 단독 판정은 신호가 약해 오판 위험이 크다).
+    (무신호 z=0.0 은 중립 밴드로 "평상"이 되지만, '진짜 평상'과 구분하려 판정을 보류)
 google(pytrends)은 비공식 라이브러리라 레이트리밋/차단이 잦다 → 실패·표본 부족 시
 자동 제외하고 ensemble_note 에 사유를 남긴다. (가중치는 초기값, 실측 재보정 대상.)
 
@@ -195,25 +196,24 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         else:
             google_usable = True
 
-    # ── 앙상블 (활성 소스 가중치 합으로 정규화) ───────────────────────────
-    weights: dict[str, float] = {}
-    zs: dict[str, float] = {}
-    if naver_usable:
-        weights["naver"] = NAVER_WEIGHT
-        zs["naver"] = naver_z
-    if kakao_usable:
-        weights["kakao"] = KAKAO_WEIGHT
-        zs["kakao"] = kakao_z
-    if google_usable:
-        weights["google"] = GOOGLE_WEIGHT
-        zs["google"] = google_z
-
-    if not weights:
-        # 활성 소스가 하나도 없음 → z를 신뢰할 수 없어 판정 보류.
+    # ── 앙상블 (네이버=주 지표 필수, 보조 소스는 활성 시에만 가중 합산) ─────
+    # 주 지표(네이버)가 무신호면 보조 지표(카카오/구글)가 아무리 살아있어도
+    # 판정하지 않는다. 보조 지표는 단독으로 신뢰하기엔 신호가 약해(콘텐츠 공급량·
+    # 비공식 API) 오판 위험이 크므로, 네이버 없이는 '데이터 부족'으로 판정을 보류한다.
+    if not naver_usable:
         final_z = 0.0
         status = STATUS_INSUFFICIENT
         sources: list[str] = []
     else:
+        weights: dict[str, float] = {"naver": NAVER_WEIGHT}
+        zs: dict[str, float] = {"naver": naver_z}
+        if kakao_usable:
+            weights["kakao"] = KAKAO_WEIGHT
+            zs["kakao"] = kakao_z
+        if google_usable:
+            weights["google"] = GOOGLE_WEIGHT
+            zs["google"] = google_z
+
         if set(weights) == {"naver", "kakao"}:
             weights = dict(FALLBACK_NAVER_KAKAO)  # 스펙 명시 폴백(0.6/0.4)
         total_w = sum(weights.values())
@@ -226,15 +226,16 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     # ── 수요/공급 발산 플래그 (활성 소스 pairwise) ────────────────────────
     # 카카오는 합산 평균 kakao_z 대신 '지배 채널' z로 비교한다 - 한 채널만
     # 폭발한 도배 패턴이 평균 희석에 묻히지 않게 하기 위함(기존 로직 유지).
-    # 게이트를 통과해 앙상블에 실제 반영된 소스들만 비교한다
-    # (저baseline 소스의 불안정한 z로 플래그가 오발되는 것을 방지).
+    # 앙상블에 실제 반영된 소스(sources)만 비교한다. 저baseline 소스의 불안정한
+    # z로 플래그가 오발되는 것을 막고, 네이버 무신호로 판정을 보류한 경우
+    # (sources 비어 있음)에는 보조 소스끼리 발산 플래그가 새지 않게 한다.
     dominant_channel_z = blog_z if abs(blog_z) >= abs(cafe_z) else cafe_z
     div_values: dict[str, float] = {}
-    if naver_usable:
+    if "naver" in sources:
         div_values["naver"] = naver_z
-    if kakao_usable:
+    if "kakao" in sources:
         div_values["kakao"] = dominant_channel_z
-    if google_usable:
+    if "google" in sources:
         div_values["google"] = google_z
 
     flags: list[str] = []
