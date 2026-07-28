@@ -11,6 +11,7 @@ MONGO_URI = os.getenv("MONGODB_URI", "")
 MONGO_DB = "mimori"
 MONGO_COLLECTION = "memes"
 CLEANED_COLLECTION = "cleaned_memes"  # 전처리/청킹 결과 저장용 (원본 memes와 분리)
+TREND_COLLECTION = "trend_scores"     # 트렌드 판정 결과 저장용 (키워드+날짜 단위)
 
 # 검색 설정
 TAVILY_MAX_RESULTS = 20

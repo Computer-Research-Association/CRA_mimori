@@ -8,8 +8,9 @@ trend_service.py
   - google_z : 구글 트렌드 검색 관심도(보조 수요 지표)   → 보조 지표
 
 카카오는 채널을 분리해 blog_z / cafe_z 를 따로 계산한 뒤 합친다.
-  kakao_z = KAKAO_BLOG_WEIGHT * blog_z + KAKAO_CAFE_WEIGHT * cafe_z
+  kakao_z = (활성 채널 가중치 합으로 정규화한) blog_z / cafe_z 가중 평균
 채널 분리로 'blog 중심 확산' vs '커뮤니티(cafe) 중심 유행' 해석이 가능해진다.
+무신호 채널(전부 0)은 정규화에서 빠져 남은 채널을 희석하지 않는다.
 
 앙상블 가중치: naver 0.4 / kakao 0.3 / google 0.2 (활성 소스 가중치 합으로 정규화)
   - google 제외 시: naver 0.6 / kakao 0.4 (스펙 명시 폴백)
@@ -24,6 +25,7 @@ google(pytrends)은 비공식 라이브러리라 레이트리밋/차단이 잦�
 트렌드 판정에서는 배제하고 RAG 근거 자료로만 활용하기로 결정.
 """
 
+from datetime import date, datetime, timezone
 from itertools import combinations
 
 from trend.datalab_client import DataLabClient
@@ -128,15 +130,39 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     kakao_active = _has_signal(kakao_scored)
     kakao_baseline_avg = _baseline_avg(kakao_scored) if kakao_active else 0.0
 
-    # 채널별 z (합산이 활성일 때만 계산; 아니면 0.0)
+    # 채널별 z (합산이 활성일 때만 계산; 아니면 0.0).
+    # 가중치는 '실제로 신호가 있는' 채널들의 합으로 정규화한다. 이렇게 안 하면
+    # blog 에만 언급이 몰리고 cafe 는 전부 0인 밈에서 cafe_z=0 이 절반 가중으로
+    # 섞여 kakao_z 가 blog_z 의 절반으로 눌린다(무신호 채널에 의한 희석).
+    # → 한 채널만 활성이면 그 채널이 kakao_z 를 그대로 대표한다.
     if kakao_active:
-        blog_z = zscore_from_series(
-            drop_incomplete_today(blog_counts), min_iqr=KAKAO_MIN_IQR
+        blog_scored = drop_incomplete_today(blog_counts)
+        cafe_scored = drop_incomplete_today(cafe_counts)
+        blog_ch_active = _has_signal(blog_scored)
+        cafe_ch_active = _has_signal(cafe_scored)
+
+        blog_z = (
+            zscore_from_series(blog_scored, min_iqr=KAKAO_MIN_IQR)
+            if blog_ch_active
+            else 0.0
         )
-        cafe_z = zscore_from_series(
-            drop_incomplete_today(cafe_counts), min_iqr=KAKAO_MIN_IQR
+        cafe_z = (
+            zscore_from_series(cafe_scored, min_iqr=KAKAO_MIN_IQR)
+            if cafe_ch_active
+            else 0.0
         )
-        kakao_z = KAKAO_BLOG_WEIGHT * blog_z + KAKAO_CAFE_WEIGHT * cafe_z
+
+        ch_weights: dict[str, float] = {}
+        if blog_ch_active:
+            ch_weights["blog"] = KAKAO_BLOG_WEIGHT
+        if cafe_ch_active:
+            ch_weights["cafe"] = KAKAO_CAFE_WEIGHT
+        # kakao_active(합산 시계열에 신호 있음)면 최소 한 채널은 활성이라 분모>0 보장.
+        total_ch_w = sum(ch_weights.values())
+        kakao_z = (
+            ch_weights.get("blog", 0.0) * blog_z
+            + ch_weights.get("cafe", 0.0) * cafe_z
+        ) / total_ch_w
     else:
         blog_z = cafe_z = kakao_z = 0.0
 
@@ -237,6 +263,28 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         "cafe_counts": cafe_counts,
         "google_ratios": google_ratios,
     }
+
+
+def save_trend_score(result: dict) -> None:
+    """
+    get_meme_trend 결과를 trend_scores 컬렉션에 저장한다.
+
+    같은 키워드라도 날짜별로 추이를 남겨야 하므로 (keyword, date) 를 키로 upsert 한다.
+    → 하루에 여러 번 실행하면 그날 문서는 덮어써지고, 날짜가 바뀌면 새 문서가 쌓인다.
+
+    판정 로직(get_meme_trend)은 DB 없이도 동작해야 하므로 DB/config 임포트는
+    이 함수 안에서만 지연 임포트한다(trend_service 를 순수 계산용으로 단독 실행 가능).
+    """
+    from DB.mongo_client import get_collection
+    from config.config_cilent import TREND_COLLECTION
+
+    today = date.today().isoformat()
+    doc = {**result, "date": today, "evaluated_at": datetime.now(timezone.utc)}
+    get_collection(TREND_COLLECTION).update_one(
+        {"keyword": result["keyword"], "date": today},
+        {"$set": doc},
+        upsert=True,
+    )
 
 
 def _safe_naver_ratios(keyword: str, related_keywords: list[str]) -> list[dict]:
