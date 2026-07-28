@@ -10,6 +10,7 @@ from qdrant_client.http import models
 from config.config_cilent import ANALYSIS_MODEL, ANALYSIS_PROMPT_PATH, NIM_KEY, QDRANT_COLLECTION
 from DB.drant_clitent import client, ensure_collection
 from DB.mongo_client import get_collection
+from trend.trend_service import format_trend_context
 
 
 def list_analyzable_keywords() -> list[str]:
@@ -51,11 +52,12 @@ _CHUNK_SEPARATOR = "\n\n---\n\n"
 
 
 def build_prompt(keyword: str, chunks: list[str]) -> str:
-    """prompt_template.md를 읽어 {keyword}, {content}를 채운 문자열 반환."""
+    """prompt_template.md를 읽어 {keyword}, {content}, {trend_info}를 채운 문자열 반환."""
     with open(ANALYSIS_PROMPT_PATH, "r", encoding="utf-8") as f:
         template = f.read()
     content = _CHUNK_SEPARATOR.join(chunks)
-    return template.format(keyword=keyword, content=content)
+    trend_info = format_trend_context(keyword)
+    return template.format(keyword=keyword, content=content, trend_info=trend_info)
 
 
 def analyze(prompt: str, model: str = ANALYSIS_MODEL) -> str:
