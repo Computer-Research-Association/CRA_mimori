@@ -18,19 +18,28 @@ from embedding.pipeline import _to_sparse_vector
 from trend.trend_service import format_trend_context
 
 
+def _build_filter(keyword: str, sources: list[str] | None = None) -> models.Filter:
+    """keyword(필수) + source(선택, 예: tavily 제외하고 dcinside/natepann만) 필터.
+
+    sources가 None이면 소스 제한 없이 keyword만 필터링한다(기존 동작과 동일)."""
+    must = [models.FieldCondition(key="keyword", match=models.MatchValue(value=keyword))]
+    if sources:
+        must.append(models.FieldCondition(key="source", match=models.MatchAny(any=sources)))
+    return models.Filter(must=must)
+
+
 def search_relevant_chunks(
     keyword: str,
     dense_vec: list[float],
     sparse: dict[str, float],
     top_k: int = RAG_TOP_K,
+    sources: list[str] | None = None,
 ) -> list[models.ScoredPoint]:
     """
-    Qdrant mimori_chunks에서 payload.keyword == keyword로 필터링한 뒤,
-    dense+sparse 하이브리드 검색(RRF fusion)으로 상위 top_k개 포인트를 반환.
+    Qdrant mimori_chunks에서 payload.keyword == keyword(+ sources 지정 시 그 소스만)로
+    필터링한 뒤, dense+sparse 하이브리드 검색(RRF fusion)으로 상위 top_k개 포인트를 반환.
     """
-    keyword_filter = models.Filter(
-        must=[models.FieldCondition(key="keyword", match=models.MatchValue(value=keyword))]
-    )
+    keyword_filter = _build_filter(keyword, sources)
 
     response = client.query_points(
         collection_name=QDRANT_COLLECTION,
@@ -60,15 +69,14 @@ def search_dense_only(
     keyword: str,
     dense_vec: list[float],
     top_k: int = RAG_TOP_K,
+    sources: list[str] | None = None,
 ) -> list[models.ScoredPoint]:
     """
-    Qdrant mimori_chunks에서 payload.keyword == keyword로 필터링한 뒤,
-    dense 벡터만으로(sparse/융합 없이) 상위 top_k개 포인트를 반환.
+    Qdrant mimori_chunks에서 payload.keyword == keyword(+ sources 지정 시 그 소스만)로
+    필터링한 뒤, dense 벡터만으로(sparse/융합 없이) 상위 top_k개 포인트를 반환.
     순수 의미 유사도 검색 결과만 확인하고 싶을 때 사용한다.
     """
-    keyword_filter = models.Filter(
-        must=[models.FieldCondition(key="keyword", match=models.MatchValue(value=keyword))]
-    )
+    keyword_filter = _build_filter(keyword, sources)
 
     response = client.query_points(
         collection_name=QDRANT_COLLECTION,
@@ -85,15 +93,14 @@ def search_sparse_only(
     keyword: str,
     sparse: dict[str, float],
     top_k: int = RAG_TOP_K,
+    sources: list[str] | None = None,
 ) -> list[models.ScoredPoint]:
     """
-    Qdrant mimori_chunks에서 payload.keyword == keyword로 필터링한 뒤,
-    sparse(lexical) 벡터만으로(dense/융합 없이) 상위 top_k개 포인트를 반환.
+    Qdrant mimori_chunks에서 payload.keyword == keyword(+ sources 지정 시 그 소스만)로
+    필터링한 뒤, sparse(lexical) 벡터만으로(dense/융합 없이) 상위 top_k개 포인트를 반환.
     단어 일치 기반 유사도 검색 결과만 확인하고 싶을 때 사용한다.
     """
-    keyword_filter = models.Filter(
-        must=[models.FieldCondition(key="keyword", match=models.MatchValue(value=keyword))]
-    )
+    keyword_filter = _build_filter(keyword, sources)
 
     response = client.query_points(
         collection_name=QDRANT_COLLECTION,
