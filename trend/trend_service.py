@@ -124,8 +124,16 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     # ── 카카오 블로그/카페 (보조 지표, 채널 분리) ─────────────────────────
     channels = _safe_kakao_channels(keyword)
     blog_counts, cafe_counts = channels["blog"], channels["cafe"]
-    # 합산 시계열: baseline 게이트 / 신호 유무는 '합산 기준'으로 판단
+    # 합산 시계열: baseline 게이트 / 신호 유무는 '합산 기준'으로 판단.
+    # merge_daily_series 는 두 채널의 '공통(교집합) 날짜'만 합산한다(한 채널만
+    # 500건 포화로 최근 구간만 남는 경우 대비). 채널별 z 도 반드시 이 공통 구간에서
+    # 계산해야 합산 z 와 같은 창(window)을 보게 되고, 공통 밖 과거로 채널이 '활성'
+    # 처럼 보이거나 발산 플래그가 어긋나는 일이 없다. → 채널 시계열도 공통일로 제한.
     kakao_counts = merge_daily_series(blog_counts, cafe_counts)
+    common_dates = {row["date"] for row in kakao_counts}
+    # 스코어링용 공통 구간 시계열(원본 blog_counts/cafe_counts 는 기록·시각화용으로 보존).
+    blog_common = [row for row in blog_counts if row["date"] in common_dates]
+    cafe_common = [row for row in cafe_counts if row["date"] in common_dates]
 
     kakao_scored = drop_incomplete_today(kakao_counts)
     kakao_active = _has_signal(kakao_scored)
@@ -137,8 +145,8 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     # 섞여 kakao_z 가 blog_z 의 절반으로 눌린다(무신호 채널에 의한 희석).
     # → 한 채널만 활성이면 그 채널이 kakao_z 를 그대로 대표한다.
     if kakao_active:
-        blog_scored = drop_incomplete_today(blog_counts)
-        cafe_scored = drop_incomplete_today(cafe_counts)
+        blog_scored = drop_incomplete_today(blog_common)
+        cafe_scored = drop_incomplete_today(cafe_common)
         blog_ch_active = _has_signal(blog_scored)
         cafe_ch_active = _has_signal(cafe_scored)
 
