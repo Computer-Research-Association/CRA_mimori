@@ -11,6 +11,7 @@ services:
       - .env
     volumes:
       - .:/app
+      - /app/.venv
     restart: unless-stopped
 
   mongo:
@@ -26,7 +27,7 @@ services:
     image: qdrant/qdrant
     container_name: mimori-qdrant
     ports:
-      - "6333:6333"
+      - "16333:6333"  # 호스트의 6333은 Windows가 예약한 포트 범위(6239-6338)라 16333으로 노출
     volumes:
       - ./qdrant_storage:/qdrant/storage
     restart: unless-stopped
