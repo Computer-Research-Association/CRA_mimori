@@ -13,6 +13,7 @@ NVIDIA(ChatNVIDIA)로 (질문, 청크) 관련도를 0/1/2로 채점한다.
     2 = 명확히 관련(질문에 직접 답이 되는 내용 포함)
 """
 
+import hashlib
 import json
 import os
 import re
@@ -51,18 +52,27 @@ _PROMPT = """당신은 검색 결과의 관련도를 매기는 평가자입니�
 
 관련도(0/1/2):"""
 
+# 프롬프트가 바뀌면 옛 라벨을 재사용하면 안 되므로 캐시 키에 프롬프트 해시를 섞는다.
+_PROMPT_VERSION = hashlib.md5(_PROMPT.encode("utf-8")).hexdigest()[:8]
+
 
 class Judge:
     """관련도 판정기. 캐시를 로드/저장하며 (query_id, chunk_id) 단위로 채점."""
 
     def __init__(self, model: str = JUDGE_MODEL, cache_path: str = _CACHE_PATH):
         self.cache_path = cache_path
+        self.model = model
         self.cache: dict[str, int] = self._load_cache()
+        # 파싱 실패 관측용 카운터. 실패가 많으면 "다 비슷하다"는 결론이 조용히 오염되므로
+        # 마지막에 [파싱 실패 N / 전체 M]을 반드시 노출한다.
+        self.parse_failures = 0
+        self.total_scored = 0
         self.client = ChatNVIDIA(
             model=model,
             api_key=NIM_KEY,
             temperature=0,
-            max_completion_tokens=8,
+            # 추론 계열 모델이 앞에 토큰을 흘려도 숫자가 잘리지 않도록 여유를 준다.
+            max_completion_tokens=16,
             timeout=6000,
         )
 
@@ -77,9 +87,9 @@ class Judge:
         with open(self.cache_path, "w", encoding="utf-8") as f:
             json.dump(self.cache, f, ensure_ascii=False, indent=2)
 
-    @staticmethod
-    def _cache_key(query_id: str, chunk_id: str) -> str:
-        return f"{query_id}||{chunk_id}"
+    def _cache_key(self, query_id: str, chunk_id: str) -> str:
+        # 모델·프롬프트가 바뀌면 다른 키가 되어 옛 라벨을 재사용하지 않는다.
+        return f"{self.model}|{_PROMPT_VERSION}|{query_id}||{chunk_id}"
 
     def _invoke_with_retry(self, prompt: str):
         """
@@ -100,23 +110,33 @@ class Judge:
                 time.sleep(wait)
 
     @staticmethod
-    def _parse_score(text: str) -> int:
-        """모델 응답에서 첫 0/1/2 숫자를 뽑는다. 못 뽑으면 0(무관) 처리."""
+    def _parse_score(text: str) -> int | None:
+        """모델 응답에서 첫 0/1/2 숫자를 뽑는다. 못 뽑으면 None(파싱 실패) — 조용한 0 금지."""
         m = re.search(r"[012]", text or "")
-        return int(m.group()) if m else 0
+        return int(m.group()) if m else None
 
     def score(self, query_id: str, question: str, chunk_id: str, chunk_text: str) -> int:
         """
         (query_id, chunk_id) 관련도 반환. 캐시에 있으면 그대로, 없으면 LLM 호출 후 저장.
+
+        파싱 실패 시에는 0으로 폴백하되 캐시에 저장하지 않고(재실행 때 재시도)
+        parse_failures를 올려 마지막 요약에서 실패율을 드러낸다.
         """
         key = self._cache_key(query_id, chunk_id)
         if key in self.cache:
             return self.cache[key]
 
+        self.total_scored += 1
         prompt = _PROMPT.format(question=question, chunk=chunk_text)
         response = self._invoke_with_retry(prompt)
-        score = self._parse_score(response.content)
+        parsed = self._parse_score(response.content)
 
-        self.cache[key] = score
+        if parsed is None:
+            self.parse_failures += 1
+            snippet = (response.content or "").strip().replace("\n", " ")[:60]
+            print(f"  [판정 파싱실패] {query_id} / {chunk_id}: 응답={snippet!r} → 0 폴백(캐시 미저장)")
+            return 0
+
+        self.cache[key] = parsed
         self._save_cache()  # 중간에 끊겨도 이미 채점한 건 재사용되도록 매번 저장
-        return score
+        return parsed

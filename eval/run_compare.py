@@ -21,6 +21,8 @@ Dense / Sparse / Hybrid 검색 방식 비교 평가의 전체 흐름을 실행�
 import csv
 import json
 import os
+import random
+import statistics
 import sys
 
 # torch/네이티브 라이브러리 OpenMP 충돌 방지 (import torch 이전에 설정). rag_main.py와 동일.
