@@ -10,7 +10,9 @@ current_packages.txt
 .superpowers/
 scheduler/scheduler.db
 scheduler/status.txt
+scheduler/last_crawl_at.txt
 .venv/
 mongo_dump/
 .idea
 eval/results/
+.google_trends_cache.json

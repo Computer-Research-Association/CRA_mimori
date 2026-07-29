@@ -1,6 +1,8 @@
 import os
 from dotenv import load_dotenv
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 load_dotenv()
 
 # Tavily
@@ -11,6 +13,7 @@ MONGO_URI = os.getenv("MONGODB_URI", "")
 MONGO_DB = "mimori"
 MONGO_COLLECTION = "memes"
 CLEANED_COLLECTION = "cleaned_memes"  # 전처리/청킹 결과 저장용 (원본 memes와 분리)
+TREND_COLLECTION = "trend_scores"     # 트렌드 판정 결과 저장용 (키워드+날짜 단위)
 
 # 검색 설정
 TAVILY_MAX_RESULTS = 20
@@ -19,8 +22,8 @@ TAVILY_SEARCH_DEPTH = "advanced"  # "basic" or "advanced"
 # YouTube
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 YOUTUBE_MAX_RESULTS = 30    # 키워드당 검색할 영상 개수
-YOUTUBE_MAX_COMMENTS = 50  #영상당 가져올 댓글 개수
-YOUTUBE_MIN_COMMENTS = 5    # 이보다 댓글이 적으면 반응 없는 영상으로 보고 제외
+YOUTUBE_MAX_COMMENTS = 50   # 영상당 가져올 댓글 개수
+YOUTUBE_MIN_COMMENTS = 5    # 댓글 수가 이 미만인 영상은 저장 제외
 
 
 # 웹 크롤러 공통 설정
@@ -71,11 +74,11 @@ USER_AGENTS = [
 
 # LLM 분석 설정
 ANALYSIS_MODEL = ("qwen3:8b")
-ANALYSIS_PROMPT_PATH = "analysis/prompt_template.md"
+ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
 RAG_TOP_K = 5
-RAG_PROMPT_PATH = "analysis/rag_prompt_template.md"
+RAG_PROMPT_PATH = os.path.join(_ROOT, "analysis", "rag_prompt_template.md")
 
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
