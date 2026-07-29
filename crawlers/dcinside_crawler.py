@@ -30,7 +30,7 @@ from config.config_cilent import (
     CRAWL_MAX_SEARCH_PAGES,
     DCINSIDE_SORT,
 )
-from crawlers.base import make_session, safe_get, random_delay, get_date_cutoff
+from crawlers.base import make_session, safe_get, rate_limit, get_date_cutoff
 from DB.mongo_client import get_collection
 
 SEARCH_BASE = "https://search.dcinside.com"
@@ -172,9 +172,8 @@ def _fetch_comments(session, gallery_id: str, post_no: str, e_s_n_o: str,
     - 'G': 일반 갤러리 (gall.dcinside.com/board/...)
     - 'M': 마이너 갤러리 (gall.dcinside.com/mgallery/...)
     """
-    random_delay()
-
     cmt_url = f"{GALL_BASE}/board/comment/"
+    rate_limit(cmt_url)  # 댓글 POST 도 같은 도메인 rate 제한을 공유
     data = {
         "id":           gallery_id,
         "no":           post_no,

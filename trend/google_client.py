@@ -19,6 +19,7 @@ zscore 파이프라인과 인터페이스를 통일한다. 값은 데이터랩�
 import json
 import os
 import random
+import threading
 import time
 from datetime import datetime, timedelta
 
@@ -28,6 +29,13 @@ CACHE_TTL_HOURS = 12
 _CACHE_PATH = os.path.join(os.path.dirname(__file__), ".google_trends_cache.json")
 _DELAY_RANGE = (1.0, 2.0)  # 요청 전 랜덤 딜레이(초)
 _MAX_RETRIES = 2  # 최초 시도 후 재시도 횟수
+
+# 캐시는 read-modify-write(파일 전체 읽고→수정→덮어쓰기)라 병렬 실행 시 위험하다.
+# 락 없이 동시 진입하면 (1) lost update 로 다른 키워드 항목이 증발하거나,
+# (2) 동시에 truncate 되어 깨진 JSON 이 남고 _load_cache 가 그걸 {} 로 삼켜
+# 12시간 캐시가 통째로 날아간다 → 다음 실행에서 pytrends 전 키워드 재조회 → 429 폭주.
+# 그래서 _cache_set 전체를 이 락으로 묶고, 쓰기는 임시파일+os.replace 로 원자화한다.
+_CACHE_LOCK = threading.Lock()
 
 
 class GoogleTrendsClient:
@@ -119,17 +127,26 @@ def _cache_get(keyword: str) -> list[dict] | None:
 
 
 def _cache_set(keyword: str, series: list[dict]) -> None:
-    cache = _load_cache()
-    cache[keyword] = {
-        "fetched_at": datetime.now().isoformat(),
-        "series": series,
-    }
-    try:
-        with open(_CACHE_PATH, "w", encoding="utf-8") as f:
-            json.dump(cache, f, ensure_ascii=False)
-    except OSError as exc:
-        # 캐시 저장 실패는 치명적이지 않다(다음 실행에서 재조회할 뿐)
-        print(f"[google_client] 캐시 저장 실패(무시): {exc}")
+    with _CACHE_LOCK:  # read-modify-write 를 원자 구간으로 (lost update / 파일 손상 방지)
+        cache = _load_cache()
+        cache[keyword] = {
+            "fetched_at": datetime.now().isoformat(),
+            "series": series,
+        }
+        tmp_path = f"{_CACHE_PATH}.tmp"
+        try:
+            # 임시파일에 먼저 쓰고 os.replace 로 원자적 교체 → 중간에 죽어도 기존
+            # 캐시 파일은 손상되지 않는다(부분 쓰기로 깨진 JSON 이 남지 않음).
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(cache, f, ensure_ascii=False)
+            os.replace(tmp_path, _CACHE_PATH)
+        except OSError as exc:
+            # 캐시 저장 실패는 치명적이지 않다(다음 실행에서 재조회할 뿐)
+            print(f"[google_client] 캐시 저장 실패(무시): {exc}")
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
 
 if __name__ == "__main__":

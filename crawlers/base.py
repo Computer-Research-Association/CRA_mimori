@@ -10,9 +10,11 @@ base.py
 """
 
 import random
+import threading
 import time
 import requests
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 from config.config_cilent import (
     CRAWL_DELAY_MIN,
@@ -21,6 +23,46 @@ from config.config_cilent import (
     CRAWL_MAX_AGE_YEARS,
     USER_AGENTS,
 )
+
+
+# ── 도메인별 요청 rate 제한 (스레드 전체 공유) ────────────────────────────────
+#
+# 병렬 크롤에서 차단을 유발하는 건 '동시 연결 수'가 아니라 '단위시간당 요청 수'다.
+# 세마포어는 동시성만 막을 뿐, random_delay 가 스레드마다 독립적으로 잠들기 때문에
+# 스레드 수에 비례해 rate 가 올라간다. RateLimiter 는 한 도메인으로 가는 '요청 시작
+# 간격'을 스레드 전체에 걸쳐 강제하므로, 워커를 몇 개로 늘려도 rate 는 직렬과 동일.
+# → 동시성과 요청 rate 를 독립적으로 조절할 수 있게 된다.
+class RateLimiter:
+    def __init__(self, min_gap: float, max_gap: float):
+        self._lock = threading.Lock()
+        self._min = min_gap
+        self._max = max_gap
+        self._next_at = 0.0
+
+    def acquire(self) -> None:
+        with self._lock:
+            now = time.monotonic()
+            wait = max(0.0, self._next_at - now)
+            # 매 요청 간격에 지터를 유지해 고정 패턴 탐지를 피한다.
+            gap = random.uniform(self._min, self._max)
+            self._next_at = max(now, self._next_at) + gap
+        if wait > 0:
+            time.sleep(wait)  # 락 밖에서 잔다 → 대기 중 다른 스레드가 슬롯 계산 가능
+
+
+_domain_limiters: dict[str, RateLimiter] = {}
+_domain_lock = threading.Lock()
+
+
+def rate_limit(url: str) -> None:
+    """url 의 도메인 기준으로 요청 rate 를 제한한다(도메인마다 별도 리미터)."""
+    domain = urlparse(url).netloc
+    with _domain_lock:
+        limiter = _domain_limiters.get(domain)
+        if limiter is None:
+            limiter = RateLimiter(CRAWL_DELAY_MIN, CRAWL_DELAY_MAX)
+            _domain_limiters[domain] = limiter
+    limiter.acquire()
 
 
 def get_date_cutoff() -> datetime:
@@ -154,7 +196,7 @@ def safe_get(
 
     for attempt in range(1, CRAWL_MAX_RETRIES + 1):
         try:
-            random_delay()
+            rate_limit(url)  # 스레드 전체에 걸쳐 이 도메인 요청 rate 를 직렬 수준으로 유지
             response = session.get(url, headers=headers, timeout=timeout)
 
             if is_blocked(response):

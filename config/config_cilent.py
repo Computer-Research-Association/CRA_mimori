@@ -32,6 +32,16 @@ CRAWL_DELAY_MAX = 4.0       # 요청 사이 최대 대기 (초)
 CRAWL_MAX_RETRIES = 3       # 실패 시 최대 재시도 횟수
 CRAWL_MAX_POSTS = 20        # 사이트당 최대 수집 게시글 수
 
+# 크롤링 병렬화 설정 (main.py)
+# 모든 (키워드 × 소스) 크롤 작업을 하나의 평평한 스레드풀에서 병렬 실행한다.
+#
+# 차단을 유발하는 건 '동시 연결 수'가 아니라 '단위시간당 요청 수(rate)'다.
+# 그래서 동시성 상한(세마포어) 대신, 스크래퍼는 crawlers/base.py 의 도메인별
+# RateLimiter 가 요청 rate 자체를 직렬 수준으로 묶는다(min-interval 은 위의
+# CRAWL_DELAY_MIN/MAX 재사용). 워커 수를 늘려도 한 사이트로 가는 rate 는 그대로다.
+# API 소스(tavily/youtube)는 IP 차단이 아니라 쿼터 방식이라 동시 요청에 관대.
+CRAWL_WORKERS = 8          # (키워드 × 소스) 평평한 풀의 워커 수
+
 # 크롤링 필터링 기준
 # 밈은 생명주기가 있어 오래된 글은 현재 맥락과 다를 수 있음 → 날짜 하한선 적용
 CRAWL_MAX_AGE_YEARS = 3       # 이보다 오래된 게시글은 수집 제외
