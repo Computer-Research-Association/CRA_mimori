@@ -76,12 +76,13 @@ def chunk_document(doc: dict) -> list[dict]:
         pieces = [(None, piece) for piece in _splitter.split_text(text)]
 
     chunks = []
-    for i, (section_title, chunk_text) in enumerate(pieces):
+    chunk_idx = 0
+    for section_title, chunk_text in pieces:
         if len(chunk_text.strip()) < 10:  # 노이즈 청크 제거
             continue
         chunks.append({
             "parent_id": doc.get("_id"),
-            "chunk_index": i,
+            "chunk_index": chunk_idx,
             "text": chunk_text,
             "source": doc.get("source"),
             "keyword": doc.get("keyword"),
@@ -91,4 +92,5 @@ def chunk_document(doc: dict) -> list[dict]:
             "published_date": doc.get("published_date"),
             "crawled_at": doc.get("crawled_at"),
         })
+        chunk_idx += 1
     return chunks

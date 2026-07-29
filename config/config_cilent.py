@@ -1,6 +1,8 @@
 import os
 from dotenv import load_dotenv
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 load_dotenv()
 
 # Tavily
@@ -72,11 +74,11 @@ USER_AGENTS = [
 
 # LLM 분석 설정
 ANALYSIS_MODEL = ("qwen3:8b")
-ANALYSIS_PROMPT_PATH = "analysis/prompt_template.md"
+ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
 RAG_TOP_K = 5
-RAG_PROMPT_PATH = "analysis/rag_prompt_template.md"
+RAG_PROMPT_PATH = os.path.join(_ROOT, "analysis", "rag_prompt_template.md")
 
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
