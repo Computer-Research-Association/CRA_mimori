@@ -60,10 +60,8 @@ def build_prompt(keyword: str, chunks: list[str]) -> str:
 
 def analyze(prompt: str, model: str = ANALYSIS_MODEL) -> str:
     """prompt를 model에 보내 분석 결과 텍스트를 반환."""
-    """로컬 말고 nvidia api 호츌"""
-
     nvidia_client = ChatNVIDIA(
-        model="deepseek-ai/deepseek-v4-flash",
+        model=model,
         api_key=NIM_KEY,
         temperature=1,
         top_p=0.95,
@@ -71,6 +69,5 @@ def analyze(prompt: str, model: str = ANALYSIS_MODEL) -> str:
         timeout=6000
     )
 
-
-    response = nvidia_client.invoke( [{"role": "user", "content": prompt}])
+    response = nvidia_client.invoke([{"role": "user", "content": prompt}])
     return response.content

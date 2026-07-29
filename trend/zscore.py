@@ -51,8 +51,10 @@ def get_zscore(daily_ratios: list[dict]) -> tuple[float, str]:
     입력: [{"date": "YYYY-MM-DD", "ratio": float}, ...]
     가장 최신 날짜의 ratio를 today_value, 나머지를 baseline으로 사용한다.
     """
-    if not daily_ratios:
-        return 0.0, classify_trend(0.0)
+    if not daily_ratios or len(daily_ratios) < 3:
+        # baseline이 2개 미만이면 robust_scale이 0.0을 반환해 항상 "유행 중"으로
+        # 오판정된다. 데이터가 충분하지 않으면 판정 보류("데이터 부족") 반환.
+        return 0.0, "데이터 부족"
 
     # 날짜 오름차순 정렬 후 마지막(최신)을 today로
     ordered = sorted(daily_ratios, key=lambda row: row["date"])
