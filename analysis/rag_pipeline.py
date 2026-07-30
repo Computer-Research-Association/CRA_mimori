@@ -4,7 +4,10 @@ rag_pipeline.py
 그 청크를 근거로 LLM에 넘길 프롬프트를 조립한다.
 """
 
+import time
+
 from qdrant_client.http import models
+from qdrant_client.http.exceptions import ResponseHandlingException
 
 from config.config_cilent import (
     QDRANT_COLLECTION,
@@ -18,6 +21,20 @@ from embedding.pipeline import _to_sparse_vector
 from trend.trend_service import format_trend_context
 
 
+def _query_points_with_retry(max_retries: int = 3, base_delay: float = 2.0, **kwargs):
+    """client.query_points()를 호출하되, SSH 터널의 유휴 연결이 끊겨 발생하는
+    ResponseHandlingException(예: WinError 10054)이면 지수 백오프로 재시도한다."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            return client.query_points(**kwargs)
+        except ResponseHandlingException as e:
+            if attempt == max_retries:
+                raise
+            wait = base_delay * (2 ** (attempt - 1))
+            print(f"[rag_pipeline] Qdrant 연결 오류(터널 끊김 의심), {wait:.0f}초 후 재시도 ({attempt}/{max_retries}): {e}")
+            time.sleep(wait)
+
+
 def _build_filter(keyword: str, sources: list[str] | None = None) -> models.Filter:
     """keyword(필수) + source(선택, 예: tavily 제외하고 dcinside/natepann만) 필터.
 
@@ -28,41 +45,161 @@ def _build_filter(keyword: str, sources: list[str] | None = None) -> models.Filt
     return models.Filter(must=must)
 
 
+# search_relevant_chunks의 기본값. 호출부(rag_main.py 등)가 min_length/over_fetch_factor를
+# 안 넘기면 이 값으로 동작해 기존 동작과 호환된다.
+_DEFAULT_MIN_CHUNK_LENGTH = 30
+_DEFAULT_OVER_FETCH_FACTOR = 3
+
+
+_DECORATIVE_CHARS = " ~"  # 공백/물결표(강조용 반복 표기)는 매칭 전에 제거
+
+
+def _normalize_for_match(text: str) -> str:
+    """공백과 물결표(~)를 지운다. "좋~다~"(키워드) vs "좋다~~~"(실제 게시글, 물결
+    개수가 다름)처럼 강조 표기 차이 때문에 매칭이 실패하는 걸 방지한다."""
+    return "".join(ch for ch in text if ch not in _DECORATIVE_CHARS)
+
+
+def _is_valid_chunk(point: models.ScoredPoint, keyword: str, min_length: int) -> bool:
+    """크롤러가 매긴 keyword 태그를 그대로 믿지 않고, title/text(공백·물결표 무시)에
+    실제로 그 키워드가 있는지 + 텍스트가 최소 길이 이상인지 재검증한다.
+
+    - 길이 체크: "야르\\n- dc official App"처럼 정보 없는 한 줄짜리 청크 배제.
+    - 키워드 체크: 크롤러가 무관한 문서를 잘못 태깅한 경우(예: 완전 무관한 여행기가
+      keyword="거제야호"로 저장된 사례) 배제. 공백/물결표를 제거하고 비교해 "거제 야호"
+      (공백 차이)나 "좋다~~~"(물결 개수 차이)처럼 단순 표기 차이로 진짜 관련 있는
+      문서까지 같이 걸러지는 걸 방지한다.
+    """
+    text = point.payload.get("text", "")
+    title = point.payload.get("title", "")
+    if len(text.strip()) < min_length:
+        return False
+    kw_norm = _normalize_for_match(keyword)
+    combined = _normalize_for_match(text + title)
+    return kw_norm in combined
+
+
+_DEFAULT_MIN_DENSE_SCORE = 0.0  # 0.0=비활성(기존 동작과 호환). 양수로 주면 dense 유사도 하한선 적용.
+_DEFAULT_MAX_PER_SOURCE = None  # None=비활성(기존 동작과 호환). 정수로 주면 소스당 최대 개수 제한.
+
+
+def _select_with_source_cap(
+    valid: list[models.ScoredPoint], top_k: int, max_per_source: int | None
+) -> list[models.ScoredPoint]:
+    """점수 내림차순인 valid에서, 한 소스가 top_k를 독점하지 못하도록 소스당
+    max_per_source개까지만 우선 채운다(예: tavily 블로그가 필터를 잘 통과해서
+    점수순으로만 뽑으면 top_k를 다 차지하는 상황 방지). 한도 내에서 top_k가 안
+    채워지면, 한도를 넘긴 나머지(leftover)로 부족분을 채워 빈 자리를 최소화한다.
+    """
+    if not max_per_source:
+        return valid[:top_k]
+
+    selected = []
+    source_counts: dict[str, int] = {}
+    leftover = []
+    for p in valid:
+        source = p.payload.get("source")
+        if source_counts.get(source, 0) < max_per_source:
+            selected.append(p)
+            source_counts[source] = source_counts.get(source, 0) + 1
+        else:
+            leftover.append(p)
+        if len(selected) >= top_k:
+            break
+
+    if len(selected) < top_k:
+        selected += leftover[: top_k - len(selected)]
+
+    return selected[:top_k]
+
+
 def search_relevant_chunks(
     keyword: str,
     dense_vec: list[float],
     sparse: dict[str, float],
     top_k: int = RAG_TOP_K,
     sources: list[str] | None = None,
+    min_length: int = _DEFAULT_MIN_CHUNK_LENGTH,
+    over_fetch_factor: int = _DEFAULT_OVER_FETCH_FACTOR,
+    min_dense_score: float = _DEFAULT_MIN_DENSE_SCORE,
+    max_per_source: int | None = _DEFAULT_MAX_PER_SOURCE,
 ) -> list[models.ScoredPoint]:
     """
     Qdrant mimori_chunks에서 payload.keyword == keyword(+ sources 지정 시 그 소스만)로
-    필터링한 뒤, dense+sparse 하이브리드 검색(RRF fusion)으로 상위 top_k개 포인트를 반환.
+    필터링한 뒤, dense+sparse 하이브리드 검색(RRF fusion)으로 후보를 뽑고, 정보가 없거나
+    (min_length 미만) 크롤링 오염이 의심되는(키워드 미포함) 청크를 제외한 뒤 상위
+    top_k개를 반환.
+
+    over_fetch_factor: 필터링으로 줄어들 걸 감안해 top_k*over_fetch_factor개까지
+    넉넉히 후보를 받아온다. 필터를 통과한 게 top_k보다 적으면, 탈락한 후보 중
+    RRF 점수 높은 순으로 채워서 빈 자리 없이 top_k를 최대한 채운다.
+
+    min_dense_score: RRF fused score는 순위 기반이라 절대적인 관련성 척도가 아니므로,
+    "리터럴 키워드 매치 + 노이즈"(예: 무관한 댓글이 붙어 길이 필터를 우연히 통과한 청크)를
+    걸러내기 위해 원본 dense 코사인 유사도에 별도로 하한선을 둘 수 있다. 0.0이면 비활성
+    (기본값, 기존 동작과 동일). sparse만으로 강하게 매치된 청크가 dense 하한선 때문에
+    같이 걸러질 수 있으니, 값을 올릴 땐 5번 셀에서 결과를 보며 조심스럽게 조정할 것.
+
+    max_per_source: 한 소스(예: tavily 블로그)가 필터를 잘 통과해서 top_k를 독점하는
+    걸 막기 위한 소스당 상한. None이면 비활성(기본값, 기존 동작과 동일). 이건 "관련성"이나
+    "신뢰도"를 판단하는 게 아니라 단순히 소스 다양성을 강제하는 것이므로, 근본적으로
+    신뢰 안 되는 콘텐츠를 걸러내는 수단은 아니다.
     """
     keyword_filter = _build_filter(keyword, sources)
+    raw_limit = top_k * over_fetch_factor
 
-    response = client.query_points(
+    dense_score_map = {}
+    if min_dense_score > 0:
+        dense_response = _query_points_with_retry(
+            collection_name=QDRANT_COLLECTION,
+            query=dense_vec,
+            using=QDRANT_DENSE_VECTOR_NAME,
+            query_filter=keyword_filter,
+            limit=raw_limit * 2,
+            with_payload=False,
+        )
+        dense_score_map = {p.id: p.score for p in dense_response.points}
+
+    response = _query_points_with_retry(
         collection_name=QDRANT_COLLECTION,
         prefetch=[
             models.Prefetch(
                 query=dense_vec,
                 using=QDRANT_DENSE_VECTOR_NAME,
                 filter=keyword_filter,
-                limit=top_k * 2,
+                limit=raw_limit * 2,
             ),
             models.Prefetch(
                 query=_to_sparse_vector(sparse),
                 using=QDRANT_SPARSE_VECTOR_NAME,
                 filter=keyword_filter,
-                limit=top_k * 2,
+                limit=raw_limit * 2,
             ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
         query_filter=keyword_filter,
-        limit=top_k,
+        limit=raw_limit,
         with_payload=True,
     )
-    return response.points
+
+    candidates = response.points
+    valid_ids = set()
+    valid = []
+    for p in candidates:
+        if min_dense_score > 0 and dense_score_map.get(p.id, 0.0) < min_dense_score:
+            continue
+        if _is_valid_chunk(p, keyword, min_length):
+            valid.append(p)
+            valid_ids.add(p.id)
+
+    selected = _select_with_source_cap(valid, top_k, max_per_source)
+
+    if len(selected) < top_k:
+        selected_ids = {p.id for p in selected}
+        rejected = [p for p in candidates if p.id not in selected_ids]
+        selected += rejected[: top_k - len(selected)]
+
+    return selected[:top_k]
 
 
 def search_dense_only(
@@ -78,7 +215,7 @@ def search_dense_only(
     """
     keyword_filter = _build_filter(keyword, sources)
 
-    response = client.query_points(
+    response = _query_points_with_retry(
         collection_name=QDRANT_COLLECTION,
         query=dense_vec,
         using=QDRANT_DENSE_VECTOR_NAME,
@@ -102,7 +239,7 @@ def search_sparse_only(
     """
     keyword_filter = _build_filter(keyword, sources)
 
-    response = client.query_points(
+    response = _query_points_with_retry(
         collection_name=QDRANT_COLLECTION,
         query=_to_sparse_vector(sparse),
         using=QDRANT_SPARSE_VECTOR_NAME,
