@@ -53,6 +53,10 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
             "title": doc.get("title"),
             "chunks": chunks,
         })
+        for chunk in chunks:
+            chunk["is_relevant"] = relevance.is_relevant
+            chunk["relevance_position"] = relevance.position
+
         output_doc = {
             "_id": doc["_id"],
             "keyword": doc.get("keyword"),

@@ -8,6 +8,9 @@ preprocessing.relevance 판정기를 검증·측정하는 하네스.
            임계값은 여기 출력된 분포를 보고 정한다(하드코딩 안 함).   [Mongo 필요]
   build  : cleaned_memes에서 소스·위치 층화 샘플 → 라벨셋 CSV.
            사람이 human_label 칸(1=관련 / 0=무관)을 채운다.             [Mongo 필요]
+  qdrant-backfill
+         : cleaned_memes의 relevance 필드를 기존 Qdrant point payload에 반영.
+                                                                       [Mongo+Qdrant 필요]
   score  : 라벨 채워진 CSV vs 판정기 → 오염판정 precision/recall +
            키워드·소스·위치별 일치율. 위치별로 사람 판정이 갈리면
            position 가중치가 필요하다는 신호.                          [CSV만, DB 불필요]
@@ -25,7 +28,7 @@ from collections import Counter, defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.config_cilent import CLEANED_COLLECTION
+from config.config_cilent import CLEANED_COLLECTION, QDRANT_COLLECTION
 from DB.mongo_client import get_collection
 from eval.questions import load_keywords
 from preprocessing.relevance import judge_relevance, normalize, doc_body
@@ -192,6 +195,103 @@ def cmd_backfill(args) -> None:
     print(f"\n[완료] 수정됨 {result.modified_count}개 / 매칭 {result.matched_count}개")
 
 
+def cmd_qdrant_backfill(args) -> None:
+    """cleaned_memes의 relevance 필드를 기존 Qdrant point payload에 반영한다.
+
+    벡터는 다시 만들지 않고 payload만 갱신한다. cleaned_memes에 아직 relevance
+    필드가 없는 문서는 현재 판정기로 즉석 계산해 함께 저장한다.
+    """
+    import uuid
+
+    from pymongo import UpdateOne
+
+    def point_id(parent_id: str, chunk_index: int) -> str:
+        return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{parent_id}::{chunk_index}"))
+
+    cleaned = get_collection(CLEANED_COLLECTION)
+    docs = list(cleaned.find({}, {
+        "keyword": 1,
+        "title": 1,
+        "chunks.text": 1,
+        "chunks.chunk_index": 1,
+        "is_relevant": 1,
+        "relevance_position": 1,
+    }))
+    total_docs = len(docs)
+    if not total_docs:
+        print("[중단] cleaned_memes에 문서가 없습니다.")
+        return
+
+    if not args.dry_run:
+        from DB.drant_clitent import client, ensure_collection
+
+        ensure_collection()
+
+    from preprocessing.relevance import judge_doc
+    mongo_ops = []
+    updated_docs = 0
+    updated_points = 0
+    missing_chunks = 0
+
+    for doc in docs:
+        if "is_relevant" not in doc or "relevance_position" not in doc:
+            r = judge_doc(doc)
+            is_relevant = r.is_relevant
+            relevance_position = r.position
+            mongo_ops.append(UpdateOne(
+                {"_id": doc["_id"]},
+                {"$set": {
+                    "is_relevant": is_relevant,
+                    "relevance_position": relevance_position,
+                }},
+            ))
+        else:
+            is_relevant = doc["is_relevant"]
+            relevance_position = doc["relevance_position"]
+
+        point_ids = [
+            point_id(str(doc["_id"]), chunk["chunk_index"])
+            for chunk in doc.get("chunks", [])
+            if "chunk_index" in chunk
+        ]
+        if not point_ids:
+            missing_chunks += 1
+            continue
+
+        if args.dry_run:
+            updated_docs += 1
+            updated_points += len(point_ids)
+            continue
+
+        client.set_payload(
+            collection_name=QDRANT_COLLECTION,
+            payload={
+                "is_relevant": is_relevant,
+                "relevance_position": relevance_position,
+            },
+            points=point_ids,
+        )
+        updated_docs += 1
+        updated_points += len(point_ids)
+
+    if mongo_ops and not args.dry_run:
+        cleaned.bulk_write(mongo_ops, ordered=False)
+
+    print(
+        f"대상 문서: {total_docs}개 / Qdrant payload 갱신 대상: "
+        f"문서 {updated_docs}개, 포인트 {updated_points}개"
+    )
+    if mongo_ops:
+        suffix = "예정" if args.dry_run else "완료"
+        print(f"Mongo relevance 누락 문서 보정: {len(mongo_ops)}개 {suffix}")
+    if missing_chunks:
+        print(f"청크 없음으로 스킵: {missing_chunks}개")
+    if args.dry_run:
+        print("\n[dry-run] DB/Qdrant 쓰기 건너뜀.")
+    else:
+        print("\n[완료] Qdrant payload backfill 완료")
+
+
 # ---------------------------------------------------------------- score
 def _prf(tp: int, fp: int, fn: int) -> tuple[float, float]:
     precision = tp / (tp + fp) if (tp + fp) else 0.0
@@ -274,6 +374,13 @@ def main() -> None:
     pb_fill = sub.add_parser("backfill", help="cleaned_memes 전체에 is_relevant 필드 기록")
     pb_fill.add_argument("--dry-run", action="store_true", help="DB 쓰기 없이 집계만 출력")
     pb_fill.set_defaults(func=cmd_backfill)
+
+    pq_fill = sub.add_parser(
+        "qdrant-backfill",
+        help="cleaned_memes의 is_relevant 필드를 기존 Qdrant point payload에 반영",
+    )
+    pq_fill.add_argument("--dry-run", action="store_true", help="DB/Qdrant 쓰기 없이 갱신 대상만 집계")
+    pq_fill.set_defaults(func=cmd_qdrant_backfill)
 
     pb = sub.add_parser("build", help="층화 라벨셋 CSV 생성")
     pb.add_argument("--n", type=int, default=50, help="샘플 문서 수 (기본 50)")

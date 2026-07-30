@@ -70,6 +70,8 @@ def _build_points(chunks: list[dict]) -> list[models.PointStruct]:
                     "section_title": chunk.get("section_title"),
                     "published_date": chunk.get("published_date"),
                     "crawled_at": chunk.get("crawled_at"),
+                    "is_relevant": chunk.get("is_relevant"),
+                    "relevance_position": chunk.get("relevance_position"),
                 },
             ))
     return points
