@@ -10,23 +10,27 @@ crawlers/Keywords.md의 키워드 목록을 읽어, 각 키워드에 질문 템�
 import os
 from dataclasses import dataclass
 
+from analysis.query import build_search_query
+
 # Keywords.md 위치 (repo 루트 기준). __file__ = eval/questions.py 이므로 한 단계 위로.
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 KEYWORDS_PATH = os.path.join(_ROOT, "crawlers", "Keywords.md")
 
-# 키워드마다 아래 질문들을 만들어 검색 쿼리로 쓴다.
-# {kw} 자리에 키워드가 들어간다. 검색 비교가 목적이라 의미/유래/사용맥락처럼
-# 서로 결이 다른 질문을 섞어 dense·sparse가 유리한 상황을 골고루 담는다.
+# 키워드마다 아래 질문(들)을 검색 쿼리로 쓴다. 키워드 자체는 여기 넣지 않고
+# build_search_query(keyword, question)가 앞에 붙인다 — 서비스(rag_main)와
+# 완전히 동일한 방식으로 검색 쿼리를 조립하기 위함(경로 간 로직 단일화).
+# 검색 비교가 목적이라 의미/유래/사용맥락처럼 서로 결이 다른 질문을 섞어
+# dense·sparse가 유리한 상황을 골고루 담는다.
 #
 # 주의: 주격/보조사(이/가, 은/는)를 붙이면 받침 유무에 따라 비문이 된다
 # ("야르이 무슨 뜻이야?"). 게다가 "거제 야호~", "좋~다~", "67"처럼 받침 판정이
 # 애매한 키워드가 섞여 있어 sparse(토큰 일치)만 체계적으로 손해를 본다.
 # → 조사를 붙이지 않는 형태로 통일하고, 실제 유저 검색과 가까운 짧은 키워드형도 추가.
 QUESTION_TEMPLATES: list[str] = [
-    "{kw} 뜻",                     # 실제 검색 분포에 가까운 짧은 키워드형
-    "{kw} 무슨 뜻이야?",
-    "{kw} 어디서 유래했어?",
-    "{kw} 어떤 상황에서 사용해?",
+    "뜻",                     # 실제 검색 분포에 가까운 짧은 키워드형
+    "무슨 뜻이야?",
+    "어디서 유래했어?",
+    "어떤 상황에서 사용해?",
 ]
 
 
@@ -64,7 +68,7 @@ def build_eval_set(
                     id=f"{keyword}__t{t_idx}",
                     keyword=keyword,
                     template=template,
-                    question=template.format(kw=keyword),
+                    question=build_search_query(keyword, template),
                 )
             )
     return queries
