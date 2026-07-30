@@ -57,21 +57,27 @@ def cmd_df(_args) -> None:
         return
 
     # doc마다 정규화 전체 텍스트(제목+본문)를 한 번만 만든다.
-    norm_texts = [normalize(d.get("title", "") + "\n" + doc_body(d)) for d in docs]
+    norm_by_id = {
+        str(d["_id"]): normalize(d.get("title", "") + "\n" + doc_body(d)) for d in docs
+    }
 
-    print(f"corpus 문서 {total}개 기준 키워드별 DF (전체 문서 중 그 키워드가 등장한 비율):\n")
-    print(f"  {'keyword':<12} {'DF':>7}  {'matched':>8}  판정")
-    print("  " + "-" * 44)
+    # cross_df: "다른 keyword로 크롤된 doc 중 이 키워드가 등장한 비율"
+    # (전체 DF는 own_docs 수 때문에 distinctive 신조어도 30%대로 올라가 misleading)
+    print(f"corpus 문서 {total}개 기준 키워드별 cross-DF (다른 keyword doc에서의 등장 비율):\n")
+    print(f"  {'keyword':<12}  {'own_docs':>8}  {'cross_match':>12}  {'cross_df':>9}  판정")
+    print("  " + "-" * 60)
     rows = []
     for kw in keywords:
         nkw = normalize(kw)
-        matched = sum(1 for t in norm_texts if nkw and nkw in t)
-        df = matched / total
-        rows.append((kw, df, matched))
-    for kw, df, matched in sorted(rows, key=lambda r: r[1], reverse=True):
-        note = "← 흔한 토큰 의심(강등 후보)" if df >= 0.30 else ""
-        print(f"  {kw:<12} {df:>6.1%}  {matched:>8}  {note}")
-    print("\n※ 0.30은 관찰용 임시선. 실제 강등 임계값은 이 분포를 보고 정한다.")
+        own = [d for d in docs if d.get("keyword") == kw]
+        other = [d for d in docs if d.get("keyword") != kw]
+        cross = sum(1 for d in other if nkw and nkw in norm_by_id[str(d["_id"])])
+        cross_df = cross / len(other) if other else 0.0
+        rows.append((kw, len(own), cross, cross_df))
+    for kw, own_n, cross, cross_df in sorted(rows, key=lambda r: r[3], reverse=True):
+        note = "← 진짜 흔한 토큰(강등 후보)" if cross_df >= 0.10 else ""
+        print(f"  {kw:<12}  {own_n:>8}  {cross:>12}  {cross_df:>8.1%}  {note}")
+    print("\n※ 강등 임계값 cross_df ≥ 10%는 실데이터 분포로 확정된 기준.")
 
 
 # ---------------------------------------------------------------- build
