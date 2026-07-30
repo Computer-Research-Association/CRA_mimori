@@ -147,6 +147,51 @@ def cmd_build(args) -> None:
     print("\n다음: CSV의 human_label 칸을 1(관련)/0(무관)로 채운 뒤 `score`를 실행하세요.")
 
 
+# ---------------------------------------------------------------- backfill
+def cmd_backfill(args) -> None:
+    """cleaned_memes 전체에 is_relevant / relevance_position 필드를 기록한다.
+
+    판정기가 이미 정확도를 확인받은 뒤 실행하는 것이 원칙.
+    --dry-run 옵션으로 DB 쓰기 없이 예상 집계만 확인할 수 있다."""
+    from pymongo import UpdateOne
+
+    cleaned = get_collection(CLEANED_COLLECTION)
+    docs = list(cleaned.find({}, {"keyword": 1, "title": 1, "chunks.text": 1}))
+    total = len(docs)
+    if not total:
+        print("[중단] cleaned_memes에 문서가 없습니다.")
+        return
+
+    from preprocessing.relevance import judge_doc
+    from collections import Counter
+    ops = []
+    dist: Counter = Counter()
+
+    for doc in docs:
+        r = judge_doc(doc)
+        dist[(r.is_relevant, r.position)] += 1
+        ops.append(UpdateOne(
+            {"_id": doc["_id"]},
+            {"$set": {"is_relevant": r.is_relevant, "relevance_position": r.position}},
+        ))
+
+    rel = sum(v for (rel, _), v in dist.items() if rel)
+    irr = total - rel
+    print(f"대상 문서: {total}개  →  관련 {rel}개 ({rel/total:.1%}) / 비관련 {irr}개 ({irr/total:.1%})")
+    print("위치별 분포:")
+    for pos in ("title", "early", "late", "none"):
+        n = dist[(True, pos)] + dist[(False, pos)]
+        if n:
+            print(f"  {pos:<6} {n}개  (관련 {dist[(True,pos)]} / 비관련 {dist[(False,pos)]})")
+
+    if args.dry_run:
+        print("\n[dry-run] DB 쓰기 건너뜀.")
+        return
+
+    result = cleaned.bulk_write(ops, ordered=False)
+    print(f"\n[완료] 수정됨 {result.modified_count}개 / 매칭 {result.matched_count}개")
+
+
 # ---------------------------------------------------------------- score
 def _prf(tp: int, fp: int, fn: int) -> tuple[float, float]:
     precision = tp / (tp + fp) if (tp + fp) else 0.0
@@ -225,6 +270,10 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("df", help="키워드별 corpus 문서빈도(흔한 토큰 강등 근거)").set_defaults(func=cmd_df)
+
+    pb_fill = sub.add_parser("backfill", help="cleaned_memes 전체에 is_relevant 필드 기록")
+    pb_fill.add_argument("--dry-run", action="store_true", help="DB 쓰기 없이 집계만 출력")
+    pb_fill.set_defaults(func=cmd_backfill)
 
     pb = sub.add_parser("build", help="층화 라벨셋 CSV 생성")
     pb.add_argument("--n", type=int, default=50, help="샘플 문서 수 (기본 50)")
