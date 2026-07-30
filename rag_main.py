@@ -56,7 +56,7 @@ if __name__ == "__main__":
     search_query = build_search_query(selected_keyword, question)
     dense_vecs, lexical_weights = encode_batch([search_query])
     unload_model()  # Ollama가 GPU를 쓸 수 있게 임베딩 모델을 미리 내려둠 (VRAM 충돌 방지)
-    points = search_relevant_chunks(selected_keyword, dense_vecs[0], lexical_weights[0])
+    points = search_relevant_chunks(selected_keyword, dense_vecs[0], lexical_weights[0], is_relevant=True)
     if not points:
         print("검색 결과가 없습니다.")
         sys.exit(1)
