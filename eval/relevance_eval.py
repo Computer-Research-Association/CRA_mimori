@@ -201,12 +201,7 @@ def cmd_qdrant_backfill(args) -> None:
     벡터는 다시 만들지 않고 payload만 갱신한다. cleaned_memes에 아직 relevance
     필드가 없는 문서는 현재 판정기로 즉석 계산해 함께 저장한다.
     """
-    import uuid
-
     from pymongo import UpdateOne
-
-    def point_id(parent_id: str, chunk_index: int) -> str:
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{parent_id}::{chunk_index}"))
 
     cleaned = get_collection(CLEANED_COLLECTION)
     docs = list(cleaned.find({}, {
@@ -224,6 +219,7 @@ def cmd_qdrant_backfill(args) -> None:
 
     if not args.dry_run:
         from DB.drant_clitent import client, ensure_collection
+        from qdrant_client.http import models
 
         ensure_collection()
 
@@ -249,18 +245,14 @@ def cmd_qdrant_backfill(args) -> None:
             is_relevant = doc["is_relevant"]
             relevance_position = doc["relevance_position"]
 
-        point_ids = [
-            point_id(str(doc["_id"]), chunk["chunk_index"])
-            for chunk in doc.get("chunks", [])
-            if "chunk_index" in chunk
-        ]
-        if not point_ids:
+        chunk_count = sum(1 for chunk in doc.get("chunks", []) if "chunk_index" in chunk)
+        if not chunk_count:
             missing_chunks += 1
             continue
 
         if args.dry_run:
             updated_docs += 1
-            updated_points += len(point_ids)
+            updated_points += chunk_count
             continue
 
         client.set_payload(
@@ -269,10 +261,17 @@ def cmd_qdrant_backfill(args) -> None:
                 "is_relevant": is_relevant,
                 "relevance_position": relevance_position,
             },
-            points=point_ids,
+            points=models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="parent_id",
+                        match=models.MatchValue(value=str(doc["_id"])),
+                    )
+                ]
+            ),
         )
         updated_docs += 1
-        updated_points += len(point_ids)
+        updated_points += chunk_count
 
     if mongo_ops and not args.dry_run:
         cleaned.bulk_write(mongo_ops, ordered=False)
