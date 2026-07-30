@@ -78,21 +78,23 @@ def main() -> None:
     # 측정 밖에서 워밍업 1회 (결과는 버림)
     retrieve("dense", queries[0].keyword, dense_vecs[0], sparse_weights[0])
 
-    per_query_rows: list[dict] = []          # CSV 한 줄 = (쿼리, 방식) 지표
-    method_metric_acc: dict[str, dict] = {   # 방식별 지표 누적
-        m: {"latency_ms": [], "mrr": [], **{f"p@{k}": [] for k in K_VALUES},
-            **{f"avgrel@{k}": [] for k in K_VALUES},
-            **{f"ndcg@{k}": [] for k in K_VALUES}}
-        for m in METHODS
-    }
-    jaccard_acc: dict[str, list[float]] = {f"{a}-{b}": [] for a, b in combinations(METHODS, 2)}
+    # 원자료(rels)를 그대로 보관해 두면 threshold/gain을 바꿔도 재검색 없이 다시 계산할 수 있다.
+    per_query_rows: list[dict] = []                    # CSV 한 줄 = (쿼리, 방식) 대표 지표
+    rels_map: dict[tuple[str, str], list[int]] = {}    # (query_id, method) -> 순위별 관련도
+    pool_map: dict[str, list[int]] = {}                # query_id -> union 풀 관련도(IDCG 기준)
+    ids_map: dict[tuple[str, str], list[str]] = {}     # (query_id, method) -> chunk id 순위
+    latency_acc: dict[str, list[float]] = {m: [] for m in METHODS}
+    T = metrics.RELEVANT_THRESHOLD                      # 대표 지표용 기본 임계값
 
     for qi, query in enumerate(queries):
         dense_vec = dense_vecs[qi]
         sparse = sparse_weights[qi]
 
-        # 4) 세 방식 검색
-        results = {m: retrieve(m, query.keyword, dense_vec, sparse) for m in METHODS}
+        # 4) 세 방식 검색. latency 편향 방지: 고정 순서면 뒤 방식이 앞 방식이 데운
+        #    Qdrant 세그먼트/OS 캐시 이득을 보므로, 쿼리마다 방식 순서를 셔플한다.
+        order = list(METHODS)
+        random.Random(qi).shuffle(order)
+        results = {m: retrieve(m, query.keyword, dense_vec, sparse) for m in order}
 
         # 5) union 청크 채점 (방식 무관, 청크당 1회)
         pool: dict[str, str] = {}  # chunk_id -> text
@@ -103,77 +105,166 @@ def main() -> None:
             judge.score(query.id, query.question, cid, text) for cid, text in pool.items()
         ]
         rel_by_chunk = dict(zip(pool.keys(), pool_rels))
+        pool_map[query.id] = pool_rels
 
-        # 6) 방식별 지표
+        # 6) 방식별 원자료 저장 + 대표 지표(기본 임계값 T, linear gain) 한 줄
         for m in METHODS:
             res = results[m]
             rels = [rel_by_chunk[c.chunk_id] for c in res.chunks]
+            rels_map[(query.id, m)] = rels
+            ids_map[(query.id, m)] = [c.chunk_id for c in res.chunks]
+            latency_acc[m].append(res.latency_ms)
+
             row = {
                 "keyword": query.keyword,
                 "query_id": query.id,
                 "question": query.question,
                 "method": m,
                 "latency_ms": round(res.latency_ms, 2),
-                "mrr": round(metrics.mrr(rels), 4),
+                "mrr": round(metrics.mrr(rels, T), 4),
             }
-            method_metric_acc[m]["latency_ms"].append(res.latency_ms)
-            method_metric_acc[m]["mrr"].append(metrics.mrr(rels))
             for k in K_VALUES:
-                p = metrics.precision_at_k(rels, k)
-                a = metrics.mean_relevance_at_k(rels, k)
-                n = metrics.ndcg_at_k(rels, pool_rels, k)
-                row[f"p@{k}"] = round(p, 4)
-                row[f"avgrel@{k}"] = round(a, 4)
-                row[f"ndcg@{k}"] = round(n, 4)
-                method_metric_acc[m][f"p@{k}"].append(p)
-                method_metric_acc[m][f"avgrel@{k}"].append(a)
-                method_metric_acc[m][f"ndcg@{k}"].append(n)
+                row[f"p@{k}"] = round(metrics.precision_at_k(rels, k, T), 4)
+                row[f"avgrel@{k}"] = round(metrics.mean_relevance_at_k(rels, k), 4)
+                row[f"ndcg@{k}"] = round(metrics.ndcg_at_k(rels, pool_rels, k), 4)
             per_query_rows.append(row)
-
-        # 방식 간 결과 겹침
-        ids = {m: [c.chunk_id for c in results[m].chunks] for m in METHODS}
-        for a, b in combinations(METHODS, 2):
-            jaccard_acc[f"{a}-{b}"].append(metrics.jaccard(ids[a], ids[b]))
 
         print(f"  [{qi + 1}/{len(queries)}] {query.question}  (판정 청크 {len(pool)}개)")
 
     # 7) 집계 + 저장 + 출력
-    summary = _summarize(method_metric_acc, jaccard_acc)
+    summary = _summarize(rels_map, pool_map, ids_map, latency_acc, queries)
+    summary["judge"] = {
+        "parse_failures": judge.parse_failures,
+        "total_scored": judge.total_scored,
+    }
     _write_outputs(per_query_rows, summary)
     _print_summary(summary, skipped)
 
 
-def _summarize(method_metric_acc: dict, jaccard_acc: dict) -> dict:
-    methods_summary = {}
-    for m, acc in method_metric_acc.items():
-        methods_summary[m] = {name: round(metrics.mean(vals), 4) for name, vals in acc.items()}
-    overlap = {pair: round(metrics.mean(vals), 4) for pair, vals in jaccard_acc.items()}
-    return {"methods": methods_summary, "overlap": overlap, "k_values": K_VALUES}
+def _series(rels_map, pool_map, queries, metric, k=None, threshold=None, exp_gain=False):
+    """쿼리 순서로 정렬된 {방식: [지표값]} 반환. 평균·paired 통계 양쪽에 공용으로 쓴다."""
+    if threshold is None:
+        threshold = metrics.RELEVANT_THRESHOLD
+    out = {m: [] for m in METHODS}
+    for q in queries:
+        pool_rels = pool_map[q.id]
+        for m in METHODS:
+            rels = rels_map[(q.id, m)]
+            if metric == "p":
+                v = metrics.precision_at_k(rels, k, threshold)
+            elif metric == "avgrel":
+                v = metrics.mean_relevance_at_k(rels, k)
+            elif metric == "ndcg":
+                v = metrics.ndcg_at_k(rels, pool_rels, k, exp_gain)
+            elif metric == "mrr":
+                v = metrics.mrr(rels, threshold)
+            else:
+                raise ValueError(metric)
+            out[m].append(v)
+    return out
+
+
+def _p95(sorted_vals: list[float]) -> float:
+    """정렬된 리스트의 95 분위수(최근접 순위법). 비면 0."""
+    if not sorted_vals:
+        return 0.0
+    idx = min(int(round(0.95 * (len(sorted_vals) - 1))), len(sorted_vals) - 1)
+    return sorted_vals[idx]
+
+
+def _summarize(rels_map, pool_map, ids_map, latency_acc, queries) -> dict:
+    T = metrics.RELEVANT_THRESHOLD
+    K = RAG_TOP_K
+
+    # --- 대표 지표(threshold=T, linear gain) + latency median/p95 ---
+    methods: dict[str, dict] = {m: {} for m in METHODS}
+    mrr_s = _series(rels_map, pool_map, queries, "mrr", threshold=T)
+    for k in K_VALUES:
+        p_s = _series(rels_map, pool_map, queries, "p", k=k, threshold=T)
+        a_s = _series(rels_map, pool_map, queries, "avgrel", k=k)
+        n_s = _series(rels_map, pool_map, queries, "ndcg", k=k)
+        for m in METHODS:
+            methods[m][f"p@{k}"] = round(metrics.mean(p_s[m]), 4)
+            methods[m][f"avgrel@{k}"] = round(metrics.mean(a_s[m]), 4)
+            methods[m][f"ndcg@{k}"] = round(metrics.mean(n_s[m]), 4)
+    for m in METHODS:
+        methods[m]["mrr"] = round(metrics.mean(mrr_s[m]), 4)
+        lat = sorted(latency_acc[m])
+        methods[m]["latency_median_ms"] = round(statistics.median(lat), 1) if lat else 0.0
+        methods[m]["latency_p95_ms"] = round(_p95(lat), 1)
+
+    # --- 방식 간 결과 겹침 (Jaccard) ---
+    overlap = {}
+    for a, b in combinations(METHODS, 2):
+        vals = [metrics.jaccard(ids_map[(q.id, a)], ids_map[(q.id, b)]) for q in queries]
+        overlap[f"{a}-{b}"] = round(metrics.mean(vals), 4)
+
+    # --- 유의성: hybrid vs dense/sparse, 핵심 지표에 paired 부트스트랩 CI ---
+    ndcg_K = _series(rels_map, pool_map, queries, "ndcg", k=K)
+    p_K = _series(rels_map, pool_map, queries, "p", k=K, threshold=T)
+    significance = {}
+    for base in ("dense", "sparse"):
+        significance[f"hybrid_vs_{base}"] = {
+            f"ndcg@{K}": metrics.paired_diff_ci(ndcg_K["hybrid"], ndcg_K[base]),
+            f"p@{K}": metrics.paired_diff_ci(p_K["hybrid"], p_K[base]),
+            "mrr": metrics.paired_diff_ci(mrr_s["hybrid"], mrr_s[base]),
+        }
+
+    # --- 민감도: threshold 1 vs 2, nDCG linear vs exp (캐시된 라벨 재사용, 재검색 불필요) ---
+    sensitivity = {"threshold": {}, "ndcg_gain": {}}
+    for t in (1, 2):
+        p_t = _series(rels_map, pool_map, queries, "p", k=K, threshold=t)
+        mrr_t = _series(rels_map, pool_map, queries, "mrr", threshold=t)
+        sensitivity["threshold"][f"t={t}"] = {
+            m: {f"p@{K}": round(metrics.mean(p_t[m]), 4), "mrr": round(metrics.mean(mrr_t[m]), 4)}
+            for m in METHODS
+        }
+    for label, exp in (("linear", False), ("exp", True)):
+        n_g = _series(rels_map, pool_map, queries, "ndcg", k=K, exp_gain=exp)
+        sensitivity["ndcg_gain"][label] = {m: round(metrics.mean(n_g[m]), 4) for m in METHODS}
+
+    return {
+        "methods": methods,
+        "overlap": overlap,
+        "significance": significance,
+        "sensitivity": sensitivity,
+        "k_values": K_VALUES,
+        "top_k": K,
+        "threshold": T,
+        "n_queries": len(queries),
+    }
 
 
 def _write_outputs(per_query_rows: list[dict], summary: dict) -> None:
+    os.makedirs(_RESULTS_DIR, exist_ok=True)
     csv_path = os.path.join(_RESULTS_DIR, "per_query.csv")
-    with open(csv_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=list(per_query_rows[0].keys()))
-        writer.writeheader()
-        writer.writerows(per_query_rows)
+    if per_query_rows:
+        with open(csv_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=list(per_query_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(per_query_rows)
+        print(f"\n[저장] {csv_path}")
+    else:
+        print("\n[경고] 기록할 쿼리 결과가 없어 per_query.csv를 건너뜁니다.")
 
     summary_path = os.path.join(_RESULTS_DIR, "summary.json")
     with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
-
-    print(f"\n[저장] {csv_path}")
     print(f"[저장] {summary_path}")
 
 
 def _print_summary(summary: dict, skipped: list[str]) -> None:
     k_values = summary["k_values"]
+    K = summary["top_k"]
+    T = summary["threshold"]
     cols = (["method"] + [f"p@{k}" for k in k_values] + [f"avgrel@{k}" for k in k_values]
-            + [f"ndcg@{k}" for k in k_values] + ["mrr", "latency_ms"])
+            + [f"ndcg@{k}" for k in k_values]
+            + ["mrr", "latency_median_ms", "latency_p95_ms"])
     widths = {c: max(len(c), 10) for c in cols}
+    lat_cols = {"latency_median_ms", "latency_p95_ms"}
 
     print("\n" + "=" * 60)
-    print("검색 방식 비교 (평균)")
+    print(f"검색 방식 비교 (평균, threshold={T}, n={summary['n_queries']})")
     print("=" * 60)
     header = "  ".join(c.ljust(widths[c]) for c in cols)
     print(header)
@@ -181,13 +272,38 @@ def _print_summary(summary: dict, skipped: list[str]) -> None:
     for m, vals in summary["methods"].items():
         cells = [m.ljust(widths["method"])]
         for c in cols[1:]:
-            cells.append(f"{vals[c]:.4f}".ljust(widths[c]) if c != "latency_ms"
-                         else f"{vals[c]:.1f}".ljust(widths[c]))
+            cells.append(f"{vals[c]:.1f}".ljust(widths[c]) if c in lat_cols
+                         else f"{vals[c]:.4f}".ljust(widths[c]))
         print("  ".join(cells))
 
-    print("\n방식 간 결과 겹침 (Jaccard, 높을수록 비슷):")
+    print("\n방식 간 결과 겹침 (Jaccard, 1에 가까울수록 세 방식이 같은 걸 뽑음):")
     for pair, val in summary["overlap"].items():
         print(f"  {pair}: {val:.3f}")
+
+    print(f"\n유의성 (hybrid − baseline, 95% 부트스트랩 CI / n={summary['n_queries']}):")
+    for pair, tests in summary["significance"].items():
+        base = pair.replace("hybrid_vs_", "")
+        print(f"  vs {base}:")
+        for name, r in tests.items():
+            mark = "유의✅" if r["significant"] else "무의미(차이없음 가능)"
+            print(f"    {name:<8} Δ={r['mean_diff']:+.4f}  CI[{r['ci_low']:+.4f}, {r['ci_high']:+.4f}]  "
+                  f"승={r['wins']}/{r['n']}  → {mark}")
+
+    print(f"\n민감도 — threshold (p@{K}, mrr):")
+    for t_label, per_m in summary["sensitivity"]["threshold"].items():
+        cells = ", ".join(f"{m}: p@{K}={v[f'p@{K}']:.3f}/mrr={v['mrr']:.3f}" for m, v in per_m.items())
+        print(f"  {t_label}: {cells}")
+    print(f"민감도 — nDCG@{K} gain:")
+    for g_label, per_m in summary["sensitivity"]["ndcg_gain"].items():
+        cells = ", ".join(f"{m}={v:.4f}" for m, v in per_m.items())
+        print(f"  {g_label}: {cells}")
+
+    judge = summary.get("judge", {})
+    fails, total = judge.get("parse_failures", 0), judge.get("total_scored", 0)
+    if total:
+        rate = fails / total * 100
+        flag = "  ⚠ 파싱 실패율 높음 — 결과 신뢰도 재검토 필요" if rate >= 5 else ""
+        print(f"\n판정 파싱 실패: {fails}/{total} ({rate:.1f}%){flag}")
 
 
 if __name__ == "__main__":
