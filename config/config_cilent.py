@@ -18,12 +18,15 @@ TREND_COLLECTION = "trend_scores"     # 트렌드 판정 결과 저장용 (키�
 # 검색 설정
 TAVILY_MAX_RESULTS = 20
 TAVILY_SEARCH_DEPTH = "advanced"  # "basic" or "advanced"
+# Tavily relevance score 하한선. 기존 수집분의 is_relevant 라벨 기준
+# 0.3에서 정상 문서 89% 유지 / 오염 문서 58% 차단 — 잔여 오염은 전처리 judge가 거름.
+TAVILY_MIN_SCORE = 0.3
 
 # YouTube
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 YOUTUBE_MAX_RESULTS = 30    # 키워드당 검색할 영상 개수
 YOUTUBE_MAX_COMMENTS = 50   # 영상당 가져올 댓글 개수
-YOUTUBE_MIN_COMMENTS = 5    # 댓글 수가 이 미만인 영상은 저장 제외
+# (댓글 수 하한선은 제거됨 — 제목/설명 키워드 필터가 관련성 판별을 대신함)
 
 
 # 웹 크롤러 공통 설정
