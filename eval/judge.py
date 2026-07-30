@@ -66,9 +66,10 @@ class Judge:
         self.cache_path = cache_path
         self.model = model
         self.cache: dict[str, int] = self._load_cache()
-        # 파싱 실패 관측용 카운터. 실패가 많으면 "다 비슷하다"는 결론이 조용히 오염되므로
-        # 마지막에 [파싱 실패 N / 전체 M]을 반드시 노출한다.
-        self.parse_failures = 0
+        # 실패 관측용 카운터. 실패가 많으면 "다 비슷하다"는 결론이 조용히 오염되므로
+        # 마지막에 [파싱 실패 N / API 실패 M / 전체 K]를 반드시 노출한다.
+        self.parse_failures = 0   # 응답은 왔으나 0/1/2를 못 뽑음
+        self.api_failures = 0     # NIM 과부하 등으로 재시도 소진 → 응답 자체를 못 받음
         self.total_scored = 0
         self.client = ChatNVIDIA(
             model=model,
@@ -96,7 +97,12 @@ class Judge:
 
     def _invoke_with_retry(self, prompt: str):
         """
-        일시적 서버 오류(503/429 등)면 지수 백오프로 재시도. 그 외 오류는 즉시 전파.
+        일시적 서버 오류(503/529 등)면 지수 백오프로 재시도.
+
+        - 재시도 불가한 오류(인증 실패 등 재시도해도 소용없는 것)는 즉시 전파한다.
+        - 재시도 가능한 오류를 끝까지 소진하면 전체 실행을 죽이는 대신 None을 반환한다.
+          NIM 과부하로 한 청크가 안 되더라도 이미 완료한 59쿼리를 살리기 위함
+          (호출부가 api_failures로 카운트하고 넘어간다).
         langchain_nvidia는 HTTP 오류를 일반 Exception(메시지에 코드 포함)으로 던지므로
         메시지 문자열로 재시도 가능 여부를 판별한다.
         """
@@ -106,8 +112,11 @@ class Judge:
             except Exception as e:
                 message = str(e)
                 retryable = any(marker in message for marker in _RETRYABLE_MARKERS)
-                if not retryable or attempt == _MAX_RETRIES - 1:
+                if not retryable:
                     raise
+                if attempt == _MAX_RETRIES - 1:
+                    print(f"  [판정 포기] NIM 재시도 {_MAX_RETRIES}회 모두 실패 — 이 청크는 판정실패로 넘어감: {message[:80]}")
+                    return None
                 wait = min(_BACKOFF_BASE_SEC * (2 ** attempt), _BACKOFF_CAP_SEC)
                 print(f"  [판정 재시도] NIM 일시 오류, {wait}초 후 재시도 ({attempt + 1}/{_MAX_RETRIES - 1}): {message[:80]}")
                 time.sleep(wait)
@@ -132,6 +141,13 @@ class Judge:
         self.total_scored += 1
         prompt = _PROMPT.format(question=question, chunk=chunk_text)
         response = self._invoke_with_retry(prompt)
+
+        if response is None:
+            # NIM 과부하로 재시도 소진 → 크래시 대신 실패 카운트 후 0 폴백.
+            # 캐시에 저장하지 않으므로 나중에 한산할 때 재실행하면 이 청크만 다시 시도한다.
+            self.api_failures += 1
+            return 0
+
         parsed = self._parse_score(response.content)
 
         if parsed is None:

@@ -135,6 +135,7 @@ def main() -> None:
     summary = _summarize(rels_map, pool_map, ids_map, latency_acc, queries)
     summary["judge"] = {
         "parse_failures": judge.parse_failures,
+        "api_failures": judge.api_failures,
         "total_scored": judge.total_scored,
     }
     _write_outputs(per_query_rows, summary)
@@ -299,11 +300,15 @@ def _print_summary(summary: dict, skipped: list[str]) -> None:
         print(f"  {g_label}: {cells}")
 
     judge = summary.get("judge", {})
-    fails, total = judge.get("parse_failures", 0), judge.get("total_scored", 0)
+    total = judge.get("total_scored", 0)
+    parse_fails = judge.get("parse_failures", 0)
+    api_fails = judge.get("api_failures", 0)
     if total:
-        rate = fails / total * 100
-        flag = "  ⚠ 파싱 실패율 높음 — 결과 신뢰도 재검토 필요" if rate >= 5 else ""
-        print(f"\n판정 파싱 실패: {fails}/{total} ({rate:.1f}%){flag}")
+        total_fails = parse_fails + api_fails
+        rate = total_fails / total * 100
+        flag = "  ⚠ 실패율 높음 — 미판정 청크가 0으로 처리돼 지표가 낮게 나옴, 한산할 때 재실행 권장" if rate >= 5 else ""
+        print(f"\n판정 실패: 총 {total_fails}/{total} ({rate:.1f}%)"
+              f"  [파싱실패 {parse_fails} / API실패(NIM과부하) {api_fails}]{flag}")
 
 
 if __name__ == "__main__":
