@@ -29,11 +29,14 @@ JUDGE_MODEL = "deepseek-ai/deepseek-v4-flash"
 _RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 _CACHE_PATH = os.path.join(_RESULTS_DIR, "judge_cache.json")
 
-# NIM 무료 엔드포인트는 혼잡 시 503(ResourceExhausted)을 자주 낸다 → 재시도로 흡수.
+# NIM 무료 엔드포인트는 혼잡 시 503(ResourceExhausted)/529(Overloaded)를 자주 낸다 → 재시도로 흡수.
 _MAX_RETRIES = 6
 _BACKOFF_BASE_SEC = 3          # 3, 6, 12, 24, 48, 60(캡) 초로 늘려가며 재시도
 _BACKOFF_CAP_SEC = 60
-_RETRYABLE_MARKERS = ("503", "502", "504", "429", "ResourceExhausted", "Service Unavailable")
+_RETRYABLE_MARKERS = (
+    "503", "502", "504", "429", "529",
+    "ResourceExhausted", "Service Unavailable", "Overloaded", "temporarily overloaded",
+)
 
 _PROMPT = """당신은 검색 결과의 관련도를 매기는 평가자입니다.
 아래 [질문]에 답하는 데 [문서]가 얼마나 관련 있는지 0, 1, 2 중 하나로만 판정하세요.
