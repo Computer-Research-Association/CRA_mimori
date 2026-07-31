@@ -9,7 +9,12 @@ import hashlib
 import sys
 import os
 
-from config.config_cilent import TAVILY_API_KEY, TAVILY_MAX_RESULTS, TAVILY_SEARCH_DEPTH
+from config.config_cilent import (
+    TAVILY_API_KEY,
+    TAVILY_MAX_RESULTS,
+    TAVILY_MIN_SCORE,
+    TAVILY_SEARCH_DEPTH,
+)
 from DB.mongo_client import get_collection
 
 
@@ -45,8 +50,9 @@ def crawl(keyword: str) -> list[dict]:
 
     print(f"[Tavily] '{keyword}' 검색 시작...")
 
-    # 한국어 커뮤니티 맥락 강화를 위해 쿼리 보강
-    query = f"{keyword} 뜻 유래 밈 인터넷 커뮤니티"
+    # 한국어 커뮤니티 맥락 강화를 위해 쿼리 보강.
+    # 키워드를 따옴표로 감싸 동음이의어/부분 일치 오염을 줄임 (구문 일치 우선).
+    query = f'"{keyword}" 뜻 유래 밈 인터넷 커뮤니티'
 
     response = client.search(
         query=query,
@@ -59,10 +65,15 @@ def crawl(keyword: str) -> list[dict]:
     results = response.get("results", [])
     print(f"[Tavily] {len(results)}개 결과 수신")
 
-    saved, skipped = 0, 0
+    saved, skipped, low_score = 0, 0, 0
     documents = []
 
     for r in results:
+        # relevance score 하한선 미달 결과는 오염 가능성이 높아 저장 제외
+        if r.get("score", 0.0) < TAVILY_MIN_SCORE:
+            low_score += 1
+            continue
+
         doc = build_document(keyword, r)
         try:
             collection.insert_one(doc)
@@ -72,7 +83,10 @@ def crawl(keyword: str) -> list[dict]:
             # _id 중복 = 이미 존재하는 문서 → skip
             skipped += 1
 
-    print(f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개")
+    print(
+        f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개 "
+        f"/ 저점수 제외(<{TAVILY_MIN_SCORE}): {low_score}개"
+    )
     return documents
 
 

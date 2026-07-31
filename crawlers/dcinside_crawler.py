@@ -35,11 +35,22 @@ from DB.mongo_client import get_collection
 
 SEARCH_BASE = "https://search.dcinside.com"
 GALL_BASE   = "https://gall.dcinside.com"
+MIN_CONTENT_LEN = 30  # 본문 최소 길이 (감탄사성 한 줄짜리 게시글 제외)
 
 
 def make_doc_id(keyword: str, url: str) -> str:
     raw = f"{keyword}::{url}"
     return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _normalize(text: str) -> str:
+    """키워드 매칭용 정규화 — 공백/특수문자 제거 + 소문자화."""
+    return re.sub(r"[\s~!?.,'\"…]+", "", text).lower()
+
+
+def _is_relevant(keyword: str, title: str, body: str) -> bool:
+    """제목+본문에 키워드가 포함됐는지 확인 (정규화 후 부분 일치)."""
+    return _normalize(keyword) in _normalize(f"{title} {body}")
 
 
 # ── 1. 검색 결과 URL 수집 ─────────────────────────────────────────────────────
@@ -48,7 +59,7 @@ def _parse_search_date(text: str) -> datetime | None:
     """
     검색 결과의 span.date_time 텍스트를 datetime으로 변환.
     형식: "2026.07.22 11:35" (YYYY.MM.DD HH:MM)
-    파싱 실패 시 None 반환 → 최근 글로 간주하고 수집.
+    파싱 실패 시 None 반환 → 호출부에서 건너뜀.
     """
     text = text.strip()
     for fmt in ("%Y.%m.%d %H:%M", "%Y.%m.%d"):
@@ -96,8 +107,9 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
         if not result_ul:
             break
 
-        new_found = 0    # 이번 페이지에서 처음 본 URL 수 (루프 종료 판단용)
-        old_skipped = 0  # 날짜 필터로 제외된 글 수
+        new_found = 0      # 이번 페이지에서 처음 본 URL 수 (루프 종료 판단용)
+        old_skipped = 0    # 날짜 필터로 제외된 글 수
+        parse_failed = 0   # 날짜 파싱 실패로 제외된 글 수
 
         for li in result_ul.find_all("li"):
             a = li.find("a", class_="tit_txt")
@@ -111,7 +123,12 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
 
             date_span = li.find("span", class_="date_time")
             pub_date = _parse_search_date(date_span.get_text()) if date_span else None
-            if pub_date and pub_date < cutoff:
+            if pub_date is None:
+                raw = date_span.get_text(strip=True) if date_span else "없음"
+                print(f"[디시인사이드] 날짜 파싱 실패, 건너뜀: '{raw}'")
+                parse_failed += 1
+                continue
+            if pub_date < cutoff:
                 old_skipped += 1
                 continue
 
@@ -119,7 +136,9 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
             if len(posts) >= max_posts:
                 break
 
-        print(f"[디시인사이드] 페이지 {page}: {new_found - old_skipped}개 수집, {old_skipped}개 날짜 제외 (누적: {len(posts)}개)")
+        page_collected = new_found - old_skipped - parse_failed
+        extra = f", {parse_failed}개 파싱실패" if parse_failed else ""
+        print(f"[디시인사이드] 페이지 {page}: {page_collected}개 수집, {old_skipped}개 날짜 제외{extra} (누적: {len(posts)}개)")
 
         if new_found == 0:
             break
@@ -224,7 +243,7 @@ def crawl_dcinside(keyword: str) -> list[dict]:
     posts = _get_post_urls(session, keyword, CRAWL_MAX_POSTS)
     print(f"[디시인사이드] 총 {len(posts)}개 URL 수집 완료")
 
-    saved, skipped, failed = 0, 0, 0
+    saved, skipped, failed, irrelevant = 0, 0, 0, 0
     documents = []
 
     for url, pub_date in posts:
@@ -241,6 +260,18 @@ def crawl_dcinside(keyword: str) -> list[dict]:
 
         if not body.strip():
             failed += 1
+            continue
+
+        # 최소 길이: 감탄사성 한 줄짜리 게시글 제외
+        if len(body.strip()) < MIN_CONTENT_LEN:
+            print(f"[디시인사이드] 본문 너무 짧음({len(body.strip())}자), 제외: {title[:40]!r}")
+            irrelevant += 1
+            continue
+
+        # 관련성 게이트: 제목·본문에 키워드 없으면 제외
+        if not _is_relevant(keyword, title, body):
+            print(f"[디시인사이드] 관련 없음, 제외: {title[:40]!r}")
+            irrelevant += 1
             continue
 
         # 댓글 수집 (e_s_n_o가 있을 때만)
@@ -275,7 +306,7 @@ def crawl_dcinside(keyword: str) -> list[dict]:
         except Exception:
             skipped += 1
 
-    print(f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개 / 실패: {failed}개")
+    print(f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개 / 실패: {failed}개 / 관련없음: {irrelevant}개")
     return documents
 
 
