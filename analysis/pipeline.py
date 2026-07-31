@@ -62,13 +62,26 @@ def build_prompt(keyword: str, chunks: list[str]) -> str:
     return template.format(keyword=keyword, content=content, trend_info=trend_info)
 
 
-_RETRYABLE_SIGNALS = ("503", "ResourceExhausted", "Service Unavailable")
+import re
+
+# 상태 코드가 메시지에 "[529]"처럼 대괄호로 박혀 나오는 경우, 5xx 전부를 서버 쪽
+# 일시적 오류로 간주한다 (503 ResourceExhausted, 529 Overloaded 등 매번 새 코드가
+# 나올 수 있어 코드 목록을 하드코딩하는 대신 패턴으로 잡는다).
+_RETRYABLE_CODE_PATTERN = re.compile(r"\[(5\d{2})\]")
+_RETRYABLE_KEYWORDS = ("ResourceExhausted", "Service Unavailable", "Overloaded")
+
+
+def _is_retryable(error_message: str) -> bool:
+    if _RETRYABLE_CODE_PATTERN.search(error_message):
+        return True
+    return any(keyword in error_message for keyword in _RETRYABLE_KEYWORDS)
 
 
 def invoke_with_retry(nvidia_client, messages, max_retries: int = 3, base_delay: float = 5.0):
-    """nvidia_client.invoke()를 호출하되, 503/ResourceExhausted처럼 일시적인 오류면
-    지수 백오프로 재시도한다. 그 외 오류(인증 실패 등 재시도해도 소용없는 것)는 바로 던진다.
-    진행 상황은 print로 출력해 사용자가 실시간으로 확인할 수 있게 한다."""
+    """nvidia_client.invoke()를 호출하되, 5xx(503 ResourceExhausted, 529 Overloaded 등)
+    처럼 일시적인 서버 오류면 지수 백오프로 재시도한다. 그 외 오류(인증 실패 등
+    재시도해도 소용없는 것)는 바로 던진다. 진행 상황은 print로 출력해 사용자가
+    실시간으로 확인할 수 있게 한다."""
     for attempt in range(1, max_retries + 1):
         try:
             print(f"[analyze] LLM 호출 시도 {attempt}/{max_retries}...")
@@ -77,7 +90,7 @@ def invoke_with_retry(nvidia_client, messages, max_retries: int = 3, base_delay:
                 print(f"[analyze] 시도 {attempt}에서 성공")
             return response
         except Exception as e:
-            retryable = any(signal in str(e) for signal in _RETRYABLE_SIGNALS)
+            retryable = _is_retryable(str(e))
             print(f"[analyze] 시도 {attempt}/{max_retries} 실패: {e}")
 
             if not retryable:
