@@ -12,5 +12,9 @@ scheduler/scheduler.db
 scheduler/status.txt
 scheduler/last_crawl_at.txt
 .venv/
+qdrant_storage/
 mongo_dump/
+.idea
+# 판정 캐시만 무시하고 summary.json / per_query.csv는 커밋해 실험 재현성을 남긴다
+eval/results/judge_cache.json
 .google_trends_cache.json

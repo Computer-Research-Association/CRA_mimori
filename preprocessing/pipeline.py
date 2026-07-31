@@ -17,6 +17,7 @@ from config.config_cilent import CLEANED_COLLECTION
 from DB.mongo_client import get_collection
 from preprocessing.cleaner import clean_text
 from preprocessing.chunker import chunk_document
+from preprocessing.relevance import judge_doc
 
 
 def preprocess_documents(keyword: str | None = None) -> list[dict]:
@@ -47,6 +48,15 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
         doc_for_chunking["clean_content"] = clean_content
         chunks = chunk_document(doc_for_chunking)
 
+        relevance = judge_doc({
+            "keyword": doc.get("keyword"),
+            "title": doc.get("title"),
+            "chunks": chunks,
+        })
+        for chunk in chunks:
+            chunk["is_relevant"] = relevance.is_relevant
+            chunk["relevance_position"] = relevance.position
+
         output_doc = {
             "_id": doc["_id"],
             "keyword": doc.get("keyword"),
@@ -60,6 +70,8 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
             # 축약하지 않고 전부 저장한다.
             "chunks": chunks,
             "chunk_count": len(chunks),
+            "is_relevant": relevance.is_relevant,
+            "relevance_position": relevance.position,
             "processed_at": datetime.now(timezone.utc),
         }
         output_collection.replace_one({"_id": doc["_id"]}, output_doc, upsert=True)

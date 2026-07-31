@@ -35,13 +35,20 @@ def _query_points_with_retry(max_retries: int = 3, base_delay: float = 2.0, **kw
             time.sleep(wait)
 
 
-def _build_filter(keyword: str, sources: list[str] | None = None) -> models.Filter:
-    """keyword(필수) + source(선택, 예: tavily 제외하고 dcinside/natepann만) 필터.
+def _build_filter(
+    keyword: str,
+    sources: list[str] | None = None,
+    is_relevant: bool | None = None,
+) -> models.Filter:
+    """keyword(필수) + source(선택) + is_relevant(선택) 필터.
 
-    sources가 None이면 소스 제한 없이 keyword만 필터링한다(기존 동작과 동일)."""
+    sources가 None이면 소스 제한 없이 keyword만 필터링한다(기존 동작과 동일).
+    is_relevant=True → 오염 판정된 청크 제외. None이면 필드 유무 무관(기존 동작과 동일)."""
     must = [models.FieldCondition(key="keyword", match=models.MatchValue(value=keyword))]
     if sources:
         must.append(models.FieldCondition(key="source", match=models.MatchAny(any=sources)))
+    if is_relevant is not None:
+        must.append(models.FieldCondition(key="is_relevant", match=models.MatchValue(value=is_relevant)))
     return models.Filter(must=must)
 
 
@@ -87,9 +94,8 @@ def _select_with_source_cap(
     valid: list[models.ScoredPoint], top_k: int, max_per_source: int | None
 ) -> list[models.ScoredPoint]:
     """점수 내림차순인 valid에서, 한 소스가 top_k를 독점하지 못하도록 소스당
-    max_per_source개까지만 우선 채운다(예: tavily 블로그가 필터를 잘 통과해서
-    점수순으로만 뽑으면 top_k를 다 차지하는 상황 방지). 한도 내에서 top_k가 안
-    채워지면, 한도를 넘긴 나머지(leftover)로 부족분을 채워 빈 자리를 최소화한다.
+    max_per_source개까지만 우선 채운다. 한도 내에서 top_k가 안 채워지면,
+    한도를 넘긴 나머지(leftover)로 부족분을 채워 빈 자리를 최소화한다.
     """
     if not max_per_source:
         return valid[:top_k]
@@ -119,6 +125,7 @@ def search_relevant_chunks(
     sparse: dict[str, float],
     top_k: int = RAG_TOP_K,
     sources: list[str] | None = None,
+    is_relevant: bool | None = None,
     min_length: int = _DEFAULT_MIN_CHUNK_LENGTH,
     over_fetch_factor: int = _DEFAULT_OVER_FETCH_FACTOR,
     min_dense_score: float = _DEFAULT_MIN_DENSE_SCORE,
@@ -130,22 +137,11 @@ def search_relevant_chunks(
     (min_length 미만) 크롤링 오염이 의심되는(키워드 미포함) 청크를 제외한 뒤 상위
     top_k개를 반환.
 
+    is_relevant=True → Qdrant 필터 단계에서 오염 판정 청크를 제외.
     over_fetch_factor: 필터링으로 줄어들 걸 감안해 top_k*over_fetch_factor개까지
-    넉넉히 후보를 받아온다. 필터를 통과한 게 top_k보다 적으면, 탈락한 후보 중
-    RRF 점수 높은 순으로 채워서 빈 자리 없이 top_k를 최대한 채운다.
-
-    min_dense_score: RRF fused score는 순위 기반이라 절대적인 관련성 척도가 아니므로,
-    "리터럴 키워드 매치 + 노이즈"(예: 무관한 댓글이 붙어 길이 필터를 우연히 통과한 청크)를
-    걸러내기 위해 원본 dense 코사인 유사도에 별도로 하한선을 둘 수 있다. 0.0이면 비활성
-    (기본값, 기존 동작과 동일). sparse만으로 강하게 매치된 청크가 dense 하한선 때문에
-    같이 걸러질 수 있으니, 값을 올릴 땐 5번 셀에서 결과를 보며 조심스럽게 조정할 것.
-
-    max_per_source: 한 소스(예: tavily 블로그)가 필터를 잘 통과해서 top_k를 독점하는
-    걸 막기 위한 소스당 상한. None이면 비활성(기본값, 기존 동작과 동일). 이건 "관련성"이나
-    "신뢰도"를 판단하는 게 아니라 단순히 소스 다양성을 강제하는 것이므로, 근본적으로
-    신뢰 안 되는 콘텐츠를 걸러내는 수단은 아니다.
+    넉넉히 후보를 받아온다.
     """
-    keyword_filter = _build_filter(keyword, sources)
+    keyword_filter = _build_filter(keyword, sources, is_relevant)
     raw_limit = top_k * over_fetch_factor
 
     dense_score_map = {}
@@ -207,13 +203,14 @@ def search_dense_only(
     dense_vec: list[float],
     top_k: int = RAG_TOP_K,
     sources: list[str] | None = None,
+    is_relevant: bool | None = None,
 ) -> list[models.ScoredPoint]:
     """
     Qdrant mimori_chunks에서 payload.keyword == keyword(+ sources 지정 시 그 소스만)로
     필터링한 뒤, dense 벡터만으로(sparse/융합 없이) 상위 top_k개 포인트를 반환.
     순수 의미 유사도 검색 결과만 확인하고 싶을 때 사용한다.
     """
-    keyword_filter = _build_filter(keyword, sources)
+    keyword_filter = _build_filter(keyword, sources, is_relevant)
 
     response = _query_points_with_retry(
         collection_name=QDRANT_COLLECTION,
@@ -231,13 +228,14 @@ def search_sparse_only(
     sparse: dict[str, float],
     top_k: int = RAG_TOP_K,
     sources: list[str] | None = None,
+    is_relevant: bool | None = None,
 ) -> list[models.ScoredPoint]:
     """
     Qdrant mimori_chunks에서 payload.keyword == keyword(+ sources 지정 시 그 소스만)로
     필터링한 뒤, sparse(lexical) 벡터만으로(dense/융합 없이) 상위 top_k개 포인트를 반환.
     단어 일치 기반 유사도 검색 결과만 확인하고 싶을 때 사용한다.
     """
-    keyword_filter = _build_filter(keyword, sources)
+    keyword_filter = _build_filter(keyword, sources, is_relevant)
 
     response = _query_points_with_retry(
         collection_name=QDRANT_COLLECTION,

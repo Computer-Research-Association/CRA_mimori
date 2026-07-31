@@ -50,3 +50,14 @@ def ensure_collection(name: str = QDRANT_COLLECTION) -> None:
         field_name="keyword",
         field_schema=models.PayloadSchemaType.KEYWORD,
     )
+    client.create_payload_index(
+        collection_name=name,
+        field_name="parent_id",
+        field_schema=models.PayloadSchemaType.KEYWORD,
+    )
+    # is_relevant 백필 완료 시 필터 조건으로 쓰이므로 인덱스 미리 보장
+    client.create_payload_index(
+        collection_name=name,
+        field_name="is_relevant",
+        field_schema=models.PayloadSchemaType.BOOL,
+    )
