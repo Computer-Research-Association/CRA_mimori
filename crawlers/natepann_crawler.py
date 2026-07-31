@@ -30,6 +30,7 @@ from crawlers.base import make_session, safe_get, get_date_cutoff
 from DB.mongo_client import get_collection
 
 BASE_URL = "https://pann.nate.com"
+MIN_CONTENT_LEN = 30  # 본문+댓글 합산 최소 길이 (감탄사성 짧은 글 제외)
 
 
 def make_doc_id(keyword: str, url: str) -> str:
@@ -37,13 +38,26 @@ def make_doc_id(keyword: str, url: str) -> str:
     return hashlib.md5(raw.encode()).hexdigest()
 
 
+def _normalize(text: str) -> str:
+    """키워드 매칭용 정규화 — 공백/특수문자 제거 + 소문자화."""
+    return re.sub(r"[\s~!?.,'\"…]+", "", text).lower()
+
+
+def _is_relevant(keyword: str, title: str, content: str) -> bool:
+    """제목+본문에 키워드가 포함됐는지 확인 (정규화 후 부분 일치)."""
+    return _normalize(keyword) in _normalize(f"{title} {content}")
+
+
 def _parse_search_date(text: str) -> datetime | None:
     """
     검색 결과의 span.date 텍스트를 datetime으로 변환.
     형식: "08.04.18 14:00" (YY.MM.DD HH:MM) 또는 "08.04.18"
-    파싱 실패(오늘 글은 "14:00"처럼 시각만 표시) 시 None 반환 → 최근 글로 간주.
+    오늘 글은 "14:00"처럼 시각만 표시 → 오늘 날짜로 처리.
+    그 외 파싱 실패 시 None 반환 → 호출부에서 건너뜀.
     """
     text = text.strip()
+    if re.match(r"^\d{1,2}:\d{2}$", text):
+        return datetime.now(timezone.utc)
     for fmt in ("%y.%m.%d %H:%M", "%y.%m.%d"):
         try:
             return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
@@ -82,8 +96,9 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
         if not result_ul:
             break
 
-        new_found = 0    # 이번 페이지에서 처음 본 URL 수 (날짜 필터와 무관 — 루프 종료 판단용)
-        old_skipped = 0  # 날짜 필터로 제외된 글 수
+        new_found = 0      # 이번 페이지에서 처음 본 URL 수 (루프 종료 판단용)
+        old_skipped = 0    # 날짜 필터로 제외된 글 수
+        parse_failed = 0   # 날짜 파싱 실패로 제외된 글 수
 
         for li in result_ul.find_all("li", recursive=False):
             a = li.find("a", href=re.compile(r"/talk/\d+"))
@@ -98,7 +113,12 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
 
             date_span = li.find("span", class_="date")
             pub_date = _parse_search_date(date_span.get_text()) if date_span else None
-            if pub_date and pub_date < cutoff:
+            if pub_date is None:
+                raw = date_span.get_text(strip=True) if date_span else "없음"
+                print(f"[네이트판] 날짜 파싱 실패, 건너뜀: '{raw}'")
+                parse_failed += 1
+                continue
+            if pub_date < cutoff:
                 old_skipped += 1
                 continue
 
@@ -106,7 +126,9 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
             if len(posts) >= max_posts:
                 break
 
-        print(f"[네이트판] 페이지 {page}: {new_found - old_skipped}개 수집, {old_skipped}개 날짜 제외 (누적: {len(posts)}개)")
+        page_collected = new_found - old_skipped - parse_failed
+        extra = f", {parse_failed}개 파싱실패" if parse_failed else ""
+        print(f"[네이트판] 페이지 {page}: {page_collected}개 수집, {old_skipped}개 날짜 제외{extra} (누적: {len(posts)}개)")
 
         if new_found == 0:
             break  # 새 URL 없으면 중단
@@ -177,7 +199,7 @@ def crawl_natepann(keyword: str) -> list[dict]:
     posts = _get_post_urls(session, keyword, CRAWL_MAX_POSTS)
     print(f"[네이트판] 총 {len(posts)}개 URL 수집 완료")
 
-    saved, skipped, failed = 0, 0, 0
+    saved, skipped, failed, irrelevant = 0, 0, 0, 0
     documents = []
 
     for url, pub_date in posts:
@@ -191,6 +213,18 @@ def crawl_natepann(keyword: str) -> list[dict]:
 
         if not content.strip():
             failed += 1
+            continue
+
+        # 최소 길이: 감탄사성 짧은 글 제외
+        if len(content.strip()) < MIN_CONTENT_LEN:
+            print(f"[네이트판] 너무 짧음({len(content.strip())}자), 제외: {title[:40]!r}")
+            irrelevant += 1
+            continue
+
+        # 관련성 게이트: 제목·본문에 키워드 없으면 제외
+        if not _is_relevant(keyword, title, content):
+            print(f"[네이트판] 관련 없음, 제외: {title[:40]!r}")
+            irrelevant += 1
             continue
 
         # 제목이 추출 안 된 경우 URL에서 fallback
@@ -217,7 +251,7 @@ def crawl_natepann(keyword: str) -> list[dict]:
         except Exception:
             skipped += 1
 
-    print(f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개 / 실패: {failed}개")
+    print(f"[MongoDB] 저장: {saved}개 / 스킵(중복): {skipped}개 / 실패: {failed}개 / 관련없음: {irrelevant}개")
     return documents
 
 
