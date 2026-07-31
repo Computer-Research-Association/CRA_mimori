@@ -38,14 +38,43 @@ _RETRYABLE_MARKERS = (
     "ResourceExhausted", "Service Unavailable", "Overloaded", "temporarily overloaded",
 )
 
-_PROMPT = """당신은 검색 결과의 관련도를 매기는 평가자입니다.
-아래 [질문]에 답하는 데 [문서]가 얼마나 관련 있는지 0, 1, 2 중 하나로만 판정하세요.
+_PROMPT = """당신은 한국어 밈·신조어 검색 결과의 관련도를 매기는 평가자입니다.
+아래 [질문]에 답하는 데 [문서]가 얼마나 관련 있는지 판정하세요.
 
+기준:
 - 0 = 무관: 질문에 답하는 데 전혀 도움이 되지 않음
 - 1 = 부분 관련: 키워드나 주제는 겹치지만 질문에 직접 답하지는 않음
 - 2 = 명확히 관련: 질문에 직접적인 답이 되는 내용을 포함
 
-반드시 숫자 하나(0, 1, 2)만 출력하세요. 다른 말은 하지 마세요.
+출력 형식 규칙:
+- 점수, 인용, 이유 세 줄을 반드시 순서대로 출력할 것
+- 인용: 문서에서 판정 근거가 된 핵심 구절을 원문 그대로 따옴표 안에 쓸 것. 관련 내용이 전혀 없으면 "없음" 이라고 쓸 것
+- 이유: 위 인용 구절이 질문의 어떤 부분에 답하는지(또는 왜 답이 안 되는지) 설명할 것
+
+판정 예시:
+
+[예시 1 — 0점]
+질문: 야르 무슨 뜻이야?
+문서: 오늘 점심 뭐 먹을까요? 김밥이나 라면 어때요?
+점수: 0
+인용: "없음"
+이유: 문서 전체가 식사 내용으로 야르라는 단어조차 없어 질문과 무관하다.
+
+[예시 2 — 1점]
+질문: 야르 무슨 뜻이야?
+문서: 요즘 MZ세대 사이에서 야르, 킹받네, 럭키비키 같은 신조어가 유행하고 있다.
+점수: 1
+인용: "야르, 킹받네, 럭키비키 같은 신조어가 유행하고 있다"
+이유: 야르가 언급되지만 이 구절은 유행 여부만 나열할 뿐 뜻·의미를 전혀 설명하지 않아 질문에 직접 답하지 못한다.
+
+[예시 3 — 2점]
+질문: 야르 무슨 뜻이야?
+문서: '야르'는 '야 이거 레알?'의 줄임말로, 놀라움이나 감탄을 표현하는 신조어다.
+점수: 2
+인용: "'야르'는 '야 이거 레알?'의 줄임말로, 놀라움이나 감탄을 표현하는 신조어다"
+이유: 이 구절이 야르의 어원('야 이거 레알?')과 감정적 의미(놀라움·감탄)를 직접 설명하여 '무슨 뜻인지'라는 질문에 정확히 답한다.
+
+이제 아래를 판정하세요. 반드시 위 예시와 동일한 형식으로만 출력하세요.
 
 [질문]
 {question}
@@ -53,7 +82,7 @@ _PROMPT = """당신은 검색 결과의 관련도를 매기는 평가자입니�
 [문서]
 {chunk}
 
-관련도(0/1/2):"""
+점수: """
 
 # 프롬프트가 바뀌면 옛 라벨을 재사용하면 안 되므로 캐시 키에 프롬프트 해시를 섞는다.
 _PROMPT_VERSION = hashlib.md5(_PROMPT.encode("utf-8")).hexdigest()[:8]
@@ -75,15 +104,16 @@ class Judge:
             model=model,
             api_key=NIM_KEY,
             temperature=0,
-            # 추론 계열 모델이 앞에 토큰을 흘려도 숫자가 잘리지 않도록 여유를 준다.
-            max_completion_tokens=16,
+            max_completion_tokens=128,
             timeout=6000,
         )
 
-    def _load_cache(self) -> dict[str, int]:
+    def _load_cache(self) -> dict[str, dict]:
         if os.path.exists(self.cache_path):
             with open(self.cache_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                raw = json.load(f)
+            # 구버전(int 값) 항목은 이유 없이 score만 보유 — 새 키로 재채점될 때 자연히 교체됨
+            return {k: v for k, v in raw.items() if isinstance(v, dict)}
         return {}
 
     def _save_cache(self) -> None:
@@ -122,33 +152,42 @@ class Judge:
                 time.sleep(wait)
 
     @staticmethod
-    def _parse_score(text: str) -> int | None:
-        """모델 응답에서 첫 0/1/2 숫자를 뽑는다. 못 뽑으면 None(파싱 실패) — 조용한 0 금지."""
-        m = re.search(r"[012]", text or "")
-        return int(m.group()) if m else None
+    def _parse_response(text: str) -> tuple[int, str, str] | None:
+        """
+        모델 응답에서 (점수, 인용, 이유)를 파싱한다.
+        '점수: X / 인용: ... / 이유: ...' 패턴으로 먼저 시도하고,
+        실패하면 숫자만 뽑아 인용·이유는 빈 문자열로 폴백한다.
+        파싱 자체가 불가능하면 None 반환.
+        """
+        text = text or ""
+        score_m = re.search(r"점수\s*:\s*([012])", text)
+        quote_m = re.search(r"인용\s*:\s*(.+)", text)
+        reason_m = re.search(r"이유\s*:\s*(.+)", text)
+        if score_m:
+            score = int(score_m.group(1))
+            quote = quote_m.group(1).strip() if quote_m else ""
+            reason = reason_m.group(1).strip() if reason_m else ""
+            return score, quote, reason
+        fallback = re.search(r"[012]", text)
+        if fallback:
+            return int(fallback.group()), "", ""
+        return None
 
     def score(self, query_id: str, question: str, chunk_id: str, chunk_text: str) -> int:
-        """
-        (query_id, chunk_id) 관련도 반환. 캐시에 있으면 그대로, 없으면 LLM 호출 후 저장.
-
-        파싱 실패 시에는 0으로 폴백하되 캐시에 저장하지 않고(재실행 때 재시도)
-        parse_failures를 올려 마지막 요약에서 실패율을 드러낸다.
-        """
+        """(query_id, chunk_id) 관련도(int)를 반환한다. 캐시 우선, 없으면 LLM 호출."""
         key = self._cache_key(query_id, chunk_id)
         if key in self.cache:
-            return self.cache[key]
+            return self.cache[key]["score"]
 
         self.total_scored += 1
         prompt = _PROMPT.format(question=question, chunk=chunk_text)
         response = self._invoke_with_retry(prompt)
 
         if response is None:
-            # NIM 과부하로 재시도 소진 → 크래시 대신 실패 카운트 후 0 폴백.
-            # 캐시에 저장하지 않으므로 나중에 한산할 때 재실행하면 이 청크만 다시 시도한다.
             self.api_failures += 1
             return 0
 
-        parsed = self._parse_score(response.content)
+        parsed = self._parse_response(response.content)
 
         if parsed is None:
             self.parse_failures += 1
@@ -156,6 +195,19 @@ class Judge:
             print(f"  [판정 파싱실패] {query_id} / {chunk_id}: 응답={snippet!r} → 0 폴백(캐시 미저장)")
             return 0
 
-        self.cache[key] = parsed
-        self._save_cache()  # 중간에 끊겨도 이미 채점한 건 재사용되도록 매번 저장
-        return parsed
+        score, quote, reason = parsed
+        self.cache[key] = {"score": score, "quote": quote, "reason": reason}
+        self._save_cache()
+        return score
+
+    def get_reason(self, query_id: str, chunk_id: str) -> str | None:
+        """캐시에 저장된 판정 이유를 반환한다. 채점 전이면 None."""
+        key = self._cache_key(query_id, chunk_id)
+        entry = self.cache.get(key)
+        return entry["reason"] if entry else None
+
+    def get_quote(self, query_id: str, chunk_id: str) -> str | None:
+        """캐시에 저장된 원문 인용 구절을 반환한다. 채점 전이면 None."""
+        key = self._cache_key(query_id, chunk_id)
+        entry = self.cache.get(key)
+        return entry.get("quote") if entry else None
