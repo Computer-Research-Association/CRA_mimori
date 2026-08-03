@@ -99,5 +99,5 @@ NIM_KEY = os.getenv("NIM_KEY", "")
 # CloudWatch 로깅
 CLOUDWATCH_ENABLED = os.getenv("CLOUDWATCH_ENABLED", "false")   # "true" 이면 활성화
 AWS_LOG_GROUP      = os.getenv("AWS_LOG_GROUP", "/mimori")       # CloudWatch 로그 그룹
-AWS_REGION         = os.getenv("AWS_REGION", "ap-northeast-2")  # 서울 리전
+AWS_REGION         = os.getenv("AWS_REGION", "us-east-1")       # EC2 리전 (버지니아)
 

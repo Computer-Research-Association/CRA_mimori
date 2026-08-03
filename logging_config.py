@@ -10,7 +10,7 @@ get_logger(name) 을 호출하면:
 CloudWatch 설정 환경변수:
   CLOUDWATCH_ENABLED  : "true" 이면 활성화 (기본값 "false")
   AWS_LOG_GROUP       : CloudWatch 로그 그룹 이름 (기본값 "/mimori")
-  AWS_REGION          : AWS 리전 (기본값 "ap-northeast-2", 서울)
+  AWS_REGION          : AWS 리전 (기본값 "us-east-1", 버지니아)
   AWS_ACCESS_KEY_ID   : AWS 자격증명 (없으면 IAM 롤/인스턴스 프로파일 사용)
   AWS_SECRET_ACCESS_KEY
 """
@@ -68,7 +68,7 @@ def get_logger(name: str) -> logging.Logger:
     try:
         cw_client = boto3.client(
             "logs",
-            region_name=os.getenv("AWS_REGION", "ap-northeast-2"),
+            region_name=os.getenv("AWS_REGION", "us-east-1"),
         )
         cw_handler = watchtower.CloudWatchLogHandler(
             boto3_client=cw_client,
