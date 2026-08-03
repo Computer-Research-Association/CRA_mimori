@@ -96,3 +96,8 @@ RAG_PROMPT_PATH = os.path.join(_ROOT, "analysis", "rag_prompt_template.md")
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
 
+# CloudWatch 로깅
+CLOUDWATCH_ENABLED = os.getenv("CLOUDWATCH_ENABLED", "false")   # "true" 이면 활성화
+AWS_LOG_GROUP      = os.getenv("AWS_LOG_GROUP", "/mimori")       # CloudWatch 로그 그룹
+AWS_REGION         = os.getenv("AWS_REGION", "ap-northeast-2")  # 서울 리전
+

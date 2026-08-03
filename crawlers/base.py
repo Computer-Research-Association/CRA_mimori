@@ -23,6 +23,9 @@ from config.config_cilent import (
     CRAWL_MAX_AGE_YEARS,
     USER_AGENTS,
 )
+from logging_config import get_logger
+
+logger = get_logger("crawler")
 
 
 # ── 도메인별 요청 rate 제한 (스레드 전체 공유) ────────────────────────────────
@@ -200,23 +203,21 @@ def safe_get(
             response = session.get(url, headers=headers, timeout=timeout)
 
             if is_blocked(response):
-                print(f"[base] 차단 감지 — {url} (시도 {attempt}/{CRAWL_MAX_RETRIES})")
-                # 차단은 재시도해도 소용없을 가능성이 높으므로 바로 None 반환
+                logger.warning("차단 감지 — %s (시도 %d/%d)", url, attempt, CRAWL_MAX_RETRIES)
                 return None
 
             return response
 
         except requests.exceptions.Timeout:
-            print(f"[base] 타임아웃 — {url} (시도 {attempt}/{CRAWL_MAX_RETRIES})")
+            logger.warning("타임아웃 — %s (시도 %d/%d)", url, attempt, CRAWL_MAX_RETRIES)
         except requests.exceptions.ConnectionError:
-            print(f"[base] 연결 오류 — {url} (시도 {attempt}/{CRAWL_MAX_RETRIES})")
+            logger.warning("연결 오류 — %s (시도 %d/%d)", url, attempt, CRAWL_MAX_RETRIES)
         except requests.exceptions.RequestException as e:
-            print(f"[base] 요청 오류 — {url}: {e} (시도 {attempt}/{CRAWL_MAX_RETRIES})")
+            logger.warning("요청 오류 — %s: %s (시도 %d/%d)", url, e, attempt, CRAWL_MAX_RETRIES)
 
-        # Exponential backoff: 2^attempt 초 대기
         backoff = 2 ** attempt
-        print(f"[base] {backoff}초 후 재시도...")
+        logger.info("%d초 후 재시도...", backoff)
         time.sleep(backoff)
 
-    print(f"[base] 최대 재시도 초과, 포기 — {url}")
+    logger.error("최대 재시도 초과, 포기 — %s", url)
     return None
