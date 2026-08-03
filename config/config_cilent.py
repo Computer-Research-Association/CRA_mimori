@@ -86,7 +86,7 @@ USER_AGENTS = [
 ]
 
 # LLM 분석 설정
-ANALYSIS_MODEL = ("qwen3:8b")
+ANALYSIS_MODEL = "deepseek-ai/deepseek-v4-flash"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
