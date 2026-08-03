@@ -96,3 +96,6 @@ RAG_PROMPT_PATH = os.path.join(_ROOT, "analysis", "rag_prompt_template.md")
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
 
+# Gemini API (eval/judge용)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+

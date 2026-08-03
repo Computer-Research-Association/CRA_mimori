@@ -19,23 +19,23 @@ import os
 import re
 import time
 
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langchain_google_genai import ChatGoogleGenerativeAI
 
-from config.config_cilent import NIM_KEY
+from config.config_cilent import GEMINI_API_KEY
 
-# 판정용 모델. 분석 파이프라인과 동일 계열을 쓰되 필요하면 여기서 바꾼다.
-JUDGE_MODEL = "deepseek-ai/deepseek-v4-flash"
+# 판정용 모델. 속도·비용·품질 균형을 위해 Gemini Flash를 사용한다.
+JUDGE_MODEL = "gemini-2.5-flash"
 
 _RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 _CACHE_PATH = os.path.join(_RESULTS_DIR, "judge_cache.json")
 
-# NIM 무료 엔드포인트는 혼잡 시 503(ResourceExhausted)/529(Overloaded)를 자주 낸다 → 재시도로 흡수.
+# Gemini API는 429(할당량 초과)/503(서버 오류)을 낼 수 있다 → 재시도로 흡수.
 _MAX_RETRIES = 6
 _BACKOFF_BASE_SEC = 3          # 3, 6, 12, 24, 48, 60(캡) 초로 늘려가며 재시도
 _BACKOFF_CAP_SEC = 60
 _RETRYABLE_MARKERS = (
-    "503", "502", "504", "429", "529",
-    "ResourceExhausted", "Service Unavailable", "Overloaded", "temporarily overloaded",
+    "503", "502", "504", "429",
+    "ResourceExhausted", "Service Unavailable", "quota", "RESOURCE_EXHAUSTED",
 )
 
 _PROMPT = """당신은 한국어 밈·신조어 검색 결과의 관련도를 매기는 평가자입니다.
@@ -91,21 +91,29 @@ _PROMPT_VERSION = hashlib.md5(_PROMPT.encode("utf-8")).hexdigest()[:8]
 class Judge:
     """관련도 판정기. 캐시를 로드/저장하며 (query_id, chunk_id) 단위로 채점."""
 
-    def __init__(self, model: str = JUDGE_MODEL, cache_path: str = _CACHE_PATH):
+    def __init__(
+        self,
+        model: str = JUDGE_MODEL,
+        cache_path: str = _CACHE_PATH,
+        prompt: str = _PROMPT,
+    ):
         self.cache_path = cache_path
         self.model = model
+        # 프롬프트를 인자로 받아 A/B(변형 프롬프트 비교)를 지원한다. 버전 해시를 캐시
+        # 키에 섞으므로 변형끼리 라벨이 섞이지 않고 한 캐시에 공존한다(judge_eval.py ab).
+        self.prompt = prompt
+        self.prompt_version = hashlib.md5(prompt.encode("utf-8")).hexdigest()[:8]
         self.cache: dict[str, int] = self._load_cache()
         # 실패 관측용 카운터. 실패가 많으면 "다 비슷하다"는 결론이 조용히 오염되므로
         # 마지막에 [파싱 실패 N / API 실패 M / 전체 K]를 반드시 노출한다.
         self.parse_failures = 0   # 응답은 왔으나 0/1/2를 못 뽑음
         self.api_failures = 0     # NIM 과부하 등으로 재시도 소진 → 응답 자체를 못 받음
         self.total_scored = 0
-        self.client = ChatNVIDIA(
+        self.client = ChatGoogleGenerativeAI(
             model=model,
-            api_key=NIM_KEY,
+            google_api_key=GEMINI_API_KEY,
             temperature=0,
-            max_completion_tokens=128,
-            timeout=6000,
+            max_output_tokens=128,
         )
 
     def _load_cache(self) -> dict[str, dict]:
@@ -123,7 +131,7 @@ class Judge:
 
     def _cache_key(self, query_id: str, chunk_id: str) -> str:
         # 모델·프롬프트가 바뀌면 다른 키가 되어 옛 라벨을 재사용하지 않는다.
-        return f"{self.model}|{_PROMPT_VERSION}|{query_id}||{chunk_id}"
+        return f"{self.model}|{self.prompt_version}|{query_id}||{chunk_id}"
 
     def _invoke_with_retry(self, prompt: str):
         """
@@ -145,10 +153,10 @@ class Judge:
                 if not retryable:
                     raise
                 if attempt == _MAX_RETRIES - 1:
-                    print(f"  [판정 포기] NIM 재시도 {_MAX_RETRIES}회 모두 실패 — 이 청크는 판정실패로 넘어감: {message[:80]}")
+                    print(f"  [판정 포기] Gemini 재시도 {_MAX_RETRIES}회 모두 실패 — 이 청크는 판정실패로 넘어감: {message[:80]}")
                     return None
                 wait = min(_BACKOFF_BASE_SEC * (2 ** attempt), _BACKOFF_CAP_SEC)
-                print(f"  [판정 재시도] NIM 일시 오류, {wait}초 후 재시도 ({attempt + 1}/{_MAX_RETRIES - 1}): {message[:80]}")
+                print(f"  [판정 재시도] Gemini 일시 오류, {wait}초 후 재시도 ({attempt + 1}/{_MAX_RETRIES - 1}): {message[:80]}")
                 time.sleep(wait)
 
     @staticmethod
@@ -180,7 +188,7 @@ class Judge:
             return self.cache[key]["score"]
 
         self.total_scored += 1
-        prompt = _PROMPT.format(question=question, chunk=chunk_text)
+        prompt = self.prompt.format(question=question, chunk=chunk_text)
         response = self._invoke_with_retry(prompt)
 
         if response is None:
