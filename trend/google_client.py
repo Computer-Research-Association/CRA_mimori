@@ -24,10 +24,10 @@ import time
 from datetime import datetime, timedelta
 
 # 캐시 TTL. 구글만 12시간으로 길게 둔다(호출 빈도 절감).
-CACHE_TTL_HOURS = 12
+CACHE_TTL_HOURS = 24
 
 _CACHE_PATH = os.path.join(os.path.dirname(__file__), ".google_trends_cache.json")
-_DELAY_RANGE = (1.0, 2.0)  # 요청 전 랜덤 딜레이(초)
+_DELAY_RANGE = (3.0, 5.0)  # 요청 전 랜덤 딜레이(초)
 _MAX_RETRIES = 2  # 최초 시도 후 재시도 횟수
 
 # 캐시는 read-modify-write(파일 전체 읽고→수정→덮어쓰기)라 병렬 실행 시 위험하다.
