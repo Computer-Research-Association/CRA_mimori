@@ -43,15 +43,25 @@ JUDGE_MODEL = "gemini-flash-lite-latest"
 _RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 _CACHE_PATH = os.path.join(_RESULTS_DIR, "judge_cache.json")
 
-# Gemini API는 429(RESOURCE_EXHAUSTED/할당량)·503(서버 오류)을 낼 수 있다 → 재시도로 흡수.
+# Gemini API는 429(RESOURCE_EXHAUSTED/할당량)·503(서버 오류)을 낼 수 있다.
+# 둘은 성격이 달라 다르게 다룬다:
+#   - 쿼터(429): 하루 한도가 소진되면 몇 초 백오프로는 안 풀린다 → 청크 내 재시도가
+#     무의미할 뿐 아니라, 실패한 재시도도 쿼터를 깎아 오히려 남은 쿼터를 태운다.
+#     → 재시도하지 말고 즉시 실패 처리하고, 서킷을 빠르게 연다(weight 큼).
+#   - 일시 오류(503 등): 짧은 백오프로 회복될 수 있다 → 제한적으로 재시도한다.
 _MAX_RETRIES = 6
 _BACKOFF_BASE_SEC = 3          # 3, 6, 12, 24, 48, 60(캡) 초로 늘려가며 재시도
 _BACKOFF_CAP_SEC = 60
-_RETRYABLE_MARKERS = (
-    "503", "502", "504", "429", "529",
-    "ResourceExhausted", "RESOURCE_EXHAUSTED", "Service Unavailable",
-    "Overloaded", "temporarily overloaded", "quota",
+# 하루 쿼터 소진 계열 — 청크 내 재시도 금지, 서킷 가중치 큼
+_QUOTA_MARKERS = ("429", "RESOURCE_EXHAUSTED", "ResourceExhausted", "quota")
+# 서버 일시 장애 계열 — 제한적 재시도 허용
+_TRANSIENT_MARKERS = (
+    "503", "502", "504", "529",
+    "Service Unavailable", "Overloaded", "temporarily overloaded",
 )
+# 전면 장애(503 폭풍·쿼터 소진)에서 남은 청크가 각자 재시도하며 쿼터를 태우는 것을
+# 막는 서킷브레이커 임계치. 연속 실패 가중치 합이 이 값을 넘으면 실행을 중단한다.
+_CIRCUIT_THRESHOLD = int(os.getenv("JUDGE_CIRCUIT_FAILS", "8"))
 
 _PROMPT = """당신은 한국어 밈·신조어 검색 결과의 관련도를 매기는 평가자입니다.
 아래 [질문]에 답하는 데 [문서]가 얼마나 관련 있는지 판정하세요.
@@ -283,6 +293,53 @@ class _RateLimiter:
 _LIMITER = _RateLimiter()
 
 
+class _CircuitBreaker:
+    """
+    연속 서버 실패가 임계치를 넘으면 '열려서(open)' 이후 호출을 즉시 중단시킨다.
+
+    503 폭풍이나 하루 쿼터 소진처럼 '재시도해도 소용없는 전면 장애'에서, 남은 청크가
+    각자 6회씩 재시도하며 쿼터를 태우는 것을 막는다. 실패한 재시도도 쿼터를 깎으므로
+    (지난 실행: 성공 18건에 쿼터 500 소진) 빨리 멈추는 것이 곧 쿼터를 지키는 것이다.
+
+    - 실패는 가중치로 누적한다: 쿼터(429) 3, 일시오류(503) 1.
+      → 쿼터는 3콜 안에, 일시장애는 8콜 안에 열린다.
+    - 성공하면 연속 카운트를 0으로 되돌린다 → 짧은 blip에는 열리지 않는다.
+    - 프로세스 전역이라 A/B 두 판정기가 같은 한도를 함께 존중한다.
+    """
+
+    def __init__(self, threshold: int = _CIRCUIT_THRESHOLD):
+        self._lock = threading.Lock()
+        self._consec = 0.0
+        self._threshold = threshold
+        self._open = False
+
+    def record_success(self) -> None:
+        with self._lock:
+            self._consec = 0.0
+
+    def record_failure(self, weight: float = 1.0) -> bool:
+        """실패를 누적하고, 이번에 서킷이 열렸는지 여부를 반환한다."""
+        with self._lock:
+            self._consec += weight
+            if not self._open and self._consec >= self._threshold:
+                self._open = True
+            return self._open
+
+    @property
+    def is_open(self) -> bool:
+        with self._lock:
+            return self._open
+
+    def reset(self) -> None:
+        with self._lock:
+            self._consec = 0.0
+            self._open = False
+
+
+# 전역 서킷브레이커 — 페이서와 마찬가지로 프로세스에 하나만 둔다.
+_BREAKER = _CircuitBreaker()
+
+
 class Judge:
     """관련도 판정기. 캐시를 로드/저장하며 (query_id, chunk_id) 단위로 채점."""
 
@@ -366,15 +423,20 @@ class Judge:
 
     def _invoke_with_retry(self, prompt: str):
         """
-        일시적 서버 오류(503/529 등)면 지수 백오프로 재시도.
+        Gemini 호출을 하되 오류 성격에 따라 다르게 대응한다.
 
-        - 재시도 불가한 오류(인증 실패 등 재시도해도 소용없는 것)는 즉시 전파한다.
-        - 재시도 가능한 오류를 끝까지 소진하면 전체 실행을 죽이는 대신 None을 반환한다.
-          NIM 과부하로 한 청크가 안 되더라도 이미 완료한 59쿼리를 살리기 위함
-          (호출부가 api_failures로 카운트하고 넘어간다).
-        google-genai는 HTTP 오류를 예외(메시지에 코드 포함)로 던지므로
-        메시지 문자열로 재시도 가능 여부를 판별한다. 성공 시 응답 텍스트(str)를 반환한다.
+        - 재시도 불가한 오류(인증 실패 등)는 즉시 전파한다.
+        - 일시 오류(503 등)는 지수 백오프로 제한 재시도한다.
+        - 쿼터 오류(429)는 청크 내 재시도 없이 즉시 실패 처리한다 — 하루 한도는 백오프로
+          안 풀리고, 실패한 재시도도 쿼터를 깎기 때문이다.
+        - 전역 서킷브레이커가 열리면 API를 아예 호출하지 않고 None을 반환한다 → 전면
+          장애에서 남은 쿼터를 지킨다. 실패한 청크는 호출부가 api_failures로 센다.
+        google-genai는 HTTP 오류를 예외(메시지에 코드 포함)로 던지므로 메시지 문자열로
+        오류 성격을 판별한다. 성공 시 응답 텍스트(str)를 반환한다.
         """
+        # 서킷이 이미 열렸으면 API를 부르지 않는다 — 남은 청크는 전부 여기서 즉시 실패.
+        if _BREAKER.is_open:
+            return None
         for attempt in range(_MAX_RETRIES):
             try:
                 _LIMITER.acquire()   # 한도 아래로 페이싱 — 429를 애초에 피한다
@@ -382,6 +444,7 @@ class Judge:
                     model=self.model, contents=prompt, config=self._gen_config
                 )
                 _LIMITER.on_success()
+                _BREAKER.record_success()
                 return resp.text
             except Exception as e:
                 message = str(e)
@@ -391,11 +454,22 @@ class Judge:
                     print("  [설정 강등] 이 모델은 thinking_config 미지원 → 기본 설정으로 재시도")
                     self._gen_config = self._gen_config_basic
                     continue
-                retryable = any(marker in message for marker in _RETRYABLE_MARKERS)
-                if not retryable:
-                    raise
+                is_quota = any(m in message for m in _QUOTA_MARKERS)
+                is_transient = any(m in message for m in _TRANSIENT_MARKERS)
+                if not (is_quota or is_transient):
+                    raise  # 재시도해도 소용없는 오류(인증 등)는 그대로 전파
                 # 한도에 부딪혔으면 전역 페이스를 늦춰 이후 호출까지 함께 보호한다.
                 _LIMITER.on_rate_limited()
+                # 실패를 서킷에 누적(쿼터는 무겁게). 임계 초과 시 전체 실행을 접는다.
+                opened = _BREAKER.record_failure(weight=3.0 if is_quota else 1.0)
+                if opened:
+                    print("  [중단] 연속 서버 실패가 임계치 초과 — 남은 판정을 건너뜁니다"
+                          "(쿼터 보존). 나중에 다시 실행하면 캐시부터 이어갑니다.")
+                    return None
+                # 쿼터 소진은 백오프로 안 풀린다 → 청크 내 재시도 없이 즉시 실패.
+                if is_quota:
+                    print(f"  [판정 실패] 쿼터 소진 — 재시도 생략(쿼터 보존): {message[:80]}")
+                    return None
                 if attempt == _MAX_RETRIES - 1:
                     print(f"  [판정 포기] Gemini 재시도 {_MAX_RETRIES}회 모두 실패 — 이 청크는 판정실패로 넘어감: {message[:80]}")
                     return None
