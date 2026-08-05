@@ -108,17 +108,29 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
     return all_chunks
 
 
-def _build_reprocess_query(keyword: str | None, source: str | None) -> dict:
+def _build_reprocess_query(keyword: str | None, source: str | None, all_sources: bool = False) -> dict:
     """재처리 대상을 고르는 쿼리를 만든다.
 
     keyword/source가 둘 다 없으면 ValueError를 던진다 — memes 전체를 실수로
-    재처리 대상으로 돌리는 사고를 막기 위한 안전장치. 재크롤링 없이 이미 있는
-    문서 전체를 다시 정제하고 싶다면, 호출부에서 명시적으로 그렇게 판단했다는
-    걸 드러내야 하므로 이 함수를 우회해서 직접 쿼리를 짜야 한다.
+    재처리 대상으로 돌리는 사고를 막기 위한 안전장치("깜빡하고 범위를 안 줌"과
+    "정말 전체를 원함"을 구분해야 하므로).
+
+    정말 전체를 재처리하고 싶다면 all_sources=True를 명시적으로 준다 — 이러면
+    keyword/source가 없어도 에러 없이 빈 쿼리(전체 대상)를 반환한다. all_sources=True와
+    keyword를 같이 주면 "전체 소스에서 이 키워드만"으로 좁혀진다.
     """
+    if all_sources:
+        query: dict = {}
+        if keyword:
+            query["keyword"] = keyword
+        return query
+
     if not keyword and not source:
-        raise ValueError("keyword 또는 source 중 최소 하나는 지정해야 합니다 (전체 재처리 사고 방지)")
-    query: dict = {}
+        raise ValueError(
+            "keyword 또는 source 중 최소 하나는 지정해야 합니다 (전체 재처리 사고 방지). "
+            "정말 전체를 원하면 all_sources=True를 명시하세요."
+        )
+    query = {}
     if keyword:
         query["keyword"] = keyword
     if source:
@@ -126,7 +138,9 @@ def _build_reprocess_query(keyword: str | None, source: str | None) -> dict:
     return query
 
 
-def reset_for_reprocessing(keyword: str | None = None, source: str | None = None) -> int:
+def reset_for_reprocessing(
+    keyword: str | None = None, source: str | None = None, all_sources: bool = False
+) -> int:
     """memes 문서의 is_embedded를 다시 False로 되돌려 재처리 대상에 포함시킨다.
 
     다음 preprocess_embed_job 실행에서 정제 → 청킹 → judge → 임베딩이 전부
@@ -137,7 +151,7 @@ def reset_for_reprocessing(keyword: str | None = None, source: str | None = None
     반환값은 실제로 리셋된 문서 수(이미 is_embedded=False였던 문서는 modified_count에
     안 잡힘).
     """
-    query = _build_reprocess_query(keyword, source)
+    query = _build_reprocess_query(keyword, source, all_sources)
     result = get_collection().update_many(query, {"$set": {"is_embedded": False}})
     return result.modified_count
 
