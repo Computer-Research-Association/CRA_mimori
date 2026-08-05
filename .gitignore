@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .DS_Store
 data/
+data_test/
 _archive/
 .claude
 .idea/
@@ -14,3 +15,5 @@ scheduler/last_crawl_at.txt
 .venv/
 mongo_dump/
 .google_trends_cache.json
+qdrant_storage/
+.ai/

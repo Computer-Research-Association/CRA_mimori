@@ -18,6 +18,7 @@ from config.config_cilent import (
 )
 from DB.drant_clitent import client
 from embedding.pipeline import _to_sparse_vector
+from quality_test.matching import normalize as _normalize_for_match
 from trend.trend_service import format_trend_context
 
 
@@ -51,28 +52,25 @@ _DEFAULT_MIN_CHUNK_LENGTH = 30
 _DEFAULT_OVER_FETCH_FACTOR = 3
 
 
-_DECORATIVE_CHARS = " ~"  # 공백/물결표(강조용 반복 표기)는 매칭 전에 제거
-
-
-def _normalize_for_match(text: str) -> str:
-    """공백과 물결표(~)를 지운다. "좋~다~"(키워드) vs "좋다~~~"(실제 게시글, 물결
-    개수가 다름)처럼 강조 표기 차이 때문에 매칭이 실패하는 걸 방지한다."""
-    return "".join(ch for ch in text if ch not in _DECORATIVE_CHARS)
-
-
 def _is_valid_chunk(point: models.ScoredPoint, keyword: str, min_length: int) -> bool:
-    """크롤러가 매긴 keyword 태그를 그대로 믿지 않고, title/text(공백·물결표 무시)에
-    실제로 그 키워드가 있는지 + 텍스트가 최소 길이 이상인지 재검증한다.
+    """크롤러가 매긴 keyword 태그를 그대로 믿지 않고, title/text에 실제로 그 키워드가
+    있는지 + 텍스트가 최소 길이 이상인지 재검증한다.
 
-    - 길이 체크: "야르\\n- dc official App"처럼 정보 없는 한 줄짜리 청크 배제.
-    - 키워드 체크: 크롤러가 무관한 문서를 잘못 태깅한 경우(예: 완전 무관한 여행기가
-      keyword="거제야호"로 저장된 사례) 배제. 공백/물결표를 제거하고 비교해 "거제 야호"
-      (공백 차이)나 "좋다~~~"(물결 개수 차이)처럼 단순 표기 차이로 진짜 관련 있는
-      문서까지 같이 걸러지는 걸 방지한다.
+    정규화는 quality_test.matching.normalize 하나만 쓴다 — 예전에는 이 파일이
+    스페이스와 물결만 지우는 자체 구현을 갖고 있었고, 크롤러(\\s로 개행까지 제거)와
+    규칙이 어긋나 "거제 야호~"처럼 공백이 든 키워드의 문서가 조용히 탈락했다.
+
+    is_relevant가 명시적으로 False인 청크(judge가 문서 단위로 비관련 판정한 것)도
+    제외한다. is False로 정확히 비교하는 이유: judge가 도입되기 전에 임베딩된
+    문서는 payload에 is_relevant 필드가 아예 없어 .get()이 None을 반환하는데,
+    "값이 없으면 걸러지지 않는다"를 지켜야 기존 데이터가 갑자기 검색에서
+    전부 사라지는 회귀가 안 생긴다.
     """
     text = point.payload.get("text", "")
     title = point.payload.get("title", "")
     if len(text.strip()) < min_length:
+        return False
+    if point.payload.get("is_relevant") is False:
         return False
     kw_norm = _normalize_for_match(keyword)
     combined = _normalize_for_match(text + title)

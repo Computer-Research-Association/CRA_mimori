@@ -26,7 +26,7 @@ def ensure_collection(name: str = QDRANT_COLLECTION) -> None:
     dense(코사인) + sparse 벡터를 담는 컬렉션이 없으면 생성.
     이미 있으면 그대로 둠 (재실행해도 안전).
 
-    keyword 필드의 payload 인덱스도 함께 보장한다 — Qdrant는 인덱스가 없는
+    필터에 쓰이는 payload 인덱스도 함께 보장한다 — Qdrant는 인덱스가 없는
     필드로 scroll/filter하면 400 에러를 내므로, 컬렉션 신규/기존 여부와
     무관하게 매번 확인한다 (create_payload_index는 이미 있어도 안전하게
     재호출 가능).
@@ -45,8 +45,14 @@ def ensure_collection(name: str = QDRANT_COLLECTION) -> None:
             },
         )
 
-    client.create_payload_index(
-        collection_name=name,
-        field_name="keyword",
-        field_schema=models.PayloadSchemaType.KEYWORD,
-    )
+    # 필터에 쓰이는 payload 필드는 전부 인덱스를 만들어 둔다.
+    #   keyword   : RAG 검색 필터
+    #   source    : RAG 소스 제한 필터
+    #   parent_id : 재적재 시 기존 point 삭제 (embedding/pipeline.py)
+    # create_payload_index는 이미 있어도 안전하게 재호출 가능하다.
+    for field_name in ("keyword", "source", "parent_id"):
+        client.create_payload_index(
+            collection_name=name,
+            field_name=field_name,
+            field_schema=models.PayloadSchemaType.KEYWORD,
+        )
