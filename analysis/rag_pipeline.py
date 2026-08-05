@@ -4,6 +4,7 @@ rag_pipeline.py
 그 청크를 근거로 LLM에 넘길 프롬프트를 조립한다.
 """
 
+import difflib
 import time
 
 from qdrant_client.http import models
@@ -13,6 +14,10 @@ from config.config_cilent import (
     QDRANT_COLLECTION,
     QDRANT_DENSE_VECTOR_NAME,
     QDRANT_SPARSE_VECTOR_NAME,
+    RAG_FACET_MERGED_MAX_PER_SOURCE,
+    RAG_FACET_MIN_MERGED_TOTAL,
+    RAG_FACET_NEAR_DUP_THRESHOLD,
+    RAG_FACET_PROMPT_PATH,
     RAG_PROMPT_PATH,
     RAG_TOP_K,
 )
@@ -269,3 +274,197 @@ def build_rag_prompt(keyword: str, question: str, points: list[models.ScoredPoin
     context = _CONTEXT_SEPARATOR.join(context_parts)
     trend_info = format_trend_context(keyword)
     return template.format(keyword=keyword, context=context, question=question, trend_info=trend_info)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# facet(다각도) 검색: 밈 하나를 의미/유행_이유/사용법/사용자층 네 각도로 나눠 각각
+# 검색한 뒤, point.id 중복·근접 중복(미러링)·소스 쏠림을 제거해 하나의 컨텍스트로 병합한다.
+# langchain_playground.ipynb의 셀 4(단일 키워드)와 셀 8(일괄 평가)에 글자 그대로 중복돼
+# 있던 병합/중복제거/소스캡 로직을 여기로 모아 단일 진실 원천으로 만든 것.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def default_facet_config(keyword: str) -> dict:
+    """의미/유행_이유/사용법/사용자층 4-facet 기본 설정을 만든다.
+
+    question은 f"{keyword}, ..."처럼 쉼표로 키워드를 앞에 붙여, 은/는 조사 활용(받침
+    유무·특수문자 키워드) 문제 없이 sparse(lexical) 검색이 키워드 토큰을 인식하게 한다.
+    파라미터를 바꿔 실험하려면 이 dict를 복사해 수정한 뒤 facet_search에 넘기면 된다.
+    """
+    common = {"top_k": 5, "min_length": 30, "over_fetch_factor": 3, "min_dense_score": 0.3, "max_per_source": 2}
+    return {
+        "의미":     {"question": f"{keyword}, 무슨 의미?", **common},
+        "유행_이유": {"question": f"{keyword}, 왜 유행했나요?", **common},
+        "사용법":   {"question": f"{keyword}, 어떻게 사용하나요?", **common},
+        "사용자층": {"question": f"{keyword}, 주로 누가 사용하나요?", **common},
+    }
+
+
+def encode_facets(facet_config: dict) -> dict:
+    """facet_config의 question들을 한 번에 배치 임베딩해 facet별 dense/sparse 벡터를 만든다.
+
+    반환: {facet_name: {"dense": [...], "sparse": {...}}}.
+    encode_batch는 무거운 BGE-M3를 지연 로드하므로, 임베딩이 필요 없는 호출 경로에서
+    rag_pipeline을 import할 때 모델이 로드되지 않도록 함수 안에서 지연 import한다.
+    """
+    from embedding.encoder import encode_batch
+
+    names = list(facet_config.keys())
+    dense_vecs, lexical_weights = encode_batch([facet_config[n]["question"] for n in names])
+    return {n: {"dense": d, "sparse": s} for n, d, s in zip(names, dense_vecs, lexical_weights)}
+
+
+def _is_near_duplicate(text: str, accepted_texts: list[str], threshold: float) -> bool:
+    """이미 채택된 텍스트 중 하나와 threshold 이상 유사하면 재게시(미러링)로 보고 True.
+    예: 네이버블로그 in.naver.com / blog.naver.com 미러링처럼 URL만 다르고 내용이 같은 청크."""
+    norm = text.strip()
+    for other in accepted_texts:
+        if difflib.SequenceMatcher(None, norm, other).ratio() >= threshold:
+            return True
+    return False
+
+
+def merge_facet_results(
+    facet_points: dict[str, list[models.ScoredPoint]],
+    facet_order: list[str],
+    merged_max_per_source: int = RAG_FACET_MERGED_MAX_PER_SOURCE,
+    min_merged_total: int = RAG_FACET_MIN_MERGED_TOTAL,
+    near_dup_threshold: float = RAG_FACET_NEAR_DUP_THRESHOLD,
+) -> tuple[list[models.ScoredPoint], dict]:
+    """facet별 검색 결과를 하나의 컨텍스트로 병합한다.
+
+    1. point.id가 겹치는 청크(여러 facet에서 동시에 뽑힌 것)를 제거
+    2. difflib로 근접 중복(다른 URL이지만 내용이 사실상 같은 미러링)을 제거
+    3. facet 전체 합산 기준으로 소스당 merged_max_per_source개까지만 채움(쏠림 방지).
+       한도 때문에 min_merged_total보다 적어지면 보류분(deferred)으로 그만큼 보충.
+
+    반환: (merged_points, diagnostics). diagnostics는 노트북 5번 셀의 진단 출력용:
+      - point_facets: {point_id: [뽑힌 facet 이름들]}
+      - near_dup_skipped: 근접 중복으로 제외된 개수
+      - deferred: 소스 상한으로 보류된 개수
+      - source_counts: 최종 병합 결과의 소스별 개수
+    """
+    merged_points: list[models.ScoredPoint] = []
+    seen_ids: set = set()
+    accepted_texts: list[str] = []
+    merged_source_counts: dict[str, int] = {}
+    deferred: list[models.ScoredPoint] = []
+    point_facets: dict = {}
+    near_dup_skipped = 0
+
+    for name in facet_order:
+        for p in facet_points[name]:
+            point_facets.setdefault(p.id, []).append(name)
+            if p.id in seen_ids:
+                continue
+            text = p.payload.get("text", "")
+            if _is_near_duplicate(text, accepted_texts, near_dup_threshold):
+                near_dup_skipped += 1
+                continue
+            source = p.payload.get("source")
+            if merged_source_counts.get(source, 0) >= merged_max_per_source:
+                deferred.append(p)
+                continue
+            seen_ids.add(p.id)
+            accepted_texts.append(text.strip())
+            merged_source_counts[source] = merged_source_counts.get(source, 0) + 1
+            merged_points.append(p)
+
+    # 소스 상한 때문에 너무 적게 남았으면, 보류분(상한 넘긴 것)으로 최소 개수까지 채움
+    if len(merged_points) < min_merged_total:
+        for p in deferred:
+            if p.id in seen_ids:
+                continue
+            text = p.payload.get("text", "")
+            if _is_near_duplicate(text, accepted_texts, near_dup_threshold):
+                continue
+            seen_ids.add(p.id)
+            accepted_texts.append(text.strip())
+            merged_points.append(p)
+            if len(merged_points) >= min_merged_total:
+                break
+
+    diagnostics = {
+        "point_facets": point_facets,
+        "near_dup_skipped": near_dup_skipped,
+        "deferred": len(deferred),
+        "source_counts": merged_source_counts,
+    }
+    return merged_points, diagnostics
+
+
+def facet_search(
+    keyword: str,
+    facet_config: dict | None = None,
+    facet_vectors: dict | None = None,
+    sources: list[str] | None = None,
+    is_relevant: bool | None = None,
+    merged_max_per_source: int = RAG_FACET_MERGED_MAX_PER_SOURCE,
+    min_merged_total: int = RAG_FACET_MIN_MERGED_TOTAL,
+    near_dup_threshold: float = RAG_FACET_NEAR_DUP_THRESHOLD,
+) -> tuple[list[models.ScoredPoint], dict]:
+    """키워드를 facet_config의 각 각도로 검색해 병합된 컨텍스트를 반환한다.
+
+    facet_config가 None이면 default_facet_config(keyword)를 쓴다.
+    facet_vectors가 None이면 내부에서 encode_facets로 임베딩한다. rag_main처럼 임베딩
+    직후 unload_model()로 VRAM을 비워야 하는 경로에서는, 밖에서 encode_facets→unload_model을
+    먼저 한 뒤 그 결과를 facet_vectors로 넘겨 unload 타이밍을 제어한다.
+
+    is_relevant=None(기본)은 노트북 실험 경로와 동일(오염 필터 미적용). 운영 경로에서
+    오염 판정 청크를 Qdrant 단계에서 빼려면 is_relevant=True로 준다.
+
+    반환: (merged_points, diagnostics). diagnostics는 merge_facet_results 참고.
+    """
+    if facet_config is None:
+        facet_config = default_facet_config(keyword)
+    if facet_vectors is None:
+        facet_vectors = encode_facets(facet_config)
+
+    facet_order = list(facet_config.keys())
+    facet_points: dict[str, list[models.ScoredPoint]] = {}
+    for name in facet_order:
+        cfg = facet_config[name]
+        vecs = facet_vectors[name]
+        facet_points[name] = search_relevant_chunks(
+            keyword, vecs["dense"], vecs["sparse"],
+            top_k=cfg["top_k"], sources=sources, is_relevant=is_relevant,
+            min_length=cfg["min_length"], over_fetch_factor=cfg["over_fetch_factor"],
+            min_dense_score=cfg["min_dense_score"], max_per_source=cfg["max_per_source"],
+        )
+
+    merged_points, diagnostics = merge_facet_results(
+        facet_points, facet_order,
+        merged_max_per_source=merged_max_per_source,
+        min_merged_total=min_merged_total,
+        near_dup_threshold=near_dup_threshold,
+    )
+    diagnostics["facet_points"] = facet_points  # 노트북 5번 셀의 facet별 출력용
+    return merged_points, diagnostics
+
+
+def build_facet_prompt(
+    keyword: str,
+    points: list[models.ScoredPoint],
+    trend_info: str | None = None,
+) -> str:
+    """rag_facet_prompt_template.md를 읽어 {keyword}/{trend_info}/{context}를 채운다.
+
+    자유질문용 build_rag_prompt와 달리 {question}이 없고(4항목 고정 지시), context의 각
+    자료 앞에 '소스유형'을 붙여 LLM이 1차 자료(커뮤니티)와 2차 자료(가공 콘텐츠)를 구분하게 한다.
+    trend_info=None이면 keyword로 조회해 채운다. 넣지 않으려면 빈 문자열("")을 명시적으로 넘긴다.
+    """
+    with open(RAG_FACET_PROMPT_PATH, "r", encoding="utf-8") as f:
+        template = f.read()
+
+    context_parts = []
+    for point in points:
+        title = point.payload.get("title") or "제목 없음"
+        url = point.payload.get("url") or "출처 없음"
+        source = point.payload.get("source") or "알수없음"
+        text = point.payload.get("text", "")
+        context_parts.append(f"[출처: {title} / {url} / 소스유형: {source}]\n{text}")
+
+    context = _CONTEXT_SEPARATOR.join(context_parts)
+    if trend_info is None:
+        trend_info = format_trend_context(keyword)
+    return template.format(keyword=keyword, context=context, trend_info=trend_info)

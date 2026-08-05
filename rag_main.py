@@ -24,7 +24,14 @@ if sys.platform == "win32":
 
 from analysis.pipeline import analyze, list_analyzable_keywords
 from analysis.query import build_search_query
-from analysis.rag_pipeline import build_rag_prompt, search_relevant_chunks
+from analysis.rag_pipeline import (
+    build_facet_prompt,
+    build_rag_prompt,
+    default_facet_config,
+    encode_facets,
+    facet_search,
+    search_relevant_chunks,
+)
 from embedding.encoder import encode_batch, unload_model
 
 if __name__ == "__main__":
@@ -44,32 +51,54 @@ if __name__ == "__main__":
 
     selected_keyword = keywords[int(raw_choice) - 1]
 
-    question = input("질문을 입력하세요: ").strip()
-    if not question:
-        print("질문을 입력하세요.")
-        sys.exit(1)
+    # 자유질문(기본)과 facet 4항목 분석 중 선택. facet 모드는 의미/유행_이유/사용법/사용자층
+    # 네 각도로 나눠 검색·병합하는 langchain_playground.ipynb 흐름을 그대로 쓴다.
+    mode = input("분석 모드 [1] 자유질문(기본)  [2] facet 4항목 분석: ").strip() or "1"
 
-    print("[검색 중] 관련 청크 조회...")
-    # 검색(임베딩)에 넣는 쿼리에는 keyword를 앞에 붙인다 — eval 경로와 동일한 조립.
-    # 단, 아래 build_rag_prompt에는 원본 question을 그대로 넘겨 LLM이 유저가 실제로
-    # 물은 질문을 보게 한다.
-    search_query = build_search_query(selected_keyword, question)
-    dense_vecs, lexical_weights = encode_batch([search_query])
-    unload_model()  # Ollama가 GPU를 쓸 수 있게 임베딩 모델을 미리 내려둠 (VRAM 충돌 방지)
-    points = search_relevant_chunks(selected_keyword, dense_vecs[0], lexical_weights[0], is_relevant=True)
-    if not points:
-        print("검색 결과가 없습니다.")
-        sys.exit(1)
-    print(f"[검색 완료] 관련 청크 {len(points)}개 발견")
+    if mode == "2":
+        print("[검색 중] facet 4각도 검색...")
+        facet_config = default_facet_config(selected_keyword)
+        # 임베딩을 먼저 끝내고 unload_model()로 VRAM을 비운 뒤 검색한다(자유질문 경로와 동일한
+        # 순서). facet_vectors를 넘겨 facet_search 내부에서 재임베딩하지 않게 한다.
+        facet_vectors = encode_facets(facet_config)
+        unload_model()  # LLM이 GPU를 쓸 수 있게 임베딩 모델을 미리 내려둠 (VRAM 충돌 방지)
+        points, diag = facet_search(
+            selected_keyword, facet_config, facet_vectors=facet_vectors, is_relevant=True
+        )
+        if not points:
+            print("검색 결과가 없습니다.")
+            sys.exit(1)
+        print(f"[검색 완료] 병합 컨텍스트 {len(points)}개 (소스분포={diag['source_counts']})")
+        prompt = build_facet_prompt(selected_keyword, points)
+        question_label = "facet 4항목 분석 (의미/유행 이유/사용법/사용자층)"
+    else:
+        question = input("질문을 입력하세요: ").strip()
+        if not question:
+            print("질문을 입력하세요.")
+            sys.exit(1)
 
-    prompt = build_rag_prompt(selected_keyword, question, points)
+        print("[검색 중] 관련 청크 조회...")
+        # 검색(임베딩)에 넣는 쿼리에는 keyword를 앞에 붙인다 — eval 경로와 동일한 조립.
+        # 단, 아래 build_rag_prompt에는 원본 question을 그대로 넘겨 LLM이 유저가 실제로
+        # 물은 질문을 보게 한다.
+        search_query = build_search_query(selected_keyword, question)
+        dense_vecs, lexical_weights = encode_batch([search_query])
+        unload_model()  # Ollama가 GPU를 쓸 수 있게 임베딩 모델을 미리 내려둠 (VRAM 충돌 방지)
+        points = search_relevant_chunks(selected_keyword, dense_vecs[0], lexical_weights[0], is_relevant=True)
+        if not points:
+            print("검색 결과가 없습니다.")
+            sys.exit(1)
+        print(f"[검색 완료] 관련 청크 {len(points)}개 발견")
+
+        prompt = build_rag_prompt(selected_keyword, question, points)
+        question_label = question
 
     print("[답변 생성 중] LLM에게 질의 중...")
     answer = analyze(prompt)
 
     print()
     print("=" * 40)
-    print(f"질문: {question}")
+    print(f"질문: {question_label}")
     print("=" * 40)
     print(answer)
     print()
