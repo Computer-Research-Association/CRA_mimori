@@ -83,6 +83,15 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
 
         clean_content, chunks = process_one(doc)
 
+        relevance = judge_doc({
+            "keyword": doc.get("keyword"),
+            "title": doc.get("title"),
+            "chunks": chunks,
+        })
+        for chunk in chunks:
+            chunk["is_relevant"] = relevance.is_relevant
+            chunk["relevance_position"] = relevance.position
+
         output_doc = {
             "_id": doc["_id"],
             "keyword": doc.get("keyword"),
@@ -96,6 +105,8 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
             # 축약하지 않고 전부 저장한다.
             "chunks": chunks,
             "chunk_count": len(chunks),
+            "is_relevant": relevance.is_relevant,
+            "relevance_position": relevance.position,
             "processed_at": datetime.now(timezone.utc),
         }
         output_collection.replace_one({"_id": doc["_id"]}, output_doc, upsert=True)
