@@ -6,6 +6,7 @@ rag_pipeline.py
 
 import difflib
 import time
+from urllib.parse import parse_qs, unquote, urlparse
 
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import ResponseHandlingException
@@ -24,6 +25,42 @@ from config.config_cilent import (
 from DB.drant_clitent import client
 from embedding.pipeline import _to_sparse_vector
 from trend.trend_service import format_trend_context
+
+
+# 인용/프롬프트에 노출할 출처 URL 대체 문자열(정상 링크가 없을 때).
+NO_SOURCE_URL = "링크 없음"
+
+
+def clean_source_url(raw: str | None) -> str:
+    """저장된 출처 URL을 표시 가능한 절대 http(s) URL로 정규화한다.
+
+    Tavily 등 일부 소스가 정상 URL 대신 리다이렉트/상대경로 링크
+    (예: '/goto?url=CAESZg...%3D%3D')를 반환해 인용에 클릭 불가한 깨진 링크가
+    노출되는 문제를 막는다.
+
+    - 정상 절대 URL(scheme http/https + netloc) → 그대로 반환
+    - 리다이렉트 래퍼(?url=/?q=/?u= 안에 퍼센트인코딩된 실제 URL) → 실제 URL 추출
+    - 그 외(상대경로, 호스트 없음, 복원 불가한 불투명 리다이렉트 토큰 등) → NO_SOURCE_URL
+
+    복원 불가한 경우 원본 문자열을 그대로 남기지 않고 NO_SOURCE_URL을 돌려주어,
+    호출부가 깨진 링크 대신 '링크 없음'을 표시하게 한다.
+    """
+    if not raw:
+        return NO_SOURCE_URL
+    raw = raw.strip()
+    parsed = urlparse(raw)
+    if parsed.scheme in ("http", "https") and parsed.netloc:
+        return raw
+    # 리다이렉트 래퍼에서 퍼센트인코딩된 실제 URL 복원 시도.
+    for key in ("url", "q", "u"):
+        values = parse_qs(parsed.query).get(key)
+        if not values:
+            continue
+        target = unquote(values[0])
+        target_parsed = urlparse(target)
+        if target_parsed.scheme in ("http", "https") and target_parsed.netloc:
+            return target
+    return NO_SOURCE_URL
 
 
 def _query_points_with_retry(max_retries: int = 3, base_delay: float = 2.0, **kwargs):
@@ -267,7 +304,7 @@ def build_rag_prompt(keyword: str, question: str, points: list[models.ScoredPoin
     context_parts = []
     for point in points:
         title = point.payload.get("title") or "제목 없음"
-        url = point.payload.get("url") or "출처 없음"
+        url = clean_source_url(point.payload.get("url"))
         text = point.payload.get("text", "")
         context_parts.append(f"[출처: {title} / {url}]\n{text}")
 
@@ -459,7 +496,7 @@ def build_facet_prompt(
     context_parts = []
     for point in points:
         title = point.payload.get("title") or "제목 없음"
-        url = point.payload.get("url") or "출처 없음"
+        url = clean_source_url(point.payload.get("url"))
         source = point.payload.get("source") or "알수없음"
         text = point.payload.get("text", "")
         context_parts.append(f"[출처: {title} / {url} / 소스유형: {source}]\n{text}")

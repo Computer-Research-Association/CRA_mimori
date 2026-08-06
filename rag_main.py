@@ -27,6 +27,7 @@ from analysis.query import build_search_query
 from analysis.rag_pipeline import (
     build_facet_prompt,
     build_rag_prompt,
+    clean_source_url,
     default_facet_config,
     encode_facets,
     facet_search,
@@ -105,5 +106,5 @@ if __name__ == "__main__":
     print("-- 근거 출처 --")
     for point in points:
         title = point.payload.get("title") or "제목 없음"
-        url = point.payload.get("url") or "출처 없음"
+        url = clean_source_url(point.payload.get("url"))
         print(f"  - {title} ({url})")
