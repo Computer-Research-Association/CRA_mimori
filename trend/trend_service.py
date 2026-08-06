@@ -314,20 +314,8 @@ def _format_trend_console(result: dict) -> str:
     if result["status"] == STATUS_INSUFFICIENT:
         return "판정 불가 (데이터 부족 — 네이버 주지표 무신호)"
 
-    z_by_source = {
-        "naver": result["naver_z"],
-        "kakao": result["kakao_z"],
-        "google": result["google_z"],
-    }
-    parts = [
-        f"{s}={z_by_source[s]:+.2f}" if s in result["sources"] else f"{s}=미반영"
-        for s in ("naver", "kakao", "google")
-    ]
     flag_str = f" | flags: {', '.join(result['flags'])}" if result["flags"] else ""
-    return (
-        f"상태: {result['status']} | final_z={result['final_z']:+.2f} "
-        f"({', '.join(parts)}){flag_str}"
-    )
+    return f"상태: {result['status']} | final_z={result['final_z']:+.2f}{flag_str}"
 
 
 def format_trend_for_rag(keyword: str) -> tuple[str, str]:
