@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
+from logging_config import get_logger
 from crawlers.tavily_crawler import crawl
 from crawlers.youtube_crawler import crawl_youtube
 from crawlers.namuwiki_crawler import crawl_namuwiki
@@ -15,6 +16,8 @@ from crawlers.dcinside_crawler import crawl_dcinside
 from crawlers.todayhumor_crawler import crawl_todayhumor
 from config.config_cilent import CRAWL_WORKERS
 from trend.trend_service import get_meme_trend, save_trend_score
+
+logger = get_logger("main")
 
 CRAWLERS = {
     "tavily":     crawl,
@@ -47,7 +50,7 @@ def _crawl_one(keyword: str, name: str, crawler) -> tuple[int, str]:
         return len(docs), "ok"
     except Exception as e:
         with _PRINT_LOCK:
-            print(f"[{keyword}/{name}] 크롤 실패: {e}")
+            logger.error("[%s/%s] 크롤 실패: %s", keyword, name, e)
         return 0, f"실패({type(e).__name__})"
 
 
@@ -112,13 +115,14 @@ def judge_and_report(keyword: str, source_results: dict[str, tuple[int, str]]) -
         lines.append(f"  {name:<12}: {cell}")
     lines.append(f"  {'합계':<12}: {total}개")
     lines.append(trend_line)
-    print("\n".join(lines))
+    summary = "\n".join(lines)
+    logger.info(summary)
 
 
 if __name__ == "__main__":
     keywords = load_keywords()
     if not keywords:
-        print(f"{KEYWORDS_PATH}에 등록된 키워드가 없습니다.")
+        logger.warning("%s에 등록된 키워드가 없습니다.", KEYWORDS_PATH)
         sys.exit(1)
 
     # 1단계: 크롤(병렬, 도메인별 rate limit) → 2단계: 트렌드 판정/저장/출력(순차)
