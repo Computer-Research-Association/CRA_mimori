@@ -34,7 +34,7 @@ from analysis.rag_pipeline import (
     search_relevant_chunks,
 )
 from embedding.encoder import encode_batch, unload_model
-from trend.trend_service import format_trend_context
+from trend.trend_service import format_trend_for_rag
 
 if __name__ == "__main__":
     keywords = list_analyzable_keywords()
@@ -57,11 +57,12 @@ if __name__ == "__main__":
     # 네 각도로 나눠 검색·병합하는 langchain_playground.ipynb 흐름을 그대로 쓴다.
     mode = input("분석 모드 [1] 자유질문(기본)  [2] facet 4항목 분석: ").strip() or "1"
 
-    # 유행 판정(z-score 앙상블)을 한 번만 계산해 콘솔에 보여주고, 아래 프롬프트 빌더에
-    # 그대로 넘겨 중복 네트워크 호출(네이버/카카오/구글)을 막는다. ""이면 데이터 부족/수집 실패.
-    trend_info = format_trend_context(selected_keyword)
+    # 유행 판정(z-score 앙상블)을 한 번만 계산해, 콘솔엔 소스별 z 상세(trend_console)를
+    # 찍고 프롬프트엔 요약(trend_info)을 넘긴다. 둘이 같은 조회 결과를 공유하므로
+    # 네트워크 중복 호출(네이버/카카오/구글)이 없다. trend_info=""면 데이터 부족/수집 실패.
+    trend_console, trend_info = format_trend_for_rag(selected_keyword)
     print("[트렌드 판정]")
-    print(trend_info if trend_info else "  판정 불가 (데이터 부족 또는 수집 실패)")
+    print(trend_console)
 
     if mode == "2":
         print("[검색 중] facet 4각도 검색...")
