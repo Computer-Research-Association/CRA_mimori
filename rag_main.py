@@ -77,7 +77,7 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"[검색 완료] 병합 컨텍스트 {len(points)}개 (소스분포={diag['source_counts']})")
         prompt = build_facet_prompt(selected_keyword, points, trend_info=trend_info)
-        question_label = "facet 4항목 분석 (의미/유행 이유/사용법/사용자층)"
+        question_label = "분석."
     else:
         question = input("질문을 입력하세요: ").strip()
         if not question:
@@ -98,7 +98,7 @@ if __name__ == "__main__":
         print(f"[검색 완료] 관련 청크 {len(points)}개 발견")
 
         prompt = build_rag_prompt(selected_keyword, question, points, trend_info=trend_info)
-        question_label = question
+        question_label = f"질문: {question}"
 
     print("[답변 생성 중] LLM에게 질의 중...")
     answer = analyze(prompt)
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     print("z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸")
     print(trend_console)
     print("=" * 40)
-    print(f"질문: {question_label}")
+    print(question_label)
     print("=" * 40)
     print(answer)
     print()
