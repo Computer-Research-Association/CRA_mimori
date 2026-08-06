@@ -293,7 +293,12 @@ def search_sparse_only(
 _CONTEXT_SEPARATOR = "\n\n---\n\n"
 
 
-def build_rag_prompt(keyword: str, question: str, points: list[models.ScoredPoint]) -> str:
+def build_rag_prompt(
+    keyword: str,
+    question: str,
+    points: list[models.ScoredPoint],
+    trend_info: str | None = None,
+) -> str:
     """
     rag_prompt_template.md를 읽어 {keyword}/{context}/{question}/{trend_info}를 채운 문자열 반환.
     {context}는 각 포인트를 '[출처: {title} / {url}]\n{text}' 형태로 만들어 이어붙인 것.
@@ -309,7 +314,10 @@ def build_rag_prompt(keyword: str, question: str, points: list[models.ScoredPoin
         context_parts.append(f"[출처: {title} / {url}]\n{text}")
 
     context = _CONTEXT_SEPARATOR.join(context_parts)
-    trend_info = format_trend_context(keyword)
+    # trend_info=None이면 여기서 조회. 이미 계산해둔 값(빈 문자열 포함)을 넘기면
+    # 그대로 써서 중복 조회를 막는다(rag_main.py가 콘솔 출력과 공유할 때 사용).
+    if trend_info is None:
+        trend_info = format_trend_context(keyword)
     return template.format(keyword=keyword, context=context, question=question, trend_info=trend_info)
 
 

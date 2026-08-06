@@ -34,6 +34,7 @@ from analysis.rag_pipeline import (
     search_relevant_chunks,
 )
 from embedding.encoder import encode_batch, unload_model
+from trend.trend_service import format_trend_context
 
 if __name__ == "__main__":
     keywords = list_analyzable_keywords()
@@ -56,6 +57,12 @@ if __name__ == "__main__":
     # 네 각도로 나눠 검색·병합하는 langchain_playground.ipynb 흐름을 그대로 쓴다.
     mode = input("분석 모드 [1] 자유질문(기본)  [2] facet 4항목 분석: ").strip() or "1"
 
+    # 유행 판정(z-score 앙상블)을 한 번만 계산해 콘솔에 보여주고, 아래 프롬프트 빌더에
+    # 그대로 넘겨 중복 네트워크 호출(네이버/카카오/구글)을 막는다. ""이면 데이터 부족/수집 실패.
+    trend_info = format_trend_context(selected_keyword)
+    print("[트렌드 판정]")
+    print(trend_info if trend_info else "  판정 불가 (데이터 부족 또는 수집 실패)")
+
     if mode == "2":
         print("[검색 중] facet 4각도 검색...")
         facet_config = default_facet_config(selected_keyword)
@@ -70,7 +77,7 @@ if __name__ == "__main__":
             print("검색 결과가 없습니다.")
             sys.exit(1)
         print(f"[검색 완료] 병합 컨텍스트 {len(points)}개 (소스분포={diag['source_counts']})")
-        prompt = build_facet_prompt(selected_keyword, points)
+        prompt = build_facet_prompt(selected_keyword, points, trend_info=trend_info)
         question_label = "facet 4항목 분석 (의미/유행 이유/사용법/사용자층)"
     else:
         question = input("질문을 입력하세요: ").strip()
@@ -91,7 +98,7 @@ if __name__ == "__main__":
             sys.exit(1)
         print(f"[검색 완료] 관련 청크 {len(points)}개 발견")
 
-        prompt = build_rag_prompt(selected_keyword, question, points)
+        prompt = build_rag_prompt(selected_keyword, question, points, trend_info=trend_info)
         question_label = question
 
     print("[답변 생성 중] LLM에게 질의 중...")
