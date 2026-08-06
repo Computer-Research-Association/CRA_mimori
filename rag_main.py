@@ -105,14 +105,14 @@ if __name__ == "__main__":
 
     print()
     print("=" * 40)
+    print("[트렌드 판정]")
+    print("z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸")
+    print(trend_console)
+    print("=" * 40)
     print(f"질문: {question_label}")
     print("=" * 40)
     print(answer)
     print()
-    print("=" * 40)
-    print("[트렌드 판정]")
-    print("z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸")
-    print(trend_console)
     print("-- 근거 출처 --")
     for point in points:
         title = point.payload.get("title") or "제목 없음"
