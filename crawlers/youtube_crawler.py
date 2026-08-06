@@ -10,7 +10,7 @@ content 구성: 제목 + 설명 + [댓글] 섹션 (dcinside/natepann과 동일�
 import hashlib
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from googleapiclient.discovery import build
 
@@ -19,6 +19,7 @@ from config.config_cilent import (
     YOUTUBE_MAX_RESULTS,
     YOUTUBE_MAX_COMMENTS,
     YOUTUBE_ORDER,
+    YOUTUBE_RECRAWL_DAYS,
 )
 from DB.mongo_client import get_collection
 
@@ -158,6 +159,15 @@ def build_document(keyword: str, video: dict, description: str, comments: list[d
     }
 
 
+def _already_crawled_recently(keyword: str, collection) -> bool:
+    """YOUTUBE_RECRAWL_DAYS 이내에 이미 크롤된 키워드면 True — API 호출 생략용."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=YOUTUBE_RECRAWL_DAYS)
+    return collection.find_one(
+        {"keyword": keyword, "source": "youtube", "crawled_at": {"$gte": cutoff}},
+        {"_id": 1},
+    ) is not None
+
+
 def crawl_youtube(keyword: str) -> list[dict]:
     """
     키워드로 YouTube 영상 검색 -> 제목/설명 키워드 필터 -> 설명+댓글 수집 -> MongoDB 저장.
@@ -167,6 +177,10 @@ def crawl_youtube(keyword: str) -> list[dict]:
     """
     youtube = _build_youtube_client()
     collection = get_collection()
+
+    if _already_crawled_recently(keyword, collection):
+        print(f"[YouTube] '{keyword}' — {YOUTUBE_RECRAWL_DAYS}일 이내 크롤 이력 있음, 스킵")
+        return []
 
     print(f"[YouTube] '{keyword}' 검색 시작...")
     videos = search_videos(youtube, keyword)
