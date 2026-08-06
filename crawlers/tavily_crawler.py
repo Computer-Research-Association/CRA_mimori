@@ -4,7 +4,7 @@ tavily_crawler.py
 """
 
 from tavily import TavilyClient
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse, parse_qs
 import hashlib
 import re
@@ -16,6 +16,7 @@ from config.config_cilent import (
     TAVILY_MAX_RESULTS,
     TAVILY_MIN_SCORE,
     TAVILY_SEARCH_DEPTH,
+    TAVILY_RECRAWL_DAYS,
 )
 from DB.mongo_client import get_collection
 
@@ -102,6 +103,15 @@ def build_document(keyword: str, result: dict) -> dict:
     }
 
 
+def _already_crawled_recently(keyword: str, collection) -> bool:
+    """TAVILY_RECRAWL_DAYS 이내에 이미 크롤된 키워드면 True — API 호출 생략용."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=TAVILY_RECRAWL_DAYS)
+    return collection.find_one(
+        {"keyword": keyword, "source": "tavily", "crawled_at": {"$gte": cutoff}},
+        {"_id": 1},
+    ) is not None
+
+
 def crawl(keyword: str) -> list[dict]:
     """
     키워드로 Tavily 검색 후 MongoDB에 저장.
@@ -109,6 +119,10 @@ def crawl(keyword: str) -> list[dict]:
     """
     client = TavilyClient(api_key=TAVILY_API_KEY)
     collection = get_collection()
+
+    if _already_crawled_recently(keyword, collection):
+        print(f"[Tavily] '{keyword}' — {TAVILY_RECRAWL_DAYS}일 이내 크롤 이력 있음, 스킵")
+        return []
 
     print(f"[Tavily] '{keyword}' 검색 시작...")
 

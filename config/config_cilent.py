@@ -23,6 +23,9 @@ TAVILY_SEARCH_DEPTH = "advanced"  # "basic" or "advanced"
 # Tavily relevance score 하한선. 기존 수집분의 is_relevant 라벨 기준
 # 0.3에서 정상 문서 89% 유지 / 오염 문서 58% 차단 — 잔여 오염은 전처리 judge가 거름.
 TAVILY_MIN_SCORE = 0.3
+# 같은 키워드를 이 일수 이내에 이미 크롤했으면 API 호출을 건너뛴다.
+# 밈 키워드는 단기간에 새 문서가 폭증하지 않으므로 7일이 적정값.
+TAVILY_RECRAWL_DAYS = 7
 
 # YouTube
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
