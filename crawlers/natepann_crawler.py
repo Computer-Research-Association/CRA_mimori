@@ -24,9 +24,9 @@ from bs4 import BeautifulSoup
 from config.config_cilent import (
     CRAWL_MAX_POSTS,
     CRAWL_MAX_SEARCH_PAGES,
-    NATEPANN_SORT,
+    NATEPANN_SORTS,
 )
-from crawlers.base import make_session, safe_get, get_date_cutoff
+from crawlers.base import make_session, safe_get, get_date_cutoff, merge_dedup_by_url
 from DB.mongo_client import get_collection
 
 BASE_URL = "https://pann.nate.com"
@@ -66,12 +66,14 @@ def _parse_search_date(text: str) -> datetime | None:
     return None
 
 
-def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, datetime | None]]:
+def _get_post_urls(
+    session, keyword: str, max_posts: int, sort: str
+) -> list[tuple[str, datetime | None]]:
     """
     검색 결과 페이지에서 (게시글 URL, 작성일) 목록 수집.
 
     필터링 기준:
-    - 정렬: NATEPANN_SORT (기본 HD=인기순) → 커뮤니티가 검증한 글 우선.
+    - 정렬: sort 매개변수(호출부가 NATEPANN_SORTS 중 하나씩 넘김).
     - 날짜: get_date_cutoff()보다 오래된 글은 제외.
       인기순은 시간 순서가 아니므로 오래된 글이 나와도 중단하지 않고 건너뜀.
 
@@ -86,7 +88,7 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
     page = 1
 
     while len(posts) < max_posts and page <= CRAWL_MAX_SEARCH_PAGES:
-        search_url = f"{BASE_URL}/search/talk?q={quote(keyword)}&sort={NATEPANN_SORT}&page={page}"
+        search_url = f"{BASE_URL}/search/talk?q={quote(keyword)}&sort={sort}&page={page}"
         resp = safe_get(session, search_url, referer=BASE_URL)
         if resp is None:
             break
@@ -136,6 +138,19 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
         page += 1
 
     return posts
+
+
+def _get_post_urls_multi(
+    session, keyword: str, max_posts: int, sorts: tuple[str, ...]
+) -> list[tuple[str, datetime | None]]:
+    """여러 정렬로 나눠 수집한 뒤 URL 기준으로 합친다.
+
+    max_posts를 정렬 개수로 나눠 각 정렬에 배분한다(예: 20개 → 정렬 2개면 10개씩).
+    같은 글이 여러 정렬에 겹쳐 나올 수 있어 merge_dedup_by_url()로 정리한다.
+    """
+    per_sort_budget = max_posts // len(sorts)
+    all_posts = [_get_post_urls(session, keyword, per_sort_budget, sort) for sort in sorts]
+    return merge_dedup_by_url(*all_posts)
 
 
 def _parse_post(soup: BeautifulSoup) -> tuple[str, str]:
@@ -196,8 +211,8 @@ def crawl_natepann(keyword: str) -> list[dict]:
     collection = get_collection()
 
     print(f"[네이트판] '{keyword}' 검색 시작...")
-    posts = _get_post_urls(session, keyword, CRAWL_MAX_POSTS)
-    print(f"[네이트판] 총 {len(posts)}개 URL 수집 완료")
+    posts = _get_post_urls_multi(session, keyword, CRAWL_MAX_POSTS, NATEPANN_SORTS)
+    print(f"[네이트판] 총 {len(posts)}개 URL 수집 완료 (정렬: {', '.join(NATEPANN_SORTS)})")
 
     saved, skipped, failed, irrelevant = 0, 0, 0, 0
     documents = []
