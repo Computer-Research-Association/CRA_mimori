@@ -299,6 +299,7 @@ def format_trend_context(keyword: str, result: dict | None = None) -> str:
 
     return (
         "[참고: 최근 검색/언급량 기반 유행 상태 앙상블 판정 — 정성적 분석의 보조 지표로만 활용]\n"
+        "z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸\n"
         f"상태: {result['status']} (robust z-score: {result['final_z']:.2f}, 반영 소스: {sources_str}){flag_str}"
     )
 
@@ -313,20 +314,8 @@ def _format_trend_console(result: dict) -> str:
     if result["status"] == STATUS_INSUFFICIENT:
         return "판정 불가 (데이터 부족 — 네이버 주지표 무신호)"
 
-    z_by_source = {
-        "naver": result["naver_z"],
-        "kakao": result["kakao_z"],
-        "google": result["google_z"],
-    }
-    parts = [
-        f"{s}={z_by_source[s]:+.2f}" if s in result["sources"] else f"{s}=미반영"
-        for s in ("naver", "kakao", "google")
-    ]
     flag_str = f" | flags: {', '.join(result['flags'])}" if result["flags"] else ""
-    return (
-        f"상태: {result['status']} | final_z={result['final_z']:+.2f} "
-        f"({', '.join(parts)}){flag_str}"
-    )
+    return f"상태: {result['status']} | final_z={result['final_z']:+.2f}{flag_str}"
 
 
 def format_trend_for_rag(keyword: str) -> tuple[str, str]:
