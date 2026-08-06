@@ -274,7 +274,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     }
 
 
-def format_trend_context(keyword: str) -> str:
+def format_trend_context(keyword: str, result: dict | None = None) -> str:
     """
     get_meme_trend() 결과를 LLM 프롬프트에 넣기 좋은 짧은 문자열로 요약한다.
     (analysis/pipeline.py, analysis/rag_pipeline.py 가 프롬프트 조립 시 사용)
@@ -284,11 +284,12 @@ def format_trend_context(keyword: str) -> str:
     "데이터 부족" 문구를 그대로 보여주는 것보다 그냥 안 보여주는 편이 프롬프트를
     깔끔하게 유지한다(LLM이 그 문구 자체를 유행 근거로 오인할 여지도 없앤다).
     """
-    try:
-        result = get_meme_trend(keyword)
-    except Exception as exc:  # noqa: BLE001 - 트렌드 조회 실패가 분석/RAG 자체를 막으면 안 됨
-        print(f"[trend_service] format_trend_context 실패, 빈 문자열 반환: {exc}")
-        return ""
+    if result is None:
+        try:
+            result = get_meme_trend(keyword)
+        except Exception as exc:  # noqa: BLE001 - 트렌드 조회 실패가 분석/RAG 자체를 막으면 안 됨
+            print(f"[trend_service] format_trend_context 실패, 빈 문자열 반환: {exc}")
+            return ""
 
     if result["status"] == STATUS_INSUFFICIENT:
         return ""
@@ -298,8 +299,38 @@ def format_trend_context(keyword: str) -> str:
 
     return (
         "[참고: 최근 검색/언급량 기반 유행 상태 앙상블 판정 — 정성적 분석의 보조 지표로만 활용]\n"
+        "z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸\n"
         f"상태: {result['status']} (robust z-score: {result['final_z']:.2f}, 반영 소스: {sources_str}){flag_str}"
     )
+
+
+def _format_trend_console(result: dict) -> str:
+    """get_meme_trend 결과를 콘솔 표시용 상세 문자열로 변환한다(소스별 z 포함).
+
+    format_trend_context가 앙상블 final_z 하나만 보여주는 것과 달리, 판정에 실제
+    반영된 소스(result["sources"])의 개별 z를 함께 노출한다. 반영되지 않은 소스는
+    '미반영'으로 표기해 어떤 신호가 판정에 들어갔는지 한눈에 보이게 한다.
+    """
+    if result["status"] == STATUS_INSUFFICIENT:
+        return "판정 불가 (데이터 부족 — 네이버 주지표 무신호)"
+
+    flag_str = f" | flags: {', '.join(result['flags'])}" if result["flags"] else ""
+    return f"상태: {result['status']} | final_z={result['final_z']:+.2f}{flag_str}"
+
+
+def format_trend_for_rag(keyword: str) -> tuple[str, str]:
+    """RAG 실행용: get_meme_trend를 1회만 호출해
+    (콘솔 표시용 상세 문자열, 프롬프트 주입용 요약 문자열)을 함께 반환한다.
+
+    두 문자열이 같은 조회 결과를 공유하므로 네트워크 중복 호출이 없다.
+    조회 실패 시 ("판정 불가 (수집 실패)", "")를 반환해 RAG 흐름을 막지 않는다.
+    """
+    try:
+        result = get_meme_trend(keyword)
+    except Exception as exc:  # noqa: BLE001 - 트렌드 조회 실패가 RAG 자체를 막으면 안 됨
+        print(f"[trend_service] 트렌드 조회 실패, 판정 생략: {exc}")
+        return "판정 불가 (수집 실패)", ""
+    return _format_trend_console(result), format_trend_context(keyword, result=result)
 
 
 def save_trend_score(result: dict) -> None:

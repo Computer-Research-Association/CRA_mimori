@@ -11,8 +11,10 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 # MongoDB
 MONGO_URI = os.getenv("MONGODB_URI", "")
 MONGO_DB = "mimori"
-MONGO_COLLECTION = "memes"
-CLEANED_COLLECTION = "cleaned_memes"  # 전처리/청킹 결과 저장용 (원본 memes와 분리)
+# 컬렉션 이름은 env로 덮어쓸 수 있다 — 테스트용 컬렉션(memes_test 등)으로 돌릴 때 쓴다.
+# 기본값이 현재와 같으므로 .env를 안 건드리면 동작이 동일하다.
+MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "memes")
+CLEANED_COLLECTION = os.getenv("CLEANED_COLLECTION", "cleaned_memes")
 TREND_COLLECTION = "trend_scores"     # 트렌드 판정 결과 저장용 (키워드+날짜 단위)
 
 # 검색 설정
@@ -51,9 +53,12 @@ CRAWL_MAX_AGE_YEARS = 3       # 이보다 오래된 게시글은 수집 제외
 CRAWL_MAX_SEARCH_PAGES = 10   # 검색 결과 페이지 탐색 상한 (날짜 필터로 인한 무한 탐색 방지)
 
 # 소스별 정렬 기준 (각 사이트가 지원하는 값이 다름)
-NATEPANN_SORT = "HD"          # PD 정확도 / DD 최신 / HD 인기 / VD 조회 / CD 댓글
-DCINSIDE_SORT = "accuracy"    # accuracy 정확도 / latest 최신 (디시 검색은 인기순 미지원)
-YOUTUBE_ORDER = "relevance"   # relevance / date / viewCount / rating
+# 정렬 하나만 쓰면 "아직 인기를 못 얻은 최신 글"이 계속 순위 밖으로 밀리는 편향이
+# 생긴다(인기/정확도순은 추천·조회가 쌓일 시간이 필요해서 갓 올라온 글은 못 낌).
+# 그래서 성격이 다른 정렬을 섞어서 수집한다 — CRAWL_MAX_POSTS를 정렬 개수로 나눠 쓴다.
+NATEPANN_SORTS = ("HD", "DD")           # 인기 + 최신 (PD 정확도 / DD 최신 / HD 인기 / VD 조회 / CD 댓글)
+DCINSIDE_SORTS = ("accuracy", "latest")  # 정확도 + 최신 (디시 검색은 인기순 미지원)
+YOUTUBE_ORDER = "relevance"   # relevance / date / viewCount / rating (YouTube는 쿼터 문제로 보류 — 아래 참고)
 
 # 전처리 / 청킹 설정
 CHUNK_SIZE = 500            # 청크 최대 글자 수 (RecursiveCharacterTextSplitter 기준)
@@ -65,7 +70,7 @@ EMBEDDING_MODEL = "BAAI/bge-m3"
 EMBEDDING_DENSE_DIM = 1024          # BGE-M3 dense 벡터 차원 (고정값)
 EMBEDDING_BATCH_SIZE = 16           # encode() 1회 호출당 청크 수 (VRAM 6GB 기준)
 
-QDRANT_COLLECTION = "mimori_chunks"
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "mimori_chunks")
 QDRANT_DENSE_VECTOR_NAME = "dense"
 QDRANT_SPARSE_VECTOR_NAME = "sparse"
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
@@ -86,18 +91,27 @@ USER_AGENTS = [
 ]
 
 # LLM 분석 설정
-ANALYSIS_MODEL = ("qwen3:8b")
+
+ANALYSIS_MODEL = "deepseek-ai/deepseek-v4-flash"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
 RAG_TOP_K = 5
 RAG_PROMPT_PATH = os.path.join(_ROOT, "analysis", "rag_prompt_template.md")
 
+# facet(의미/유행_이유/사용법/사용자층) 4항목 고정 분석용 프롬프트.
+# 자유질문용(RAG_PROMPT_PATH, {question} 포함)과 달리 {question}이 없고 4항목을 고정 지시한다.
+RAG_FACET_PROMPT_PATH = os.path.join(_ROOT, "analysis", "rag_facet_prompt_template.md")
+
+# facet 검색 결과 병합 단계 튜너블 (rag_pipeline.merge_facet_results / facet_search 기본값).
+# max_per_source는 facet 하나 안에서만 걸리므로, facet 4개가 같은 소스를 2개씩 뽑으면 합계가
+# 8개까지 쏠릴 수 있어 병합(합산) 단계에서 한 번 더 상한을 건다.
+RAG_FACET_MERGED_MAX_PER_SOURCE = 6  # facet 전체 합산 기준 소스당 상한
+RAG_FACET_MIN_MERGED_TOTAL = 8       # 소스 상한 때문에 컨텍스트가 비지 않도록 최소 확보 개수
+RAG_FACET_NEAR_DUP_THRESHOLD = 0.8   # 이 이상 유사하면 재게시(미러링)로 보고 제외
+
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
 
-# CloudWatch 로깅
-CLOUDWATCH_ENABLED = os.getenv("CLOUDWATCH_ENABLED", "false")   # "true" 이면 활성화
-AWS_LOG_GROUP      = os.getenv("AWS_LOG_GROUP", "/mimori")       # CloudWatch 로그 그룹
-AWS_REGION         = os.getenv("AWS_REGION", "us-east-1")       # EC2 리전 (버지니아)
+
 

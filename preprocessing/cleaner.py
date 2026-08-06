@@ -9,6 +9,10 @@ cleaner.py
   - 이메일 / 전화번호        : 개인정보 보호를 위해 마스킹 ([EMAIL], [PHONE])
   - 반복 문자 (ㅋㅋㅋㅋㅋㅋ 등) : 완전히 지우면 밈 특유의 어감(초성체/이모티콘)이
                               사라지므로, 삭제하지 않고 REPEAT_CHAR_LIMIT 개로 축약만 함
+  - UI 상투어("이웃추가" 등)  : 본문 추출이 사이드바/위젯까지 긁어왔을 때 섞여 들어옴.
+                              config.BOILERPLATE_PHRASES를 quality_test/signals.py의
+                              boilerplate_hits()와 공유 — 탐지 기준과 제거 기준이
+                              어긋나지 않도록 목록을 한 곳(config)에 둔다.
   - 중복 공백/개행           : 정규화
 
 메타데이터(키워드, 출처, URL 등)는 이 함수가 건드리지 않음 — 호출부(pipeline.py)가
@@ -18,7 +22,7 @@ cleaner.py
 import html
 import re
 
-from config.config_cilent import REPEAT_CHAR_LIMIT
+from config.config_cilent import BOILERPLATE_PHRASES, REPEAT_CHAR_LIMIT
 
 # 크롤러들은 대부분 bs4 get_text()로 이미 태그를 제거한 텍스트를 넘기지만,
 # dcinside 댓글처럼 JSON 응답을 정규식으로만 정제하는 경로에서는 태그/엔티티가
@@ -48,6 +52,8 @@ def clean_text(text: str) -> str:
     text = _EMAIL_RE.sub("[EMAIL]", text)
     text = _PHONE_RE.sub("[PHONE]", text)
     text = _REPEAT_CHAR_RE.sub(lambda m: m.group(1) * REPEAT_CHAR_LIMIT, text)
+    for phrase in BOILERPLATE_PHRASES:
+        text = text.replace(phrase, " ")
     text = _MULTI_SPACE_RE.sub(" ", text)
     text = _MULTI_NEWLINE_RE.sub("\n\n", text)
 

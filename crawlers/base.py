@@ -77,6 +77,27 @@ def get_date_cutoff() -> datetime:
     return datetime.now(timezone.utc) - timedelta(days=CRAWL_MAX_AGE_YEARS * 365)
 
 
+def merge_dedup_by_url(
+    *post_lists: list[tuple[str, datetime | None]]
+) -> list[tuple[str, datetime | None]]:
+    """여러 정렬 기준으로 따로 수집한 (url, date) 목록을 URL 기준 중복 없이 합친다.
+
+    정렬 하나만으로 검색하면 "아직 인기를 못 얻은 최신 글"이 계속 순위 밖으로
+    밀리는 편향이 생긴다(인기순은 추천이 쌓일 시간이 필요해서 갓 올라온 글은
+    못 낌). natepann/dcinside는 성격이 다른 정렬(예: 인기+최신)로 나눠 수집한 뒤
+    이 함수로 합치는데, 같은 글이 두 정렬 모두에서 나올 수 있어 중복 제거가
+    필요하다. 먼저 나온 정렬의 결과를 유지한다.
+    """
+    seen: set[str] = set()
+    merged: list[tuple[str, datetime | None]] = []
+    for posts in post_lists:
+        for url, date in posts:
+            if url not in seen:
+                seen.add(url)
+                merged.append((url, date))
+    return merged
+
+
 # ── 1. 랜덤 딜레이 ────────────────────────────────────────────────────────────
 
 def random_delay():

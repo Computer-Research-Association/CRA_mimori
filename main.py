@@ -13,17 +13,19 @@ from crawlers.youtube_crawler import crawl_youtube
 from crawlers.namuwiki_crawler import crawl_namuwiki
 from crawlers.natepann_crawler import crawl_natepann
 from crawlers.dcinside_crawler import crawl_dcinside
+from crawlers.todayhumor_crawler import crawl_todayhumor
 from config.config_cilent import CRAWL_WORKERS
 from trend.trend_service import get_meme_trend, save_trend_score
 
 logger = get_logger("main")
 
 CRAWLERS = {
-    "tavily":    crawl,
-    "youtube":   crawl_youtube,
-    "namuwiki":  crawl_namuwiki,
-    "natepann":  crawl_natepann,
-    "dcinside":  crawl_dcinside,
+    "tavily":     crawl,
+    "youtube":    crawl_youtube,
+    "namuwiki":   crawl_namuwiki,
+    "natepann":   crawl_natepann,
+    "dcinside":   crawl_dcinside,
+    "todayhumor": crawl_todayhumor,
 }
 
 KEYWORDS_PATH = os.path.join(BASE_DIR, "crawlers", "Keywords.md")

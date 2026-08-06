@@ -5,10 +5,18 @@ chunker.py
 전략:
   - 나무위키(source == "namuwiki")이면서 섹션 마커가 있는 문서
     -> 문서 구조 기반: 마커로 섹션을 먼저 나누고, 섹션 하나가 CHUNK_SIZE보다
-       길면 그 안에서만 재귀적 분할(RecursiveCharacterTextSplitter)을 적용
+       길면 그 안에서만 재귀적 분할(RecursiveCharacterTextSplitter)을 적용.
+       댓글이 없는 소스이므로 전부 content_type="body".
   - 그 외(커뮤니티/댓글형 소스, 마커 없는 짧은 나무위키 문서)
-    -> 재귀적 분할만 적용. 구분자 우선순위에 "[댓글]" 경계를 포함해
-       본문과 댓글이 같은 청크에서 최대한 섞이지 않도록 함
+    -> "[댓글]" 마커로 본문/댓글을 먼저 분리한 뒤 각각 독립적으로 재귀 분할한다.
+       분할 전에 미리 나누므로 한 청크 안에 본문과 댓글이 섞이는 일이 구조적으로
+       없어지고(구분자 우선순위에 기대던 이전 방식과 달리 항상 보장됨), 각 청크에
+       content_type("body" | "comment")이 남는다.
+
+  스팸 청크 제거: quality_test/signals.py의 spam_hits()가 SPAM_HIT_THRESHOLD 이상이면
+  청크를 통째로 버린다. 오늘 밤 본문/댓글 분리 이후로는 스팸이 보통 댓글 청크에
+  단독으로 격리되므로(정상 본문과 안 섞임), 통째로 버려도 정상 콘텐츠 손실 위험이
+  낮다 — 부분 삭제(surgical removal) 대신 청크 단위 드롭을 택한 이유.
 
 parent_id 필드: 청크가 속한 원본 문서의 MongoDB _id.
   부모 문서는 별도로 청킹하지 않는다 — memes 컬렉션에 이미 존재하는
@@ -17,12 +25,22 @@ parent_id 필드: 청크가 속한 원본 문서의 MongoDB _id.
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from config.config_cilent import CHUNK_SIZE, CHUNK_OVERLAP, NAMUWIKI_SECTION_MARKER
+from config.config_cilent import (
+    CHUNK_SIZE,
+    CHUNK_OVERLAP,
+    MIN_CHUNK_CHARS,
+    NAMUWIKI_SECTION_MARKER,
+    SPAM_HIT_THRESHOLD,
+)
+from quality_test.signals import spam_hits
+
+# 크롤러(natepann/dcinside/youtube)가 본문 뒤에 항상 이 리터럴로 댓글 구간을 붙인다.
+_COMMENT_MARKER = "\n\n[댓글]\n"
 
 _splitter = RecursiveCharacterTextSplitter(
     chunk_size=CHUNK_SIZE,
     chunk_overlap=CHUNK_OVERLAP,
-    separators=["\n\n[댓글]\n", "\n\n", "\n", ". ", " ", ""],
+    separators=["\n\n", "\n", ". ", " ", ""],
 )
 
 
@@ -68,17 +86,22 @@ def chunk_document(doc: dict) -> list[dict]:
         return []
 
     if doc.get("source") == "namuwiki" and NAMUWIKI_SECTION_MARKER in text:
-        pieces: list[tuple[str | None, str]] = []
+        pieces: list[tuple[str | None, str, str]] = []
         for title, section_text in _split_namuwiki_sections(text):
             for piece in _splitter.split_text(section_text):
-                pieces.append((title, piece))
+                pieces.append((title, piece, "body"))
     else:
-        pieces = [(None, piece) for piece in _splitter.split_text(text)]
+        body_text, _, comment_text = text.partition(_COMMENT_MARKER)
+        pieces = [(None, piece, "body") for piece in _splitter.split_text(body_text)]
+        if comment_text:
+            pieces += [(None, piece, "comment") for piece in _splitter.split_text(comment_text)]
 
     chunks = []
     chunk_idx = 0
-    for section_title, chunk_text in pieces:
-        if len(chunk_text.strip()) < 10:  # 노이즈 청크 제거
+    for section_title, chunk_text, content_type in pieces:
+        if len(chunk_text.strip()) < MIN_CHUNK_CHARS:  # 정보 없는 청크 제거
+            continue
+        if spam_hits(chunk_text) >= SPAM_HIT_THRESHOLD:  # 광고/스팸 청크 통째로 제거
             continue
         chunks.append({
             "parent_id": doc.get("_id"),
@@ -89,6 +112,7 @@ def chunk_document(doc: dict) -> list[dict]:
             "url": doc.get("url"),
             "title": doc.get("title"),
             "section_title": section_title,
+            "content_type": content_type,
             "published_date": doc.get("published_date"),
             "crawled_at": doc.get("crawled_at"),
         })
