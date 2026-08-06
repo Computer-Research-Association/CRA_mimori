@@ -11,6 +11,10 @@ from datetime import datetime, timedelta
 
 SCHEDULER_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SCHEDULER_DIR)
+sys.path.insert(0, BASE_DIR)
+from logging_config import get_logger
+
+logger = get_logger("scheduler")
 MAIN_PY = os.path.join(BASE_DIR, "main.py")
 PREPROCESS_EMBED_PY = os.path.join(BASE_DIR, "preprocess_embed_main.py")
 DB_PATH = os.path.join(SCHEDULER_DIR, "scheduler.db")
@@ -22,9 +26,11 @@ KST_OFFSET = timedelta(hours=9)  # 한국은 DST가 없어 고정 오프셋으�
 
 
 def log_status(message: str):
+    """status.txt 파일에 기록 + logger(CloudWatch 포함)로 전송."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(STATUS_PATH, "a", encoding="utf-8") as f:
         f.write(f"{now} - {message}\n")
+    logger.info(message)
 
 def heartbeat():
     log_status("working: true")
@@ -37,6 +43,7 @@ def crawlrun():
         with open(LAST_CRAWL_PATH, "w", encoding="utf-8") as f:
             f.write(datetime.utcnow().isoformat())
     else:
+        logger.error("크롤링 실패 (code=%d)", result.returncode)
         log_status(f"크롤링 실패 (code={result.returncode})")
 
 
@@ -55,6 +62,7 @@ def preprocess_embed_run():
         with open(LAST_EMBED_PATH, "w", encoding="utf-8") as f:
             f.write(datetime.utcnow().isoformat())
     else:
+        logger.error("전처리+임베딩 실패 (code=%d)", result.returncode)
         log_status(f"전처리+임베딩 실패 (code={result.returncode})")
 
 
