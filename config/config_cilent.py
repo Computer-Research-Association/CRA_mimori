@@ -91,12 +91,25 @@ USER_AGENTS = [
 ]
 
 # LLM 분석 설정
-ANALYSIS_MODEL = ("qwen3:8b")
+# 주의: NVIDIA NIM 모델명이어야 함 — "qwen3:8b" 같은 Ollama식 이름을 넣으면 NIM API가 404를 반환.
+# (Ollama→NIM 전환 때 남아있던 잔재를 2026-08-05 수정. 아래 모델은 노트북 7번 셀에서 검증된 것.)
+ANALYSIS_MODEL = "deepseek-ai/deepseek-v4-flash"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
 RAG_TOP_K = 5
 RAG_PROMPT_PATH = os.path.join(_ROOT, "analysis", "rag_prompt_template.md")
+
+# facet(의미/유행_이유/사용법/사용자층) 4항목 고정 분석용 프롬프트.
+# 자유질문용(RAG_PROMPT_PATH, {question} 포함)과 달리 {question}이 없고 4항목을 고정 지시한다.
+RAG_FACET_PROMPT_PATH = os.path.join(_ROOT, "analysis", "rag_facet_prompt_template.md")
+
+# facet 검색 결과 병합 단계 튜너블 (rag_pipeline.merge_facet_results / facet_search 기본값).
+# max_per_source는 facet 하나 안에서만 걸리므로, facet 4개가 같은 소스를 2개씩 뽑으면 합계가
+# 8개까지 쏠릴 수 있어 병합(합산) 단계에서 한 번 더 상한을 건다.
+RAG_FACET_MERGED_MAX_PER_SOURCE = 6  # facet 전체 합산 기준 소스당 상한
+RAG_FACET_MIN_MERGED_TOTAL = 8       # 소스 상한 때문에 컨텍스트가 비지 않도록 최소 확보 개수
+RAG_FACET_NEAR_DUP_THRESHOLD = 0.8   # 이 이상 유사하면 재게시(미러링)로 보고 제외
 
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
