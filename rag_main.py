@@ -61,8 +61,6 @@ if __name__ == "__main__":
     # 찍고 프롬프트엔 요약(trend_info)을 넘긴다. 둘이 같은 조회 결과를 공유하므로
     # 네트워크 중복 호출(네이버/카카오/구글)이 없다. trend_info=""면 데이터 부족/수집 실패.
     trend_console, trend_info = format_trend_for_rag(selected_keyword)
-    print("[트렌드 판정]")
-    print(trend_console)
 
     if mode == "2":
         print("[검색 중] facet 4각도 검색...")
@@ -111,6 +109,10 @@ if __name__ == "__main__":
     print("=" * 40)
     print(answer)
     print()
+    print("=" * 40)
+    print("[트렌드 판정]")
+    print("z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸")
+    print(trend_console)
     print("-- 근거 출처 --")
     for point in points:
         title = point.payload.get("title") or "제목 없음"
