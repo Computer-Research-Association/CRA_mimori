@@ -28,9 +28,9 @@ from bs4 import BeautifulSoup
 from config.config_cilent import (
     CRAWL_MAX_POSTS,
     CRAWL_MAX_SEARCH_PAGES,
-    DCINSIDE_SORT,
+    DCINSIDE_SORTS,
 )
-from crawlers.base import make_session, safe_get, rate_limit, get_date_cutoff
+from crawlers.base import make_session, safe_get, rate_limit, get_date_cutoff, merge_dedup_by_url
 from DB.mongo_client import get_collection
 
 SEARCH_BASE = "https://search.dcinside.com"
@@ -70,23 +70,25 @@ def _parse_search_date(text: str) -> datetime | None:
     return None
 
 
-def _search_url(keyword: str, page: int) -> str:
+def _search_url(keyword: str, page: int, sort: str) -> str:
     """
     정렬 기준에 따른 검색 URL 생성.
     - 정확도순: /post/p/{n}/sort/accuracy/q/{키워드}
-    - 최신순(기본): /post/q/{키워드}/p/{n}  (디시 검색은 인기순 미지원)
+    - 최신순: /post/q/{키워드}/p/{n}  (디시 검색은 인기순 미지원)
     """
-    if DCINSIDE_SORT == "accuracy":
+    if sort == "accuracy":
         return f"{SEARCH_BASE}/post/p/{page}/sort/accuracy/q/{quote(keyword)}"
     return f"{SEARCH_BASE}/post/q/{quote(keyword)}/p/{page}"
 
 
-def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, datetime | None]]:
+def _get_post_urls(
+    session, keyword: str, max_posts: int, sort: str
+) -> list[tuple[str, datetime | None]]:
     """
     통합 검색 페이지에서 (게시글 URL, 작성일) 목록 수집.
 
     필터링 기준:
-    - 정렬: DCINSIDE_SORT (기본 accuracy=정확도순) → 키워드 관련성 높은 글 우선.
+    - 정렬: sort 매개변수(호출부가 DCINSIDE_SORTS 중 하나씩 넘김).
     - 날짜: get_date_cutoff()보다 오래된 글은 제외 (건너뜀).
 
     각 li 안에 a.tit_txt (게시글 링크) + span.date_time (작성일)이 있음.
@@ -98,7 +100,7 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
     page = 1
 
     while len(posts) < max_posts and page <= CRAWL_MAX_SEARCH_PAGES:
-        resp = safe_get(session, _search_url(keyword, page), referer=SEARCH_BASE)
+        resp = safe_get(session, _search_url(keyword, page, sort), referer=SEARCH_BASE)
         if resp is None:
             break
 
@@ -145,6 +147,19 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
         page += 1
 
     return posts
+
+
+def _get_post_urls_multi(
+    session, keyword: str, max_posts: int, sorts: tuple[str, ...]
+) -> list[tuple[str, datetime | None]]:
+    """여러 정렬로 나눠 수집한 뒤 URL 기준으로 합친다.
+
+    max_posts를 정렬 개수로 나눠 각 정렬에 배분한다(예: 20개 → 정렬 2개면 10개씩).
+    같은 글이 여러 정렬에 겹쳐 나올 수 있어 merge_dedup_by_url()로 정리한다.
+    """
+    per_sort_budget = max_posts // len(sorts)
+    all_posts = [_get_post_urls(session, keyword, per_sort_budget, sort) for sort in sorts]
+    return merge_dedup_by_url(*all_posts)
 
 
 # ── 2. 게시글 파싱 ────────────────────────────────────────────────────────────
@@ -240,8 +255,8 @@ def crawl_dcinside(keyword: str) -> list[dict]:
     collection = get_collection()
 
     print(f"[디시인사이드] '{keyword}' 검색 시작...")
-    posts = _get_post_urls(session, keyword, CRAWL_MAX_POSTS)
-    print(f"[디시인사이드] 총 {len(posts)}개 URL 수집 완료")
+    posts = _get_post_urls_multi(session, keyword, CRAWL_MAX_POSTS, DCINSIDE_SORTS)
+    print(f"[디시인사이드] 총 {len(posts)}개 URL 수집 완료 (정렬: {', '.join(DCINSIDE_SORTS)})")
 
     saved, skipped, failed, irrelevant = 0, 0, 0, 0
     documents = []

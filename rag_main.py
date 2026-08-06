@@ -109,7 +109,7 @@ if __name__ == "__main__":
     print("z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸")
     print(trend_console)
     print("=" * 40)
-    print(question_label)
+
     print("=" * 40)
     print(answer)
     print()

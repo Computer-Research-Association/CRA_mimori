@@ -11,8 +11,10 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 # MongoDB
 MONGO_URI = os.getenv("MONGODB_URI", "")
 MONGO_DB = "mimori"
-MONGO_COLLECTION = "memes"
-CLEANED_COLLECTION = "cleaned_memes"  # 전처리/청킹 결과 저장용 (원본 memes와 분리)
+# 컬렉션 이름은 env로 덮어쓸 수 있다 — 테스트용 컬렉션(memes_test 등)으로 돌릴 때 쓴다.
+# 기본값이 현재와 같으므로 .env를 안 건드리면 동작이 동일하다.
+MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "memes")
+CLEANED_COLLECTION = os.getenv("CLEANED_COLLECTION", "cleaned_memes")
 TREND_COLLECTION = "trend_scores"     # 트렌드 판정 결과 저장용 (키워드+날짜 단위)
 
 # 검색 설정
@@ -51,9 +53,12 @@ CRAWL_MAX_AGE_YEARS = 3       # 이보다 오래된 게시글은 수집 제외
 CRAWL_MAX_SEARCH_PAGES = 10   # 검색 결과 페이지 탐색 상한 (날짜 필터로 인한 무한 탐색 방지)
 
 # 소스별 정렬 기준 (각 사이트가 지원하는 값이 다름)
-NATEPANN_SORT = "HD"          # PD 정확도 / DD 최신 / HD 인기 / VD 조회 / CD 댓글
-DCINSIDE_SORT = "accuracy"    # accuracy 정확도 / latest 최신 (디시 검색은 인기순 미지원)
-YOUTUBE_ORDER = "relevance"   # relevance / date / viewCount / rating
+# 정렬 하나만 쓰면 "아직 인기를 못 얻은 최신 글"이 계속 순위 밖으로 밀리는 편향이
+# 생긴다(인기/정확도순은 추천·조회가 쌓일 시간이 필요해서 갓 올라온 글은 못 낌).
+# 그래서 성격이 다른 정렬을 섞어서 수집한다 — CRAWL_MAX_POSTS를 정렬 개수로 나눠 쓴다.
+NATEPANN_SORTS = ("HD", "DD")           # 인기 + 최신 (PD 정확도 / DD 최신 / HD 인기 / VD 조회 / CD 댓글)
+DCINSIDE_SORTS = ("accuracy", "latest")  # 정확도 + 최신 (디시 검색은 인기순 미지원)
+YOUTUBE_ORDER = "relevance"   # relevance / date / viewCount / rating (YouTube는 쿼터 문제로 보류 — 아래 참고)
 
 # 전처리 / 청킹 설정
 CHUNK_SIZE = 500            # 청크 최대 글자 수 (RecursiveCharacterTextSplitter 기준)
@@ -65,7 +70,7 @@ EMBEDDING_MODEL = "BAAI/bge-m3"
 EMBEDDING_DENSE_DIM = 1024          # BGE-M3 dense 벡터 차원 (고정값)
 EMBEDDING_BATCH_SIZE = 16           # encode() 1회 호출당 청크 수 (VRAM 6GB 기준)
 
-QDRANT_COLLECTION = "mimori_chunks"
+QDRANT_COLLECTION = os.getenv("QDRANT_COLLECTION", "mimori_chunks")
 QDRANT_DENSE_VECTOR_NAME = "dense"
 QDRANT_SPARSE_VECTOR_NAME = "sparse"
 QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
@@ -108,4 +113,36 @@ RAG_FACET_NEAR_DUP_THRESHOLD = 0.8   # 이 이상 유사하면 재게시(미러�
 
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
+
+# ── 품질 계측 (quality_test) ────────────────────────────────────────────────
+# 산출물 경로. cwd가 아니라 프로젝트 루트 기준으로 고정한다 —
+# 다른 폴더에서 실행해도 같은 곳에 쌓이게 하기 위함.
+DATA_TEST_DIR = os.path.join(_ROOT, "data_test")
+FIXTURE_DIR = os.path.join(DATA_TEST_DIR, "fixtures")
+RUNS_DIR = os.path.join(DATA_TEST_DIR, "runs")
+DEFAULT_FIXTURE_NAME = "raw_sample.jsonl"
+
+# 품질 판정 임계값. signals.py는 값만 계산하고, 판정은 이 상수를 읽는 쪽에서 한다.
+# 전부 '확실히 나쁜 것만' 잡도록 보수적으로 잡은 시작값이며, 리포트로 분포를 보고 조정한다.
+MIN_CHUNK_CHARS = 30        # 이 미만이면 정보 없는 청크로 본다 (RAG 필터와 같은 값)
+MIN_HANGUL_RATIO = 0.3      # 국내 소스인데 이 미만이면 본문 추출 실패 의심
+SPAM_HIT_THRESHOLD = 3      # 스팸 패턴이 이 개수 이상이면 광고로 본다
+DOMESTIC_SOURCES = ("natepann", "dcinside", "namuwiki", "todayhumor")  # 한글 비율 규칙을 적용할 소스
+
+# 사이트 UI 상투어. 본문 추출이 사이드바/위젯까지 긁어왔을 때 나타난다.
+# quality_test/signals.py(개수 세기)와 preprocessing/cleaner.py(실제 제거) 둘 다
+# 이 목록을 쓴다 — 탐지 기준과 제거 기준이 어긋나면 안 되므로 한 곳에 둔다.
+BOILERPLATE_PHRASES = (
+    "본문 바로가기", "메뉴 바로가기", "마이페이지",
+    "이웃추가", "구독하기", "공유하기", "URL복사", "신고하기",
+    "찬반대결", "책갈피", "최신순", "추천순",
+    "dc official App",
+    # Daum 카페(tavily가 그대로 긁어오는 경우, 실사례 2026-08-04 cafe.daum.net) UI 상투어.
+    # "로그인"/"스크랩0"처럼 너무 흔하거나(오탐 위험) 이번 건에만 해당하는(방문자 수 등)
+    # 문구는 일부러 제외했다 — 일반화 가능한 것만 넣는다.
+    "카페정보", "카페 프로필 이미지", "카페 가입하기", "카페 전체 메뉴",
+    "검색이 허용된 게시물입니다", "게시글 본문내용", "검색 옵션 선택상자",
+    "댓글내용선택됨", "서비스 약관/정책", "권리침해신고", "카페 고객센터", "검색비공개 요청",
+    "카페 게시글", "목록 이전글 다음글", "다음검색", "옵션 더 보기", "댓글 작성자", "최신목록",
+)
 
