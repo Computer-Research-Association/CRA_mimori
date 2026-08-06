@@ -54,5 +54,7 @@ if __name__ == "__main__":
     selected_keyword = keywords[int(raw_choice) - 1]
 
     # 유행 판정은 키워드당 한 번만 계산 (네트워크 중복 호출 방지)
+    print(f"[트렌드 조회 중] '{selected_keyword}' 유행 판정 중... (10~30초 소요)")
     trend_console, trend_info = format_trend_for_rag(selected_keyword)
+    print("[트렌드 조회 완료]")
 
