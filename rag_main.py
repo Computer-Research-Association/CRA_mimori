@@ -53,68 +53,69 @@ if __name__ == "__main__":
 
     selected_keyword = keywords[int(raw_choice) - 1]
 
-    # 자유질문(기본)과 facet 4항목 분석 중 선택. facet 모드는 의미/유행_이유/사용법/사용자층
-    # 네 각도로 나눠 검색·병합하는 langchain_playground.ipynb 흐름을 그대로 쓴다.
-    mode = input("분석 모드 [1] 자유질문(기본)  [2] facet 4항목 분석: ").strip() or "1"
-
-    # 유행 판정(z-score 앙상블)을 한 번만 계산해, 콘솔엔 소스별 z 상세(trend_console)를
-    # 찍고 프롬프트엔 요약(trend_info)을 넘긴다. 둘이 같은 조회 결과를 공유하므로
-    # 네트워크 중복 호출(네이버/카카오/구글)이 없다. trend_info=""면 데이터 부족/수집 실패.
+    # 유행 판정은 키워드당 한 번만 계산 (네트워크 중복 호출 방지)
     trend_console, trend_info = format_trend_for_rag(selected_keyword)
 
-    if mode == "2":
-        print("[검색 중] facet 4각도 검색...")
-        facet_config = default_facet_config(selected_keyword)
-        # 임베딩을 먼저 끝내고 unload_model()로 VRAM을 비운 뒤 검색한다(자유질문 경로와 동일한
-        # 순서). facet_vectors를 넘겨 facet_search 내부에서 재임베딩하지 않게 한다.
-        facet_vectors = encode_facets(facet_config)
-        unload_model()  # LLM이 GPU를 쓸 수 있게 임베딩 모델을 미리 내려둠 (VRAM 충돌 방지)
-        points, diag = facet_search(
-            selected_keyword, facet_config, facet_vectors=facet_vectors, is_relevant=True
-        )
-        if not points:
-            print("검색 결과가 없습니다.")
-            sys.exit(1)
-        print(f"[검색 완료] 병합 컨텍스트 {len(points)}개 (소스분포={diag['source_counts']})")
-        prompt = build_facet_prompt(selected_keyword, points, trend_info=trend_info)
-        question_label = "facet 4항목 분석 (의미/유행 이유/사용법/사용자층)"
-    else:
-        question = input("질문을 입력하세요: ").strip()
-        if not question:
-            print("질문을 입력하세요.")
-            sys.exit(1)
+    print(f"\n'{selected_keyword}' 세션 시작. 종료하려면 'exit' 입력.\n")
 
-        print("[검색 중] 관련 청크 조회...")
-        # 검색(임베딩)에 넣는 쿼리에는 keyword를 앞에 붙인다 — eval 경로와 동일한 조립.
-        # 단, 아래 build_rag_prompt에는 원본 question을 그대로 넘겨 LLM이 유저가 실제로
-        # 물은 질문을 보게 한다.
-        search_query = build_search_query(selected_keyword, question)
-        dense_vecs, lexical_weights = encode_batch([search_query])
-        unload_model()  # Ollama가 GPU를 쓸 수 있게 임베딩 모델을 미리 내려둠 (VRAM 충돌 방지)
-        points = search_relevant_chunks(selected_keyword, dense_vecs[0], lexical_weights[0], is_relevant=True)
-        if not points:
-            print("검색 결과가 없습니다.")
-            sys.exit(1)
-        print(f"[검색 완료] 관련 청크 {len(points)}개 발견")
+    while True:
+        mode = input("[1] 자유질문  [2] facet 4항목 분석  [exit] 종료 > ").strip()
 
-        prompt = build_rag_prompt(selected_keyword, question, points, trend_info=trend_info)
-        question_label = question
+        if mode.lower() == "exit":
+            print("종료합니다.")
+            break
 
-    print("[답변 생성 중] LLM에게 질의 중...")
-    answer = analyze(prompt)
+        if mode == "2":
+            print("[검색 중] facet 4각도 검색...")
+            facet_config = default_facet_config(selected_keyword)
+            facet_vectors = encode_facets(facet_config)
+            unload_model()
+            points, diag = facet_search(
+                selected_keyword, facet_config, facet_vectors=facet_vectors, is_relevant=True
+            )
+            if not points:
+                print("검색 결과가 없습니다.\n")
+                continue
+            print(f"[검색 완료] 병합 컨텍스트 {len(points)}개 (소스분포={diag['source_counts']})")
+            prompt = build_facet_prompt(selected_keyword, points, trend_info=trend_info)
+            question_label = "분석."
+        else:
+            question = input("질문을 입력하세요 (exit: 종료) > ").strip()
+            if question.lower() == "exit":
+                print("종료합니다.")
+                break
+            if not question:
+                continue
 
-    print()
-    print("=" * 40)
-    print("[트렌드 판정]")
-    print("z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸")
-    print(trend_console)
-    print("=" * 40)
-    print(f"질문: {question_label}")
-    print("=" * 40)
-    print(answer)
-    print()
-    print("-- 근거 출처 --")
-    for point in points:
-        title = point.payload.get("title") or "제목 없음"
-        url = clean_source_url(point.payload.get("url"))
-        print(f"  - {title} ({url})")
+            print("[검색 중] 관련 청크 조회...")
+            search_query = build_search_query(selected_keyword, question)
+            dense_vecs, lexical_weights = encode_batch([search_query])
+            unload_model()
+            points = search_relevant_chunks(selected_keyword, dense_vecs[0], lexical_weights[0], is_relevant=True)
+            if not points:
+                print("검색 결과가 없습니다.\n")
+                continue
+            print(f"[검색 완료] 관련 청크 {len(points)}개 발견")
+
+            prompt = build_rag_prompt(selected_keyword, question, points, trend_info=trend_info)
+            question_label = f"질문: {question}"
+
+        print("[답변 생성 중] LLM에게 질의 중...")
+        answer = analyze(prompt)
+
+        print()
+        print("=" * 40)
+        print("[트렌드 판정]")
+        print("z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸")
+        print(trend_console)
+        print("=" * 40)
+        print(question_label)
+        print("=" * 40)
+        print(answer)
+        print()
+        print("-- 근거 출처 --")
+        for point in points:
+            title = point.payload.get("title") or "제목 없음"
+            url = clean_source_url(point.payload.get("url"))
+            print(f"  - {title} ({url})")
+        print()
