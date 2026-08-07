@@ -53,12 +53,18 @@ def fetch_keyword_chunks(keyword: str) -> list[str]:
 _CHUNK_SEPARATOR = "\n\n---\n\n"
 
 
-def build_prompt(keyword: str, chunks: list[str]) -> str:
-    """prompt_template.md를 읽어 {keyword}, {content}, {trend_info}를 채운 문자열 반환."""
+def build_prompt(keyword: str, chunks: list[str], trend_info: str | None = None) -> str:
+    """prompt_template.md를 읽어 {keyword}, {content}, {trend_info}를 채운 문자열 반환.
+
+    trend_info를 명시적으로 주면 그대로 쓰고 format_trend_context(실시간 조회)를
+    호출하지 않는다. 생략(None)하면 기존과 동일하게 내부에서 조회한다 — API 서버처럼
+    캐시된 값을 미리 갖고 있는 호출부는 반드시 trend_info를 넘겨야 실시간 호출이 새지 않는다.
+    """
     with open(ANALYSIS_PROMPT_PATH, "r", encoding="utf-8") as f:
         template = f.read()
     content = _CHUNK_SEPARATOR.join(chunks)
-    trend_info = format_trend_context(keyword)
+    if trend_info is None:
+        trend_info = format_trend_context(keyword)
     return template.format(keyword=keyword, content=content, trend_info=trend_info)
 
 
