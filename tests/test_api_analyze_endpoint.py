@@ -77,8 +77,46 @@ def test_정상_흐름은_200과_결과를_반환한다():
     print("[OK] 정상 흐름 200 + build_prompt에 캐시된 trend_info 전달 확인")
 
 
+def test_캐시가_없으면_trend_info가_빈_문자열이다():
+    calls = {}
+    original_fetch = _patch(routes, "fetch_keyword_chunks", lambda keyword: ["청크1", "청크2"])
+    original_cached = _patch(routes, "get_cached_trend", lambda keyword: None)
+    original_ctx = _patch(
+        routes, "format_trend_context", lambda keyword, result=None: "이건호출되면안됨"
+    )
+
+    def fake_build_prompt(keyword, chunks, trend_info=None):
+        calls["build_prompt"] = (keyword, chunks, trend_info)
+        return "완성된프롬프트"
+
+    def fake_analyze(prompt):
+        calls["analyze_prompt"] = prompt
+        return "분석 결과 텍스트"
+
+    original_build = _patch(routes, "build_prompt", fake_build_prompt)
+    original_analyze = _patch(routes, "analyze", fake_analyze)
+    try:
+        app = app_module.create_app()
+        client = app.test_client()
+        resp = client.post("/api/analyze", json={"keyword": "야르"})
+        assert resp.status_code == 200, resp.status_code
+        body = resp.get_json()
+        assert body["result"] == "분석 결과 텍스트", body
+        assert body["trend"] is None, body
+        assert calls["build_prompt"] == ("야르", ["청크1", "청크2"], ""), calls
+        assert calls["analyze_prompt"] == "완성된프롬프트", calls
+    finally:
+        routes.fetch_keyword_chunks = original_fetch
+        routes.get_cached_trend = original_cached
+        routes.format_trend_context = original_ctx
+        routes.build_prompt = original_build
+        routes.analyze = original_analyze
+    print("[OK] 캐시 없음 -> trend_info는 빈 문자열, trend는 None")
+
+
 if __name__ == "__main__":
     test_keyword_없이_요청하면_400()
     test_청크가_없으면_404()
     test_정상_흐름은_200과_결과를_반환한다()
+    test_캐시가_없으면_trend_info가_빈_문자열이다()
     print("\nALL PASS ✅")

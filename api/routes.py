@@ -49,4 +49,5 @@ def analyze_endpoint():
     prompt = build_prompt(keyword, chunks, trend_info=trend_info)
     result = analyze(prompt)
 
-    return jsonify({"result": result, "trend": cached_trend})
+    trend_response = {k: v for k, v in cached_trend.items() if k != "_id"} if cached_trend else None
+    return jsonify({"result": result, "trend": trend_response})
