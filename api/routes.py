@@ -6,6 +6,7 @@ routes.py
 from flask import Blueprint, jsonify
 
 from analysis.pipeline import list_analyzable_keywords
+from trend.trend_service import get_cached_trend
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -18,3 +19,12 @@ def health():
 @bp.route("/keywords")
 def keywords():
     return jsonify({"keywords": list_analyzable_keywords()})
+
+
+@bp.route("/trend/<keyword>")
+def trend(keyword):
+    result = get_cached_trend(keyword)
+    if result is None:
+        return jsonify({"error": f"'{keyword}'의 트렌드 데이터가 없습니다"}), 404
+    result = {k: v for k, v in result.items() if k != "_id"}
+    return jsonify(result)
