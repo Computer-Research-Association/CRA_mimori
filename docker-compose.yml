@@ -1,7 +1,21 @@
 services:
-  flask:
+  scheduler:
     build: .
-    container_name: mimori-flask
+    container_name: mimori-scheduler
+    depends_on:
+      - mongo
+      - qdrant
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - /app/.venv
+    restart: unless-stopped
+
+  api:
+    build: .
+    container_name: mimori-api
+    command: gunicorn -w 1 --threads 4 --timeout 300 -b 0.0.0.0:5000 api.app:app
     ports:
       - "5000:5000"
     depends_on:
