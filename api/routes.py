@@ -47,7 +47,13 @@ def analyze_endpoint():
         return jsonify({"error": f"'{keyword}' 데이터를 찾을 수 없습니다"}), 404
 
     cached_trend = get_cached_trend(keyword)
-    trend_info = format_trend_context(keyword, result=cached_trend) if cached_trend else ""
+    if cached_trend:
+        try:
+            trend_info = format_trend_context(keyword, result=cached_trend)
+        except Exception:
+            trend_info = ""
+    else:
+        trend_info = ""
 
     prompt = build_prompt(keyword, chunks, trend_info=trend_info)
     result = analyze(prompt)
@@ -72,7 +78,13 @@ def rag_endpoint():
         return jsonify({"error": f"'{keyword}'에 대한 검색 결과가 없습니다"}), 404
 
     cached_trend = get_cached_trend(keyword)
-    trend_info = format_trend_context(keyword, result=cached_trend) if cached_trend else ""
+    if cached_trend:
+        try:
+            trend_info = format_trend_context(keyword, result=cached_trend)
+        except Exception:
+            trend_info = ""
+    else:
+        trend_info = ""
 
     prompt = build_rag_prompt(keyword, question, points, trend_info=trend_info)
     answer = analyze(prompt)
