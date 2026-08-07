@@ -415,6 +415,25 @@ def _baseline_avg(counts: list[dict]) -> float:
     return sum(float(row["ratio"]) for row in baseline) / len(baseline)
 
 
+def get_cached_trend(keyword: str, collection=None) -> dict | None:
+    """trend_scores에서 keyword의 가장 최근 날짜 판정 문서를 읽어 반환. 없으면 None.
+
+    실시간으로 naver/kakao/google을 호출하지 않는다 — main.py가 크롤 사이클(2시간)마다
+    이미 채워둔 값을 재사용한다. API가 방문자 요청마다 실시간 조회를 하면 pytrends 등
+    레이트리밋이 빡센 외부 서비스에 EC2 IP가 차단될 위험이 있기 때문(모듈 docstring 참고).
+
+    collection을 넘기면 그 컬렉션을 쓴다(테스트용). 생략하면 실제 Mongo trend_scores를 쓴다.
+    """
+    if collection is None:
+        from DB.mongo_client import get_collection
+        from config.config_cilent import TREND_COLLECTION
+
+        collection = get_collection(TREND_COLLECTION)
+
+    docs = list(collection.find({"keyword": keyword}).sort("date", -1).limit(1))
+    return docs[0] if docs else None
+
+
 if __name__ == "__main__":
     _keyword = input("키워드 입력: ").strip()
     result = get_meme_trend(_keyword)
