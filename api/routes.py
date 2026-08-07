@@ -6,7 +6,10 @@ routes.py
 from flask import Blueprint, jsonify, request
 
 from analysis.pipeline import analyze, build_prompt, fetch_keyword_chunks, list_analyzable_keywords
+from analysis.query import build_search_query
+from analysis.rag_pipeline import build_rag_prompt, clean_source_url, search_relevant_chunks
 from api.app import limited
+from embedding.encoder import encode_batch
 from trend.trend_service import format_trend_context, get_cached_trend
 
 bp = Blueprint("api", __name__, url_prefix="/api")
@@ -51,3 +54,35 @@ def analyze_endpoint():
 
     trend_response = {k: v for k, v in cached_trend.items() if k != "_id"} if cached_trend else None
     return jsonify({"result": result, "trend": trend_response})
+
+
+@bp.route("/rag", methods=["POST"])
+@limited
+def rag_endpoint():
+    data = request.get_json(silent=True) or {}
+    keyword = (data.get("keyword") or "").strip()
+    question = (data.get("question") or "").strip()
+    if not keyword or not question:
+        return jsonify({"error": "keyword와 question이 모두 필요합니다"}), 400
+
+    search_query = build_search_query(keyword, question)
+    dense_vecs, lexical_weights = encode_batch([search_query])
+    points = search_relevant_chunks(keyword, dense_vecs[0], lexical_weights[0], is_relevant=True)
+    if not points:
+        return jsonify({"error": f"'{keyword}'에 대한 검색 결과가 없습니다"}), 404
+
+    cached_trend = get_cached_trend(keyword)
+    trend_info = format_trend_context(keyword, result=cached_trend) if cached_trend else ""
+
+    prompt = build_rag_prompt(keyword, question, points, trend_info=trend_info)
+    answer = analyze(prompt)
+
+    sources = [
+        {
+            "title": point.payload.get("title") or "제목 없음",
+            "url": clean_source_url(point.payload.get("url")),
+        }
+        for point in points
+    ]
+    trend_response = {k: v for k, v in cached_trend.items() if k != "_id"} if cached_trend else None
+    return jsonify({"answer": answer, "sources": sources, "trend": trend_response})
