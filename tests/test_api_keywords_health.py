@@ -9,12 +9,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import api.app as app_module
 import api.routes as routes
-from api.app import create_app
 
 
 def test_health는_ok를_반환한다():
-    app = create_app()
+    app = app_module.create_app()
     client = app.test_client()
     resp = client.get("/api/health")
     assert resp.status_code == 200, resp.status_code
@@ -26,7 +26,7 @@ def test_keywords는_목록을_JSON으로_반환한다():
     original = routes.list_analyzable_keywords
     routes.list_analyzable_keywords = lambda: ["야르", "쌰갈"]
     try:
-        app = create_app()
+        app = app_module.create_app()
         client = app.test_client()
         resp = client.get("/api/keywords")
         assert resp.status_code == 200, resp.status_code

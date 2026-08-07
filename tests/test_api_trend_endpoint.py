@@ -9,8 +9,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import api.app as app_module
 import api.routes as routes
-from api.app import create_app
 
 
 def test_캐시된_트렌드가_있으면_200과_함께_반환한다():
@@ -22,7 +22,7 @@ def test_캐시된_트렌드가_있으면_200과_함께_반환한다():
         "final_z": 1.2,
     }
     try:
-        app = create_app()
+        app = app_module.create_app()
         client = app.test_client()
         resp = client.get("/api/trend/야르")
         assert resp.status_code == 200, resp.status_code
@@ -38,7 +38,7 @@ def test_캐시된_트렌드가_없으면_404를_반환한다():
     original = routes.get_cached_trend
     routes.get_cached_trend = lambda keyword: None
     try:
-        app = create_app()
+        app = app_module.create_app()
         client = app.test_client()
         resp = client.get("/api/trend/없는키워드")
         assert resp.status_code == 404, resp.status_code
