@@ -33,8 +33,9 @@ import time
 
 from google import genai
 from google.genai import types
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
-from config.config_cilent import GEMINI_API_KEY
+from config.config_cilent import GEMINI_API_KEY, NIM_KEY
 
 # 판정용 모델. gemini-3.5-flash는 무료 티어 일일 한도가 20건뿐이라 대량 채점에 못 씀.
 # lite-latest는 무료 한도가 훨씬 넉넉해 build(수백 콜)/score를 감당할 수 있다.
@@ -366,19 +367,29 @@ class Judge:
         self._cache_lock = threading.Lock()
         self._dirty = 0
         self._save_every = 20
-        self.client = genai.Client(api_key=GEMINI_API_KEY)
-        # thinking_budget=0: 판정은 짧은 라벨이라 사고 토큰을 끄고 결정적으로(temperature=0).
-        # 단 flash-lite 계열은 thinking_config 자체를 거부(400)하므로, 그때는 아래
-        # _gen_config_basic으로 자동 강등한다(모델을 바꿔도 코드 수정 없이 돌아가게).
-        self._gen_config = types.GenerateContentConfig(
-            temperature=0,
-            max_output_tokens=256,
-            thinking_config=types.ThinkingConfig(thinking_budget=0),
-        )
-        self._gen_config_basic = types.GenerateContentConfig(
-            temperature=0,
-            max_output_tokens=256,
-        )
+        # 모델명에 '/'가 있으면 NIM(NVIDIA) 백엔드, 아니면 Gemini.
+        if "/" in model:
+            self._backend = "nim"
+            self._nim_client = ChatNVIDIA(model=model, api_key=NIM_KEY, temperature=0, max_tokens=256,
+                                          timeout=180)
+            self.client = None
+            self._gen_config = None
+            self._gen_config_basic = None
+        else:
+            self._backend = "gemini"
+            self.client = genai.Client(api_key=GEMINI_API_KEY)
+            # thinking_budget=0: 판정은 짧은 라벨이라 사고 토큰을 끄고 결정적으로(temperature=0).
+            # 단 flash-lite 계열은 thinking_config 자체를 거부(400)하므로, 그때는 아래
+            # _gen_config_basic으로 자동 강등한다(모델을 바꿔도 코드 수정 없이 돌아가게).
+            self._gen_config = types.GenerateContentConfig(
+                temperature=0,
+                max_output_tokens=256,
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+            )
+            self._gen_config_basic = types.GenerateContentConfig(
+                temperature=0,
+                max_output_tokens=256,
+            )
 
     def _load_cache(self) -> dict[str, dict]:
         if os.path.exists(self.cache_path):
@@ -421,6 +432,38 @@ class Judge:
         # 모델·프롬프트가 바뀌면 다른 키가 되어 옛 라벨을 재사용하지 않는다.
         return f"{self.model}|{self.prompt_version}|{query_id}||{chunk_id}"
 
+    def _invoke_nim(self, prompt: str):
+        """NIM(NVIDIA) 백엔드 호출. 성공 시 텍스트 반환, 실패 시 None."""
+        _NIM_TRANSIENT = _TRANSIENT_MARKERS + ("timeout", "Timeout", "ReadTimeout", "timed out")
+        if _BREAKER.is_open:
+            return None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                _LIMITER.acquire()
+                resp = self._nim_client.invoke([{"role": "user", "content": prompt}])
+                _LIMITER.on_success()
+                _BREAKER.record_success()
+                return resp.content
+            except Exception as e:
+                message = str(e)
+                is_quota = any(m in message for m in _QUOTA_MARKERS)
+                is_transient = any(m in message for m in _NIM_TRANSIENT)
+                if not (is_quota or is_transient):
+                    raise
+                _LIMITER.on_rate_limited()
+                opened = _BREAKER.record_failure(weight=3.0 if is_quota else 1.0)
+                if opened:
+                    print("  [중단] 연속 서버 실패가 임계치 초과 — 남은 판정을 건너뜁니다.")
+                    return None
+                if is_quota:
+                    print(f"  [판정 실패] NIM 쿼터 소진: {message[:80]}")
+                    return None
+                if attempt == _MAX_RETRIES - 1:
+                    print(f"  [판정 포기] NIM 재시도 {_MAX_RETRIES}회 실패: {message[:80]}")
+                    return None
+                wait = min(_BACKOFF_BASE_SEC * (2 ** attempt), _BACKOFF_CAP_SEC)
+                time.sleep(wait)
+
     def _invoke_with_retry(self, prompt: str):
         """
         Gemini 호출을 하되 오류 성격에 따라 다르게 대응한다.
@@ -434,6 +477,9 @@ class Judge:
         google-genai는 HTTP 오류를 예외(메시지에 코드 포함)로 던지므로 메시지 문자열로
         오류 성격을 판별한다. 성공 시 응답 텍스트(str)를 반환한다.
         """
+        if self._backend == "nim":
+            return self._invoke_nim(prompt)
+
         # 서킷이 이미 열렸으면 API를 부르지 않는다 — 남은 청크는 전부 여기서 즉시 실패.
         if _BREAKER.is_open:
             return None
