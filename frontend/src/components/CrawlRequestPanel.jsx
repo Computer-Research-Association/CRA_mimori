@@ -13,6 +13,7 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
     timerRef.current = setInterval(async () => {
       try {
         const data = await fetchCrawlStatus(keyword)
+        if (cancelledRef.current) return
         setStatus(data.status)
         if (data.status === 'done') {
           clearInterval(timerRef.current)
@@ -22,6 +23,7 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
           setError(data.error)
         }
       } catch (e) {
+        if (cancelledRef.current) return
         clearInterval(timerRef.current)
         setError(e.message || '네트워크 오류가 발생했습니다')
       }

@@ -6,6 +6,7 @@ export default function AnalysisPanel({ keyword }) {
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
   const [trend, setTrend] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -31,10 +32,17 @@ export default function AnalysisPanel({ keyword }) {
     return () => {
       cancelled = true
     }
-  }, [keyword])
+  }, [keyword, retryCount])
 
   if (loading) return <p>분석 중...</p>
-  if (error) return <p role="alert">{error}</p>
+  if (error) {
+    return (
+      <div>
+        <p role="alert">{error}</p>
+        <button onClick={() => setRetryCount((c) => c + 1)}>다시 시도</button>
+      </div>
+    )
+  }
 
   return (
     <div>

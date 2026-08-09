@@ -44,4 +44,15 @@ describe('RagPanel', () => {
 
     expect(await screen.findByText('검색 결과가 없습니다')).toBeInTheDocument()
   })
+
+  it('모든 소스를 해제하면 질문하기 버튼이 비활성화된다', async () => {
+    render(<RagPanel keyword="야르" />)
+
+    for (const source of api.AVAILABLE_SOURCES) {
+      await userEvent.click(screen.getByLabelText(source))
+    }
+
+    expect(screen.getByRole('button', { name: '질문하기' })).toBeDisabled()
+    expect(screen.getByText('최소 하나의 출처를 선택하세요')).toBeInTheDocument()
+  })
 })

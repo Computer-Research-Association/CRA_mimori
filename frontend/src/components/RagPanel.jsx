@@ -39,8 +39,9 @@ export default function RagPanel({ keyword }) {
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="더 궁금한 게 있으세요?"
         />
-        <button type="submit" disabled={loading}>질문하기</button>
+        <button type="submit" disabled={loading || selectedSources.length === 0}>질문하기</button>
       </form>
+      {selectedSources.length === 0 && <p>최소 하나의 출처를 선택하세요</p>}
       {loading && <p>답변 생성 중...</p>}
       {error && <p role="alert">{error}</p>}
       {answer && (

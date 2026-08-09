@@ -96,3 +96,21 @@ describe('fetchCrawlStatus', () => {
     expect(result.status).toBe('running')
   })
 })
+
+describe('handleResponse의 에러 처리', () => {
+  it('응답 본문이 JSON이 아니면 상태 코드를 담은 대체 메시지를 던진다', async () => {
+    fetch.mockReturnValue(Promise.resolve({
+      ok: false,
+      status: 502,
+      json: () => Promise.reject(new Error('bad json')),
+    }))
+
+    await expect(fetchKeywords()).rejects.toThrow('요청 실패 (502)')
+  })
+
+  it('fetch 자체가 실패하면(네트워크 오류) 한국어 메시지를 던진다', async () => {
+    fetch.mockRejectedValue(new Error('network down'))
+
+    await expect(fetchKeywords()).rejects.toThrow('서버에 연결할 수 없습니다')
+  })
+})

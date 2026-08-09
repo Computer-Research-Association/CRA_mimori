@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import AnalysisPanel from './AnalysisPanel.jsx'
 import * as api from '../api.js'
@@ -42,5 +43,20 @@ describe('AnalysisPanel', () => {
     render(<AnalysisPanel keyword="야르" />)
 
     expect(await screen.findByText('데이터를 찾을 수 없습니다')).toBeInTheDocument()
+  })
+
+  it('실패 후 다시 시도를 누르면 재요청하여 성공 시 결과를 보여준다', async () => {
+    vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+    const analyzeSpy = vi.spyOn(api, 'analyzeKeyword')
+      .mockRejectedValueOnce(new Error('일시적 오류'))
+      .mockResolvedValueOnce({ result: '재시도 성공 결과', trend: null })
+
+    render(<AnalysisPanel keyword="야르" />)
+
+    expect(await screen.findByText('일시적 오류')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+
+    expect(await screen.findByText('재시도 성공 결과')).toBeInTheDocument()
+    expect(analyzeSpy).toHaveBeenCalledTimes(2)
   })
 })

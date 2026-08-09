@@ -97,4 +97,39 @@ describe('CrawlRequestPanel', () => {
     expect(fetchStatusSpy).not.toHaveBeenCalled()
     expect(consoleErrorSpy).not.toHaveBeenCalled()
   })
+
+  it('폴링 틱이 진행 중일 때 언마운트되면, 그 이후 done으로 resolve되어도 onDone을 호출하지 않는다', async () => {
+    vi.spyOn(api, 'requestCrawl').mockResolvedValue({ keyword: '흘로망', status: 'queued' })
+
+    let resolveInFlightPoll
+    const inFlightPoll = new Promise((resolve) => {
+      resolveInFlightPoll = resolve
+    })
+    const fetchStatusSpy = vi.spyOn(api, 'fetchCrawlStatus')
+      .mockResolvedValueOnce({ keyword: '흘로망', status: 'running' })
+      .mockReturnValueOnce(inFlightPoll)
+    const onDone = vi.fn()
+
+    const { unmount } = render(<CrawlRequestPanel keyword="흘로망" onDone={onDone} />)
+
+    // requestCrawl 을 resolve시켜 폴링을 시작시킨다
+    await vi.advanceTimersByTimeAsync(0)
+
+    // 첫번째 틱: running (폴링 계속)
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(fetchStatusSpy).toHaveBeenCalledTimes(1)
+
+    // 두번째 틱 시작: fetchCrawlStatus가 아직 pending인 상태
+    await vi.advanceTimersByTimeAsync(5000)
+    expect(fetchStatusSpy).toHaveBeenCalledTimes(2)
+
+    // 두번째 틱이 in-flight인 상태에서 언마운트
+    unmount()
+
+    // 언마운트 이후에 in-flight였던 fetchCrawlStatus가 done으로 resolve됨
+    resolveInFlightPoll({ keyword: '흘로망', status: 'done' })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onDone).not.toHaveBeenCalled()
+  })
 })

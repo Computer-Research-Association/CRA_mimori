@@ -7,11 +7,18 @@ import RagPanel from './components/RagPanel.jsx'
 
 export default function App() {
   const [keywords, setKeywords] = useState([])
+  const [keywordsLoaded, setKeywordsLoaded] = useState(false)
+  const [keywordsError, setKeywordsError] = useState(null)
   const [selectedKeyword, setSelectedKeyword] = useState(null)
   const [pendingKeyword, setPendingKeyword] = useState(null)
 
   useEffect(() => {
-    fetchKeywords().then(setKeywords)
+    fetchKeywords()
+      .then((kws) => {
+        setKeywords(kws)
+        setKeywordsLoaded(true)
+      })
+      .catch((e) => setKeywordsError(e.message || '키워드 목록을 불러오지 못했습니다'))
   }, [])
 
   function handleSelect(keyword) {
@@ -33,12 +40,17 @@ export default function App() {
   return (
     <div>
       <h1>mimori — 밈/신조어 검색</h1>
-      <KeywordSelector keywords={keywords} onSelect={handleSelect} onNewKeyword={handleNewKeyword} />
-      {pendingKeyword && <CrawlRequestPanel keyword={pendingKeyword} onDone={handleCrawlDone} />}
+      {keywordsError && <p role="alert">{keywordsError}</p>}
+      {keywordsLoaded || keywordsError ? (
+        <KeywordSelector keywords={keywords} onSelect={handleSelect} onNewKeyword={handleNewKeyword} />
+      ) : (
+        <p>불러오는 중...</p>
+      )}
+      {pendingKeyword && <CrawlRequestPanel key={pendingKeyword} keyword={pendingKeyword} onDone={handleCrawlDone} />}
       {selectedKeyword && (
         <>
-          <AnalysisPanel keyword={selectedKeyword} />
-          <RagPanel keyword={selectedKeyword} />
+          <AnalysisPanel key={`analysis-${selectedKeyword}`} keyword={selectedKeyword} />
+          <RagPanel key={`rag-${selectedKeyword}`} keyword={selectedKeyword} />
         </>
       )}
     </div>

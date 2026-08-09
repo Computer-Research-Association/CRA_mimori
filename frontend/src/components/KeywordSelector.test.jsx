@@ -9,7 +9,7 @@ describe('KeywordSelector', () => {
     const onNewKeyword = vi.fn()
     render(<KeywordSelector keywords={['야르', '쌰갈']} onSelect={onSelect} onNewKeyword={onNewKeyword} />)
 
-    await userEvent.type(screen.getByRole('textbox'), '야르')
+    await userEvent.type(screen.getByRole('combobox'), '야르')
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
 
     expect(onSelect).toHaveBeenCalledWith('야르')
@@ -21,10 +21,19 @@ describe('KeywordSelector', () => {
     const onNewKeyword = vi.fn()
     render(<KeywordSelector keywords={['야르']} onSelect={onSelect} onNewKeyword={onNewKeyword} />)
 
-    await userEvent.type(screen.getByRole('textbox'), '흘로망')
+    await userEvent.type(screen.getByRole('combobox'), '흘로망')
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
 
     expect(onNewKeyword).toHaveBeenCalledWith('흘로망')
     expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('입력창에 datalist로 기존 키워드 목록을 노출한다', () => {
+    render(<KeywordSelector keywords={['야르', '쌰갈']} onSelect={vi.fn()} onNewKeyword={vi.fn()} />)
+
+    const input = screen.getByRole('combobox')
+    expect(input).toHaveAttribute('list', 'keyword-options')
+    const options = document.querySelectorAll('#keyword-options option')
+    expect(Array.from(options).map((o) => o.value)).toEqual(['야르', '쌰갈'])
   })
 })
