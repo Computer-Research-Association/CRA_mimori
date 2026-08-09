@@ -18,7 +18,7 @@ services:
     # gunicorn --timeout은 실용적 타협치일 뿐 하드 개런티가 아님: analyze()의 내부 재시도/타임아웃
     # 예산(최대 100분/시도 x 최대 3회)이 훨씬 더 크기 때문. -w 1(워커 1개)이라 타임아웃으로 워커가
     # 죽으면 그 순간 처리 중이던 다른 모든 요청도 함께 죽는다(전체 다운타임 + BGE-M3 재로드 발생).
-    command: uv run gunicorn -w 1 --threads 4 --timeout 600 -b 0.0.0.0:5000 api.app:app
+    command: uv run --no-dev gunicorn -w 1 --threads 4 --timeout 600 -b 0.0.0.0:5000 api.app:app
     ports:
       - "5000:5000"
     depends_on:
