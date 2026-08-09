@@ -150,9 +150,81 @@ def test_trend가_있을_때_id는_제외된다():
     print("[OK] trend에 _id가 없고 다른 필드만 포함됨")
 
 
+def test_sources_파라미터가_search_relevant_chunks에_그대로_전달된다():
+    fake_point = SimpleNamespace(
+        payload={"title": "야르 뜻 정리", "url": "https://example.com/야르", "text": "본문"}
+    )
+    calls = {}
+
+    original_encode = _patch(routes, "encode_batch", lambda texts: ([[0.1, 0.2]], [{}]))
+
+    def fake_search(keyword, dense_vec, sparse, **kwargs):
+        calls["search_kwargs"] = kwargs
+        return [fake_point]
+
+    original_search = _patch(routes, "search_relevant_chunks", fake_search)
+    original_cached = _patch(routes, "get_cached_trend", lambda keyword: None)
+    original_ctx = _patch(routes, "format_trend_context", lambda keyword, result=None: "")
+    original_build = _patch(routes, "build_rag_prompt", lambda keyword, question, points, trend_info=None: "프롬프트")
+    original_analyze = _patch(routes, "analyze", lambda prompt: "답변")
+    try:
+        app = app_module.create_app()
+        client = app.test_client()
+        resp = client.post(
+            "/api/rag",
+            json={"keyword": "야르", "question": "무슨 뜻이야?", "sources": ["tavily", "youtube"]},
+        )
+        assert resp.status_code == 200, resp.status_code
+        assert calls["search_kwargs"]["sources"] == ["tavily", "youtube"], calls
+        assert calls["search_kwargs"]["is_relevant"] is True, calls
+    finally:
+        routes.encode_batch = original_encode
+        routes.search_relevant_chunks = original_search
+        routes.get_cached_trend = original_cached
+        routes.format_trend_context = original_ctx
+        routes.build_rag_prompt = original_build
+        routes.analyze = original_analyze
+    print("[OK] sources 파라미터가 search_relevant_chunks로 전달됨")
+
+
+def test_sources_생략하면_None으로_전달된다_기존동작():
+    fake_point = SimpleNamespace(
+        payload={"title": "야르 뜻 정리", "url": "https://example.com/야르", "text": "본문"}
+    )
+    calls = {}
+
+    original_encode = _patch(routes, "encode_batch", lambda texts: ([[0.1, 0.2]], [{}]))
+
+    def fake_search(keyword, dense_vec, sparse, **kwargs):
+        calls["search_kwargs"] = kwargs
+        return [fake_point]
+
+    original_search = _patch(routes, "search_relevant_chunks", fake_search)
+    original_cached = _patch(routes, "get_cached_trend", lambda keyword: None)
+    original_ctx = _patch(routes, "format_trend_context", lambda keyword, result=None: "")
+    original_build = _patch(routes, "build_rag_prompt", lambda keyword, question, points, trend_info=None: "프롬프트")
+    original_analyze = _patch(routes, "analyze", lambda prompt: "답변")
+    try:
+        app = app_module.create_app()
+        client = app.test_client()
+        resp = client.post("/api/rag", json={"keyword": "야르", "question": "무슨 뜻이야?"})
+        assert resp.status_code == 200, resp.status_code
+        assert calls["search_kwargs"]["sources"] is None, calls
+    finally:
+        routes.encode_batch = original_encode
+        routes.search_relevant_chunks = original_search
+        routes.get_cached_trend = original_cached
+        routes.format_trend_context = original_ctx
+        routes.build_rag_prompt = original_build
+        routes.analyze = original_analyze
+    print("[OK] sources 생략 시 None (기존 동작과 동일)")
+
+
 if __name__ == "__main__":
     test_keyword나_question_누락시_400()
     test_검색결과_없으면_404()
     test_정상_흐름은_200과_답변_출처를_반환한다()
     test_trend가_있을_때_id는_제외된다()
+    test_sources_파라미터가_search_relevant_chunks에_그대로_전달된다()
+    test_sources_생략하면_None으로_전달된다_기존동작()
     print("\nALL PASS ✅")

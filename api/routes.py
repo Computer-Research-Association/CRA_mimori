@@ -74,9 +74,13 @@ def rag_endpoint():
     if not keyword or not question:
         return jsonify({"error": "keyword와 question이 모두 필요합니다"}), 400
 
+    sources = data.get("sources")  # list[str] | None. 생략하면 전체 소스 검색(기존 동작과 동일)
+
     search_query = build_search_query(keyword, question)
     dense_vecs, lexical_weights = encode_batch([search_query])
-    points = search_relevant_chunks(keyword, dense_vecs[0], lexical_weights[0], is_relevant=True)
+    points = search_relevant_chunks(
+        keyword, dense_vecs[0], lexical_weights[0], sources=sources, is_relevant=True
+    )
     if not points:
         return jsonify({"error": f"'{keyword}'에 대한 검색 결과가 없습니다"}), 404
 
