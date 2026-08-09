@@ -7,6 +7,7 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
   const [status, setStatus] = useState('queued')
   const [error, setError] = useState(null)
   const timerRef = useRef(null)
+  const cancelledRef = useRef(false)
 
   function startPolling() {
     timerRef.current = setInterval(async () => {
@@ -28,14 +29,18 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
   }
 
   useEffect(() => {
+    cancelledRef.current = false
     requestCrawl(keyword)
       .then(() => {
-        startPolling()
+        if (!cancelledRef.current) startPolling()
       })
       .catch((e) => {
-        setError(e.message || '네트워크 오류가 발생했습니다')
+        if (!cancelledRef.current) setError(e.message || '네트워크 오류가 발생했습니다')
       })
-    return () => clearInterval(timerRef.current)
+    return () => {
+      cancelledRef.current = true
+      clearInterval(timerRef.current)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyword])
 
@@ -43,9 +48,11 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
     setError(null)
     setStatus('queued')
     requestCrawl(keyword)
-      .then(() => startPolling())
+      .then(() => {
+        if (!cancelledRef.current) startPolling()
+      })
       .catch((e) => {
-        setError(e.message || '네트워크 오류가 발생했습니다')
+        if (!cancelledRef.current) setError(e.message || '네트워크 오류가 발생했습니다')
       })
   }
 

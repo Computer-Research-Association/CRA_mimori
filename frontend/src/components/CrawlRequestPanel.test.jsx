@@ -72,4 +72,29 @@ describe('CrawlRequestPanel', () => {
     await vi.advanceTimersByTimeAsync(10000)
     expect(fetchStatusSpy.mock.calls.length).toBe(callsAfterError)
   })
+
+  it('초기 requestCrawl이 pending인 상태로 언마운트되면, 이후 resolve되어도 폴링을 시작하지 않는다', async () => {
+    let resolveRequestCrawl
+    const pendingRequestCrawl = new Promise((resolve) => {
+      resolveRequestCrawl = resolve
+    })
+    vi.spyOn(api, 'requestCrawl').mockReturnValue(pendingRequestCrawl)
+    const fetchStatusSpy = vi.spyOn(api, 'fetchCrawlStatus').mockResolvedValue({
+      keyword: '흘로망', status: 'running',
+    })
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { unmount } = render(<CrawlRequestPanel keyword="흘로망" onDone={vi.fn()} />)
+    unmount()
+
+    resolveRequestCrawl({ keyword: '흘로망', status: 'queued' })
+    // flush the now-resolved requestCrawl().then(...) microtask
+    await vi.advanceTimersByTimeAsync(0)
+    // if startPolling() had run despite the unmount, an interval would now be
+    // ticking; advance past one tick to be sure nothing was scheduled
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(fetchStatusSpy).not.toHaveBeenCalled()
+    expect(consoleErrorSpy).not.toHaveBeenCalled()
+  })
 })
