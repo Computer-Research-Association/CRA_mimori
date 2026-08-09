@@ -11,7 +11,7 @@ max_instances(기본값 1)가 보장한다 — 같은 job이 아직 안 끝났�
 """
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -29,10 +29,22 @@ def _mark(collection, keyword: str, status: str, error: str | None = None) -> No
     collection.update_one({"_id": keyword}, {"$set": update})
 
 
+def _requeue_stale_running(collection, stale_after: timedelta = timedelta(hours=2)) -> None:
+    """max_instances=1이 동시 실행은 막아주지만, 프로세스가 크롤링 도중 죽으면(OOM 등)
+    Mongo 문서만 running에 멈춰 남는다. 이 함수는 그런 고아 상태를 다음 실행 때 회수한다."""
+    cutoff = datetime.now(timezone.utc) - stale_after
+    collection.update_many(
+        {"status": "running", "started_at": {"$lt": cutoff}},
+        {"$set": {"status": "queued"}},
+    )
+
+
 def run_once(collection=None) -> None:
     """큐에서 가장 오래된 queued 요청 하나를 처리. 없으면 즉시 반환."""
     if collection is None:
         collection = get_collection(CRAWL_REQUESTS_COLLECTION)
+
+    _requeue_stale_running(collection)
 
     doc = collection.find_one_and_update(
         {"status": "queued"},
@@ -46,8 +58,11 @@ def run_once(collection=None) -> None:
     try:
         crawl_all([keyword])
         preprocess_documents(keyword)
-        embed_documents(keyword)
-        _mark(collection, keyword, "done")
+        embed_result = embed_documents(keyword)
+        if embed_result.get("documents", 0) == 0:
+            _mark(collection, keyword, "failed", error="수집된 데이터가 없습니다 (모든 소스에서 관련 자료를 찾지 못했습니다)")
+        else:
+            _mark(collection, keyword, "done")
     except Exception as e:
         _mark(collection, keyword, "failed", error=str(e))
 
