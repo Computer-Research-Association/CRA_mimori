@@ -49,5 +49,14 @@ services:
       - ./qdrant_storage:/qdrant/storage
     restart: unless-stopped
 
+  web:
+    build: ./frontend
+    container_name: mimori-web
+    ports:
+      - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   mongo_data:
