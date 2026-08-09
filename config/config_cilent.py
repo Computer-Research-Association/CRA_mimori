@@ -16,6 +16,7 @@ MONGO_DB = "mimori"
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "memes")
 CLEANED_COLLECTION = os.getenv("CLEANED_COLLECTION", "cleaned_memes")
 TREND_COLLECTION = "trend_scores"     # 트렌드 판정 결과 저장용 (키워드+날짜 단위)
+CRAWL_REQUESTS_COLLECTION = "crawl_requests"     # 새 키워드 온디맨드 수집 큐
 
 # 검색 설정
 TAVILY_MAX_RESULTS = 20
@@ -69,6 +70,14 @@ YOUTUBE_ORDER = "relevance"   # relevance / date / viewCount / rating (YouTube�
 CHUNK_SIZE = 500            # 청크 최대 글자 수 (RecursiveCharacterTextSplitter 기준)
 CHUNK_OVERLAP = 50           # 청크 간 중복 글자 수
 REPEAT_CHAR_LIMIT = 3        # 동일 문자 반복 시 축약할 최대 개수 (예: "ㅋㅋㅋㅋㅋ" -> "ㅋㅋㅋ")
+MIN_CHUNK_CHARS = 30         # 이 미만이면 정보 없는 청크로 본다 (RAG 필터와 같은 값)
+SPAM_HIT_THRESHOLD = 3       # 스팸 패턴이 이 개수 이상이면 광고로 본다
+BOILERPLATE_PHRASES = (        # UI 상투어 제거 대상 (cleaner/signals에서 공유)
+    "본문 바로가기", "메뉴 바로가기", "마이페이지",
+    "이웃추가", "구독하기", "공유하기", "URL복사", "신고하기",
+    "찬반대결", "책갈피", "최신순", "추천순",
+    "dc official App",
+)
 
 # 임베딩 / Qdrant 설정
 EMBEDDING_MODEL = "BAAI/bge-m3"
