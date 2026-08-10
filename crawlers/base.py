@@ -107,6 +107,75 @@ def filter_already_saved(
     return fresh, len(posts) - len(fresh)
 
 
+def filter_recently_rejected(
+    rejects,
+    keyword: str,
+    posts: list[tuple[str, datetime | None]],
+    make_doc_id,
+    ttl_days: int,
+) -> tuple[list[tuple[str, datetime | None]], int]:
+    """최근 내용 필터로 걸러낸 적 있는 글을 fetch 전에 제거한다.
+
+    filter_already_saved() 가 막지 못하는 나머지 낭비를 막는다. 본문이 짧거나 키워드와
+    무관해서 걸러진 글은 memes 에 저장되지 않으므로 '이미 저장됨' 판정에 안 걸리고,
+    그래서 매 실행마다 다시 받아서 다시 버려졌다(럭키비키 재실행 실측: 13건을 받아
+    0건 저장).
+
+    ttl_days 가 지난 기록은 무시한다 — 영구 스킵으로 두면 MIN_CONTENT_LEN 같은 필터
+    기준을 나중에 고쳐도 옛 판정이 그대로 굳어버린다. 기간이 지나면 한 번 다시 받아
+    현재 기준으로 재평가하고, 또 걸러지면 기록이 갱신돼 다시 ttl_days 만큼 쉬어간다.
+
+    반환: (요청 대상 posts, 걸러진 개수)
+    """
+    if not posts:
+        return posts, 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=ttl_days)
+    ids = [make_doc_id(keyword, url) for url, _ in posts]
+    try:
+        fresh_rejects = {
+            doc["_id"]
+            for doc in rejects.find(
+                {"_id": {"$in": ids}, "rejected_at": {"$gte": cutoff}}, {"_id": 1}
+            )
+        }
+    except Exception as e:
+        # 거절 이력은 최적화 장치일 뿐이다. 조회가 실패하면 그냥 전부 받는다
+        # (느려질 뿐 결과는 같음) — 크롤 자체를 죽이지 않는다.
+        logger.warning("거절 이력 조회 실패, 전체 수집으로 진행: %s", e)
+        return posts, 0
+
+    kept = [post for post, doc_id in zip(posts, ids) if doc_id not in fresh_rejects]
+    return kept, len(posts) - len(kept)
+
+
+def record_reject(rejects, keyword: str, url: str, source: str, reason: str, make_doc_id) -> None:
+    """내용 필터로 걸러낸 글을 기록한다(다음 실행에서 다시 받지 않도록).
+
+    '내용 기준으로 결정론적으로 걸러진 것'만 넘겨야 한다. 네트워크 실패나 본문 파싱
+    실패는 넘기면 안 된다 — 일시적 장애나 파서 회귀를 ttl_days 동안 캐시해서 숨기게 된다.
+
+    upsert 로 rejected_at 을 갱신한다. 재평가 시점에 또 걸러지면 다시 ttl_days 만큼
+    쉬어가고, 기준이 바뀌어 통과하면 정상 저장 경로로 돌아간다.
+    """
+    try:
+        rejects.replace_one(
+            {"_id": make_doc_id(keyword, url)},
+            {
+                "_id": make_doc_id(keyword, url),
+                "keyword": keyword,
+                "url": url,
+                "source": source,
+                "reason": reason,
+                "rejected_at": datetime.now(timezone.utc),
+            },
+            upsert=True,
+        )
+    except Exception as e:
+        # 기록 실패는 성능만 손해다(다음에 다시 받을 뿐). 수집 결과에는 영향이 없으므로 삼킨다.
+        logger.warning("거절 이력 기록 실패 — %s: %s", url, e)
+
+
 def get_date_cutoff() -> datetime:
     """
     수집 대상 게시글의 날짜 하한선 반환.

@@ -42,6 +42,14 @@ CRAWL_DELAY_MAX = 4.0       # 요청 사이 최대 대기 (초)
 CRAWL_MAX_RETRIES = 3       # 실패 시 최대 재시도 횟수
 CRAWL_MAX_POSTS = 20        # 사이트당 최대 수집 게시글 수
 
+# 내용 필터(본문 길이/관련성)로 걸러낸 글을 기록해 두는 컬렉션.
+# 걸러진 글은 memes에 저장되지 않아 '이미 저장됨' 판정에 안 걸리고, 그래서 매 실행마다
+# 다시 다운로드된 뒤 다시 버려졌다(요청 1건당 도메인 rate limit 평균 2.3초).
+REJECT_COLLECTION = os.getenv("REJECT_COLLECTION", "crawl_rejects")
+# 거절 이력의 유효기간. 이 기간이 지나면 다시 한 번 받아서 재평가한다 —
+# 영구 스킵으로 두면 필터 기준(MIN_CONTENT_LEN 등)을 고쳐도 옛 판정이 그대로 굳는다.
+CRAWL_REJECT_TTL_DAYS = 30
+
 # 크롤링 병렬화 설정 (main.py)
 # 모든 (키워드 × 소스) 크롤 작업을 하나의 평평한 스레드풀에서 병렬 실행한다.
 #
