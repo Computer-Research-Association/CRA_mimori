@@ -23,7 +23,7 @@ describe('AnalysisPanel', () => {
     render(<AnalysisPanel keyword="야르" />)
 
     expect(await screen.findByText('야르는 ~라는 뜻입니다')).toBeInTheDocument()
-    expect(screen.getByText(/유행 중/)).toBeInTheDocument()
+    expect(screen.getByText(/트렌드: 유행 중/)).toBeInTheDocument()
   })
 
   it('출처가 있으면 출처 목록을 링크로 보여준다', async () => {
