@@ -92,8 +92,8 @@ USER_AGENTS = [
 
 # LLM 분석 설정
 # 주의: NVIDIA NIM 모델명이어야 함 — "qwen3:8b" 같은 Ollama식 이름을 넣으면 NIM API가 404를 반환.
-# (Ollama→NIM 전환 때 남아있던 잔재를 2026-08-05 수정. 아래 모델은 노트북 7번 셀에서 검증된 것.)
-ANALYSIS_MODEL = "deepseek-ai/deepseek-v4-flash"
+# (deepseek-ai/deepseek-v4-flash가 2026-08-07 NIM에서 EOL(410 Gone) 처리되어 2026-08-10 교체.)
+ANALYSIS_MODEL = "openai/gpt-oss-120b"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
