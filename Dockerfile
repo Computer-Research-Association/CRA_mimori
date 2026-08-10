@@ -11,6 +11,6 @@ RUN uv sync --no-dev
 
 COPY . .
 
-CMD ["uv", "run", "python", "scheduler/scheduler.py"]
+CMD ["uv", "run", "--no-dev", "python", "scheduler/scheduler.py"]
 
 

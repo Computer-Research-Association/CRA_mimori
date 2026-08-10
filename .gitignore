@@ -21,3 +21,4 @@ eval/results/judge_cache.json
 .google_trends_cache.json
 qdrant_storage/
 .ai/
+.worktrees/

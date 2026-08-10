@@ -1,0 +1,58 @@
+import { useEffect, useState } from 'react'
+import { fetchKeywords } from './api.js'
+import KeywordSelector from './components/KeywordSelector.jsx'
+import CrawlRequestPanel from './components/CrawlRequestPanel.jsx'
+import AnalysisPanel from './components/AnalysisPanel.jsx'
+import RagPanel from './components/RagPanel.jsx'
+
+export default function App() {
+  const [keywords, setKeywords] = useState([])
+  const [keywordsLoaded, setKeywordsLoaded] = useState(false)
+  const [keywordsError, setKeywordsError] = useState(null)
+  const [selectedKeyword, setSelectedKeyword] = useState(null)
+  const [pendingKeyword, setPendingKeyword] = useState(null)
+
+  useEffect(() => {
+    fetchKeywords()
+      .then((kws) => {
+        setKeywords(kws)
+        setKeywordsLoaded(true)
+      })
+      .catch((e) => setKeywordsError(e.message || '키워드 목록을 불러오지 못했습니다'))
+  }, [])
+
+  function handleSelect(keyword) {
+    setPendingKeyword(null)
+    setSelectedKeyword(keyword)
+  }
+
+  function handleNewKeyword(keyword) {
+    setSelectedKeyword(null)
+    setPendingKeyword(keyword)
+  }
+
+  function handleCrawlDone(keyword) {
+    setKeywords((prev) => [...prev, keyword])
+    setPendingKeyword(null)
+    setSelectedKeyword(keyword)
+  }
+
+  return (
+    <div>
+      <h1>mimori — 밈/신조어 검색</h1>
+      {keywordsError && <p role="alert">{keywordsError}</p>}
+      {keywordsLoaded || keywordsError ? (
+        <KeywordSelector keywords={keywords} onSelect={handleSelect} onNewKeyword={handleNewKeyword} />
+      ) : (
+        <p>불러오는 중...</p>
+      )}
+      {pendingKeyword && <CrawlRequestPanel key={pendingKeyword} keyword={pendingKeyword} onDone={handleCrawlDone} />}
+      {selectedKeyword && (
+        <>
+          <AnalysisPanel key={`analysis-${selectedKeyword}`} keyword={selectedKeyword} />
+          <RagPanel key={`rag-${selectedKeyword}`} keyword={selectedKeyword} />
+        </>
+      )}
+    </div>
+  )
+}
