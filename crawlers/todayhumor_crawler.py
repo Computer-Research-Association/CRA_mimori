@@ -104,12 +104,17 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
     return posts
 
 
-def _parse_post(soup: BeautifulSoup) -> tuple[str, str]:
+def _parse_post(soup: BeautifulSoup) -> tuple[str, str, bool]:
     """
     게시글 페이지에서 제목과 본문 텍스트를 추출.
 
     댓글은 JS로 사후 로딩돼 정적 HTML에 없으므로 포함하지 않는다.
     이미지만 있는 게시물은 본문이 빈 문자열로 반환된다(호출부에서 스킵 처리).
+
+    반환하는 bool은 viewContent 컨테이너 자체를 찾았는지 여부다. 컨테이너를
+    찾았는데 텍스트가 비어있으면 "이미지 전용 글"로 확정할 수 있지만, 컨테이너
+    자체를 못 찾은 경우는 페이지 구조 변경(파서 회귀) 가능성을 배제할 수 없어
+    호출부에서 구분해 처리한다.
     """
     title = ""
     if soup.title:
@@ -121,7 +126,7 @@ def _parse_post(soup: BeautifulSoup) -> tuple[str, str]:
     if content_div:
         body = content_div.get_text(separator="\n", strip=True)
 
-    return title, body
+    return title, body, content_div is not None
 
 
 def crawl_todayhumor(keyword: str) -> list[dict]:
@@ -156,10 +161,15 @@ def crawl_todayhumor(keyword: str) -> list[dict]:
             continue
 
         soup = BeautifulSoup(resp.text, "lxml")
-        title, content = _parse_post(soup)
+        title, content, container_found = _parse_post(soup)
 
         if not content.strip():
             no_content += 1
+            if container_found:
+                # 컨테이너는 찾았는데 텍스트가 비어있음 = 이미지 전용 글로 확정.
+                # 컨테이너 자체를 못 찾은 경우(페이지 구조 변경 가능성)는 기록하지
+                # 않는다 — 캐시했다가 파서 회귀를 TTL 동안 숨기게 되기 때문이다.
+                record_reject(rejects, keyword, url, "todayhumor", "image_only", make_doc_id)
             continue
 
         if len(content.strip()) < MIN_CONTENT_LEN:

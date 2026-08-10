@@ -47,30 +47,36 @@ def test_게시글_본문을_파싱한다():
     <body><div class="viewContent">괜히 이 시간에 또 컵라면이 땡겨서 럭키비키</div></body></html>
     """
     soup = BeautifulSoup(html, "lxml")
-    title, body = _parse_post(soup)
+    title, body, container_found = _parse_post(soup)
     assert title == "럭키비키!!!!", title
     assert "럭키비키" in body, body
+    assert container_found is True
     print("[OK] 정상 게시글 제목/본문 파싱 (title 접두어 제거 확인)")
 
 
-def test_이미지_전용_게시물은_본문이_빈문자열():
+def test_이미지_전용_게시물은_본문이_빈문자열이지만_컨테이너는_찾음():
     # 실측: '유머자료' 게시판은 이미지만 있고 텍스트가 없는 경우가 흔함(11건 중 3건).
+    # 컨테이너 자체는 찾았으므로 "이미지 전용"으로 확정 가능 → 호출부가 캐시 대상으로 구분한다.
     html = """
     <html><head><title>오늘의유머 - 짤방</title></head>
     <body><div class="viewContent"><div class="upfile"><img src="//x.jpg"/></div></div></body></html>
     """
     soup = BeautifulSoup(html, "lxml")
-    title, body = _parse_post(soup)
+    title, body, container_found = _parse_post(soup)
     assert body == "", repr(body)
-    print("[OK] 이미지 전용 게시물은 빈 본문 반환 (호출부에서 스킵 처리)")
+    assert container_found is True
+    print("[OK] 이미지 전용 게시물은 빈 본문 + 컨테이너 발견(캐시 가능)")
 
 
-def test_viewContent가_없으면_빈문자열():
+def test_viewContent가_없으면_빈문자열이고_컨테이너도_못찾음():
+    # 컨테이너 자체를 못 찾은 경우는 페이지 구조 변경(파서 회귀) 가능성이 있어
+    # 호출부가 이미지 전용과 다르게 취급한다(캐시하지 않음).
     html = "<html><head><title>오늘의유머 - 삭제된글</title></head><body></body></html>"
     soup = BeautifulSoup(html, "lxml")
-    title, body = _parse_post(soup)
+    title, body, container_found = _parse_post(soup)
     assert body == "", repr(body)
-    print("[OK] viewContent 없는 경우 방어")
+    assert container_found is False
+    print("[OK] viewContent 없는 경우 방어 + 컨테이너 미발견(캐시 안 함) 구분")
 
 
 if __name__ == "__main__":
@@ -80,6 +86,6 @@ if __name__ == "__main__":
     test_날짜_파싱()
     test_날짜_파싱_실패시_None()
     test_게시글_본문을_파싱한다()
-    test_이미지_전용_게시물은_본문이_빈문자열()
-    test_viewContent가_없으면_빈문자열()
+    test_이미지_전용_게시물은_본문이_빈문자열이지만_컨테이너는_찾음()
+    test_viewContent가_없으면_빈문자열이고_컨테이너도_못찾음()
     print("\nALL PASS ✅")
