@@ -17,6 +17,7 @@ from logging_config import get_logger
 logger = get_logger("scheduler")
 MAIN_PY = os.path.join(BASE_DIR, "main.py")
 PREPROCESS_EMBED_PY = os.path.join(BASE_DIR, "preprocess_embed_main.py")
+CRAWL_REQUEST_WORKER_PY = os.path.join(BASE_DIR, "scripts", "crawl_request_worker.py")
 DB_PATH = os.path.join(SCHEDULER_DIR, "scheduler.db")
 STATUS_PATH = os.path.join(SCHEDULER_DIR, "status.txt")
 LAST_CRAWL_PATH = os.path.join(SCHEDULER_DIR, "last_crawl_at.txt")
@@ -64,6 +65,15 @@ def preprocess_embed_run():
     else:
         logger.error("전처리+임베딩 실패 (code=%d)", result.returncode)
         log_status(f"전처리+임베딩 실패 (code={result.returncode})")
+
+
+def crawl_request_run():
+    """온디맨드 키워드 수집 큐를 1회 확인해서, 있으면 하나 처리한다.
+    큐가 비어있으면 crawl_request_worker.py 자체가 조용히 종료하므로 여기서
+    성공 로그를 남기지 않는다(1분마다 빈 로그가 쌓이는 걸 피하려고) — 실패했을 때만 기록."""
+    result = subprocess.run([sys.executable, CRAWL_REQUEST_WORKER_PY])
+    if result.returncode != 0:
+        logger.error("온디맨드 수집 워커 실패 (code=%d)", result.returncode)
 
 
 CRAWL_HOUR = 2   # KST 02:00 — 크론(hour=2, minute=0)과 반드시 같은 값을 유지해야 함
@@ -139,6 +149,16 @@ scheduler.add_job(
     id='preprocess_embed_job',
     coalesce=True,
     misfire_grace_time=1800,
+    replace_existing=True,
+)
+
+scheduler.add_job(
+    crawl_request_run,
+    'interval',
+    minutes=1,
+    id='crawl_request_job',
+    coalesce=True,
+    misfire_grace_time=60,
     replace_existing=True,
 )
 
