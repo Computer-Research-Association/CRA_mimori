@@ -114,10 +114,18 @@ def add_keyword_if_missing(keyword: str) -> bool:
 
     온디맨드로 수집된 키워드를 다음 배치 크롤/트렌드 판정 대상에 편입시키기 위함
     (issue #69). load_keywords()와 동일하게 줄 단위 strip 기준으로 중복을 비교한다.
+
+    파일이 개행 없이 끝나는 경우(에디터에 따라 흔함) 그냥 append하면 새 키워드가
+    마지막 줄에 그대로 붙어버려 두 키워드가 한 줄로 합쳐진다 — 실제로 겪은 문제라
+    append 전에 파일이 개행으로 끝나는지 확인해 필요하면 먼저 채워 넣는다.
     """
     if keyword in load_keywords():
         return False
+    with open(KEYWORDS_PATH, "r", encoding="utf-8") as f:
+        content = f.read()
     with open(KEYWORDS_PATH, "a", encoding="utf-8") as f:
+        if content and not content.endswith("\n"):
+            f.write("\n")
         f.write(f"{keyword}\n")
     return True
 

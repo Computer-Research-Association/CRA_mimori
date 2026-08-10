@@ -110,6 +110,24 @@ def test_add_keyword_if_missing_없으면_추가하고_True():
         os.unlink(path)
 
 
+def test_add_keyword_if_missing_파일이_개행없이_끝나도_줄이_안_합쳐짐():
+    """실제로 겪은 버그: 마지막 줄에 개행이 없는 파일에 append하면 새 키워드가
+    이전 줄에 그대로 붙어버렸다(예: '누가 돌아왔게싹싹김치'). 회귀 테스트."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("야르\n아자스")  # 마지막 줄에 개행 없음
+        path = f.name
+    try:
+        with _Patched(KEYWORDS_PATH=path):
+            added = main.add_keyword_if_missing("신조어")
+            with open(path, encoding="utf-8") as rf:
+                lines = rf.read().splitlines()
+        assert added is True
+        assert lines == ["야르", "아자스", "신조어"], lines
+        print("[OK] add_keyword_if_missing: 개행 없이 끝나는 파일에도 줄이 안 합쳐짐")
+    finally:
+        os.unlink(path)
+
+
 def test_add_keyword_if_missing_두번_호출해도_중복_안됨():
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
         f.write("야르\n")
@@ -132,5 +150,6 @@ if __name__ == "__main__":
     test_crawl_keyword_커뮤니티_부족하면_Tavily_실패시_DDG_보완()
     test_add_keyword_if_missing_이미_있으면_False_추가안함()
     test_add_keyword_if_missing_없으면_추가하고_True()
+    test_add_keyword_if_missing_파일이_개행없이_끝나도_줄이_안_합쳐짐()
     test_add_keyword_if_missing_두번_호출해도_중복_안됨()
     print("\nALL PASS ✅")
