@@ -113,6 +113,7 @@ USER_AGENTS = [
 
 # LLM 분석 설정
 
+ANALYSIS_MODEL = "openai/gpt-oss-120b"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
