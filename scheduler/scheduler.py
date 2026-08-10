@@ -11,6 +11,10 @@ from datetime import datetime, timedelta
 
 SCHEDULER_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SCHEDULER_DIR)
+sys.path.insert(0, BASE_DIR)
+from logging_config import get_logger
+
+logger = get_logger("scheduler")
 MAIN_PY = os.path.join(BASE_DIR, "main.py")
 PREPROCESS_EMBED_PY = os.path.join(BASE_DIR, "preprocess_embed_main.py")
 DB_PATH = os.path.join(SCHEDULER_DIR, "scheduler.db")
@@ -22,9 +26,11 @@ KST_OFFSET = timedelta(hours=9)  # 한국은 DST가 없어 고정 오프셋으�
 
 
 def log_status(message: str):
+    """status.txt 파일에 기록 + logger(CloudWatch 포함)로 전송."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with open(STATUS_PATH, "a", encoding="utf-8") as f:
         f.write(f"{now} - {message}\n")
+    logger.info(message)
 
 def heartbeat():
     log_status("working: true")
@@ -37,13 +43,14 @@ def crawlrun():
         with open(LAST_CRAWL_PATH, "w", encoding="utf-8") as f:
             f.write(datetime.utcnow().isoformat())
     else:
+        logger.error("크롤링 실패 (code=%d)", result.returncode)
         log_status(f"크롤링 실패 (code={result.returncode})")
 
 
 def preprocess_embed_run():
     """전처리+임베딩을 별도 프로세스로 실행.
 
-    크롤(2시간마다)과 별개로 하루 1회만 돈다 — GPU 없는 CPU 인스턴스에서 임베딩을
+    크롤(하루 1회, KST 02:00)과 별개로 KST 04:30에 1회 돈다 — GPU 없는 CPU 인스턴스에서 임베딩을
     너무 자주 돌리면 CPU 크레딧 소진으로 같은 인스턴스의 mongo/qdrant까지 느려질
     수 있기 때문. 실패한 문서는 memes.is_embedded=False로 남아 다음 날 실행에서
     자동 재시도되므로, 여기서 별도 재시도 로직은 두지 않는다.
@@ -55,17 +62,20 @@ def preprocess_embed_run():
         with open(LAST_EMBED_PATH, "w", encoding="utf-8") as f:
             f.write(datetime.utcnow().isoformat())
     else:
+        logger.error("전처리+임베딩 실패 (code=%d)", result.returncode)
         log_status(f"전처리+임베딩 실패 (code={result.returncode})")
 
 
-CRAWL_INTERVAL_HOURS = 2  # 크론(hour='*/2')과 반드시 같은 값을 유지해야 함
+CRAWL_HOUR = 2   # KST 02:00 — 크론(hour=2, minute=0)과 반드시 같은 값을 유지해야 함
+CRAWL_MINUTE = 0
 
 
 def _last_crawl_boundary_utc(now_utc: datetime) -> datetime:
-    """지금 시각 기준, 가장 최근에 지나간 KST 짝수시(0,2,4...) 크론 시각(UTC로 환산)."""
+    """지금 시각 기준, 가장 최근에 지나간 KST 02:00 크론 시각(UTC로 환산)."""
     now_kst = now_utc + KST_OFFSET
-    boundary_hour = (now_kst.hour // CRAWL_INTERVAL_HOURS) * CRAWL_INTERVAL_HOURS
-    boundary_kst = now_kst.replace(hour=boundary_hour, minute=0, second=0, microsecond=0)
+    boundary_kst = now_kst.replace(hour=CRAWL_HOUR, minute=CRAWL_MINUTE, second=0, microsecond=0)
+    if now_kst < boundary_kst:
+        boundary_kst -= timedelta(days=1)
     return boundary_kst - KST_OFFSET
 
 
@@ -116,7 +126,7 @@ scheduler = BackgroundScheduler(jobstores=jobstores,timezone='Asia/Seoul')
 
 scheduler.add_job(
     crawlrun,
-    CronTrigger(hour=f'*/{CRAWL_INTERVAL_HOURS}', minute=0, timezone='Asia/Seoul'),
+    CronTrigger(hour=CRAWL_HOUR, minute=CRAWL_MINUTE, timezone='Asia/Seoul'),
     id='crawl_job',
     coalesce=True,
     misfire_grace_time=1800,

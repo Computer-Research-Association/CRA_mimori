@@ -23,12 +23,17 @@ TAVILY_SEARCH_DEPTH = "advanced"  # "basic" or "advanced"
 # Tavily relevance score 하한선. 기존 수집분의 is_relevant 라벨 기준
 # 0.3에서 정상 문서 89% 유지 / 오염 문서 58% 차단 — 잔여 오염은 전처리 judge가 거름.
 TAVILY_MIN_SCORE = 0.3
+# 같은 키워드를 이 일수 이내에 이미 크롤했으면 API 호출을 건너뛴다.
+# 밈 키워드는 단기간에 새 문서가 폭증하지 않으므로 7일이 적정값.
+TAVILY_RECRAWL_DAYS = 3
 
 # YouTube
 YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
 YOUTUBE_MAX_RESULTS = 30    # 키워드당 검색할 영상 개수
 YOUTUBE_MAX_COMMENTS = 50   # 영상당 가져올 댓글 개수
 # (댓글 수 하한선은 제거됨 — 제목/설명 키워드 필터가 관련성 판별을 대신함)
+# 같은 키워드를 이 일수 이내에 이미 크롤했으면 API 호출을 건너뛴다 (쿼터 절약).
+YOUTUBE_RECRAWL_DAYS = 3
 
 
 # 웹 크롤러 공통 설정
@@ -91,9 +96,7 @@ USER_AGENTS = [
 ]
 
 # LLM 분석 설정
-# 주의: NVIDIA NIM 모델명이어야 함 — "qwen3:8b" 같은 Ollama식 이름을 넣으면 NIM API가 404를 반환.
-# (deepseek-ai/deepseek-v4-flash가 2026-08-07 NIM에서 EOL(410 Gone) 처리되어 2026-08-10 교체.)
-ANALYSIS_MODEL = "openai/gpt-oss-120b"
+
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
@@ -114,35 +117,5 @@ RAG_FACET_NEAR_DUP_THRESHOLD = 0.8   # 이 이상 유사하면 재게시(미러�
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
 
-# ── 품질 계측 (quality_test) ────────────────────────────────────────────────
-# 산출물 경로. cwd가 아니라 프로젝트 루트 기준으로 고정한다 —
-# 다른 폴더에서 실행해도 같은 곳에 쌓이게 하기 위함.
-DATA_TEST_DIR = os.path.join(_ROOT, "data_test")
-FIXTURE_DIR = os.path.join(DATA_TEST_DIR, "fixtures")
-RUNS_DIR = os.path.join(DATA_TEST_DIR, "runs")
-DEFAULT_FIXTURE_NAME = "raw_sample.jsonl"
 
-# 품질 판정 임계값. signals.py는 값만 계산하고, 판정은 이 상수를 읽는 쪽에서 한다.
-# 전부 '확실히 나쁜 것만' 잡도록 보수적으로 잡은 시작값이며, 리포트로 분포를 보고 조정한다.
-MIN_CHUNK_CHARS = 30        # 이 미만이면 정보 없는 청크로 본다 (RAG 필터와 같은 값)
-MIN_HANGUL_RATIO = 0.3      # 국내 소스인데 이 미만이면 본문 추출 실패 의심
-SPAM_HIT_THRESHOLD = 3      # 스팸 패턴이 이 개수 이상이면 광고로 본다
-DOMESTIC_SOURCES = ("natepann", "dcinside", "namuwiki", "todayhumor")  # 한글 비율 규칙을 적용할 소스
-
-# 사이트 UI 상투어. 본문 추출이 사이드바/위젯까지 긁어왔을 때 나타난다.
-# quality_test/signals.py(개수 세기)와 preprocessing/cleaner.py(실제 제거) 둘 다
-# 이 목록을 쓴다 — 탐지 기준과 제거 기준이 어긋나면 안 되므로 한 곳에 둔다.
-BOILERPLATE_PHRASES = (
-    "본문 바로가기", "메뉴 바로가기", "마이페이지",
-    "이웃추가", "구독하기", "공유하기", "URL복사", "신고하기",
-    "찬반대결", "책갈피", "최신순", "추천순",
-    "dc official App",
-    # Daum 카페(tavily가 그대로 긁어오는 경우, 실사례 2026-08-04 cafe.daum.net) UI 상투어.
-    # "로그인"/"스크랩0"처럼 너무 흔하거나(오탐 위험) 이번 건에만 해당하는(방문자 수 등)
-    # 문구는 일부러 제외했다 — 일반화 가능한 것만 넣는다.
-    "카페정보", "카페 프로필 이미지", "카페 가입하기", "카페 전체 메뉴",
-    "검색이 허용된 게시물입니다", "게시글 본문내용", "검색 옵션 선택상자",
-    "댓글내용선택됨", "서비스 약관/정책", "권리침해신고", "카페 고객센터", "검색비공개 요청",
-    "카페 게시글", "목록 이전글 다음글", "다음검색", "옵션 더 보기", "댓글 작성자", "최신목록",
-)
 

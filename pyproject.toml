@@ -7,6 +7,8 @@ requires-python = ">=3.11,<3.12"
 
 dependencies = [
     "apscheduler>=3.11.3",
+    "boto3>=1.38.0",
+    "watchtower>=3.3.1",
     # base.py가 Accept-Encoding에 br을 보내므로 brotli 디코더가 반드시 필요
     "beautifulsoup4>=4.15.0",
     "brotli>=1.1.0",

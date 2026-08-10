@@ -230,11 +230,6 @@ def search_relevant_chunks(
 
     selected = _select_with_source_cap(valid, top_k, max_per_source)
 
-    if len(selected) < top_k:
-        selected_ids = {p.id for p in selected}
-        rejected = [p for p in candidates if p.id not in selected_ids]
-        selected += rejected[: top_k - len(selected)]
-
     return selected[:top_k]
 
 
