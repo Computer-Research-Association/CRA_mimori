@@ -6,7 +6,15 @@ routes.py
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request
 
-from analysis.pipeline import analyze, list_analyzable_keywords
+from analysis.pipeline import (
+    analyze,
+    delete_keyword_permanently,
+    hide_keyword,
+    list_analyzable_keywords,
+    list_hidden_keywords,
+    list_visible_keywords,
+    unhide_keyword,
+)
 from DB.mongo_client import get_collection
 from config.config_cilent import CRAWL_REQUESTS_COLLECTION
 from analysis.query import build_search_query
@@ -33,7 +41,34 @@ def health():
 
 @bp.route("/keywords")
 def keywords():
-    return jsonify({"keywords": list_analyzable_keywords()})
+    return jsonify({"keywords": list_visible_keywords()})
+
+
+@bp.route("/keywords/hidden")
+def hidden_keywords():
+    return jsonify({"keywords": list_hidden_keywords()})
+
+
+@bp.route("/keywords/<keyword>/hide", methods=["POST"])
+def hide_keyword_endpoint(keyword):
+    if keyword not in list_analyzable_keywords():
+        return jsonify({"error": f"'{keyword}' 데이터를 찾을 수 없습니다"}), 404
+    hide_keyword(keyword)
+    return jsonify({"keyword": keyword, "hidden": True})
+
+
+@bp.route("/keywords/<keyword>/unhide", methods=["POST"])
+def unhide_keyword_endpoint(keyword):
+    unhide_keyword(keyword)
+    return jsonify({"keyword": keyword, "hidden": False})
+
+
+@bp.route("/keywords/<keyword>", methods=["DELETE"])
+def delete_keyword_endpoint(keyword):
+    if keyword not in list_hidden_keywords():
+        return jsonify({"error": "숨긴 키워드만 완전삭제할 수 있습니다. 먼저 숨겨주세요."}), 400
+    delete_keyword_permanently(keyword)
+    return jsonify({"keyword": keyword, "deleted": True})
 
 
 @bp.route("/trend/<keyword>")
@@ -71,8 +106,15 @@ def analyze_endpoint():
     prompt = build_facet_prompt(keyword, points, trend_info=trend_info)
     result = analyze(prompt)
 
+    sources = [
+        {
+            "title": point.payload.get("title") or "제목 없음",
+            "url": clean_source_url(point.payload.get("url")),
+        }
+        for point in points
+    ]
     trend_response = {k: v for k, v in cached_trend.items() if k != "_id"} if cached_trend else None
-    return jsonify({"result": result, "trend": trend_response})
+    return jsonify({"result": result, "sources": sources, "trend": trend_response})
 
 
 @bp.route("/rag", methods=["POST"])

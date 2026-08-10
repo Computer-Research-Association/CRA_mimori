@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import ReactMarkdown from 'react-markdown'
 import { askRag, AVAILABLE_SOURCES } from '../api.js'
 import SourceFilter from './SourceFilter.jsx'
 
@@ -46,7 +47,9 @@ export default function RagPanel({ keyword }) {
       {error && <p role="alert">{error}</p>}
       {answer && (
         <div>
-          <p>{answer}</p>
+          <div className="markdown-body">
+            <ReactMarkdown>{answer}</ReactMarkdown>
+          </div>
           <ul>
             {sources.map((s, i) => (
               <li key={i}>

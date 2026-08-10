@@ -19,8 +19,8 @@ def _patch(monkeypatch_target, name, value):
 
 
 class _FakePoint:
-    def __init__(self, text):
-        self.payload = {"text": text}
+    def __init__(self, text, title="제목", url="https://example.com/a"):
+        self.payload = {"text": text, "title": title, "url": url}
 
 
 def test_keyword_없이_요청하면_400():
@@ -84,6 +84,10 @@ def test_정상_흐름은_200과_결과를_반환한다():
         body = resp.get_json()
         assert body["result"] == "분석 결과 텍스트", body
         assert body["trend"] == {"status": "유행 중"}, body
+        assert body["sources"] == [
+            {"title": "제목", "url": "https://example.com/a"},
+            {"title": "제목", "url": "https://example.com/a"},
+        ], body
         assert calls["facet_search"] == ("야르", True), calls
         assert calls["build_facet_prompt"] == ("야르", fake_points, "트렌드요약"), calls
         assert calls["analyze_prompt"] == "완성된프롬프트", calls

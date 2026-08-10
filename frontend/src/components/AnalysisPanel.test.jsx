@@ -26,6 +26,20 @@ describe('AnalysisPanel', () => {
     expect(screen.getByText(/유행 중/)).toBeInTheDocument()
   })
 
+  it('출처가 있으면 출처 목록을 링크로 보여준다', async () => {
+    vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+    vi.spyOn(api, 'analyzeKeyword').mockResolvedValue({
+      result: '분석 결과',
+      sources: [{ title: '문서 제목', url: 'https://example.com/a' }],
+      trend: null,
+    })
+
+    render(<AnalysisPanel keyword="야르" />)
+
+    const link = await screen.findByRole('link', { name: '문서 제목' })
+    expect(link).toHaveAttribute('href', 'https://example.com/a')
+  })
+
   it('트렌드 데이터가 없으면(null) 트렌드 표시 없이 분석 결과만 보여준다', async () => {
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
     vi.spyOn(api, 'analyzeKeyword').mockResolvedValue({ result: '분석 결과', trend: null })

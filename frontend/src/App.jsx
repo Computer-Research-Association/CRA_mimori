@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { fetchKeywords } from './api.js'
 import KeywordSelector from './components/KeywordSelector.jsx'
+import KeywordManager from './components/KeywordManager.jsx'
 import CrawlRequestPanel from './components/CrawlRequestPanel.jsx'
 import AnalysisPanel from './components/AnalysisPanel.jsx'
 import RagPanel from './components/RagPanel.jsx'
@@ -37,12 +38,33 @@ export default function App() {
     setSelectedKeyword(keyword)
   }
 
+  function handleKeywordHidden(keyword) {
+    setKeywords((prev) => prev.filter((k) => k !== keyword))
+    setSelectedKeyword((prev) => (prev === keyword ? null : prev))
+  }
+
+  function handleKeywordUnhidden(keyword) {
+    setKeywords((prev) => (prev.includes(keyword) ? prev : [...prev, keyword].sort()))
+  }
+
+  function handleKeywordDeleted(keyword) {
+    setSelectedKeyword((prev) => (prev === keyword ? null : prev))
+  }
+
   return (
     <div>
       <h1>mimori — 밈/신조어 검색</h1>
       {keywordsError && <p role="alert">{keywordsError}</p>}
       {keywordsLoaded || keywordsError ? (
-        <KeywordSelector keywords={keywords} onSelect={handleSelect} onNewKeyword={handleNewKeyword} />
+        <>
+          <KeywordSelector keywords={keywords} onSelect={handleSelect} onNewKeyword={handleNewKeyword} />
+          <KeywordManager
+            keywords={keywords}
+            onHidden={handleKeywordHidden}
+            onUnhidden={handleKeywordUnhidden}
+            onDeleted={handleKeywordDeleted}
+          />
+        </>
       ) : (
         <p>불러오는 중...</p>
       )}

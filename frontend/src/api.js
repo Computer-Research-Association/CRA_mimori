@@ -70,3 +70,24 @@ export async function fetchCrawlStatus(keyword) {
   const res = await safeFetch(`${BASE}/crawl-request/${keyword}`)
   return handleResponse(res)
 }
+
+export async function fetchHiddenKeywords() {
+  const res = await safeFetch(`${BASE}/keywords/hidden`)
+  const data = await handleResponse(res)
+  return data.keywords
+}
+
+export async function hideKeyword(keyword) {
+  const res = await safeFetch(`${BASE}/keywords/${keyword}/hide`, { method: 'POST' })
+  return handleResponse(res)
+}
+
+export async function unhideKeyword(keyword) {
+  const res = await safeFetch(`${BASE}/keywords/${keyword}/unhide`, { method: 'POST' })
+  return handleResponse(res)
+}
+
+export async function deleteKeywordPermanently(keyword) {
+  const res = await safeFetch(`${BASE}/keywords/${keyword}`, { method: 'DELETE' })
+  return handleResponse(res)
+}

@@ -9,17 +9,76 @@ import ollama
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from qdrant_client.http import models
 
-from config.config_cilent import ANALYSIS_MODEL, ANALYSIS_PROMPT_PATH, NIM_KEY, QDRANT_COLLECTION
+from config.config_cilent import (
+    ANALYSIS_MODEL,
+    ANALYSIS_PROMPT_PATH,
+    CLEANED_COLLECTION,
+    CRAWL_REQUESTS_COLLECTION,
+    HIDDEN_KEYWORDS_COLLECTION,
+    NIM_KEY,
+    QDRANT_COLLECTION,
+    TREND_COLLECTION,
+)
 from DB.drant_clitent import client, ensure_collection
 from DB.mongo_client import get_collection
 from trend.trend_service import format_trend_context
 
 
 def list_analyzable_keywords() -> list[str]:
-    """memes 컬렉션에서 is_embedded=True인 문서들의 distinct keyword 목록 반환 (정렬됨)."""
+    """memes 컬렉션에서 is_embedded=True인 문서들의 distinct keyword 목록 반환 (정렬됨).
+
+    숨김 여부와 무관하게 전체 목록이다 — 온디맨드 크롤 요청의 "이미 존재하는 키워드"
+    판정(routes.crawl_request_endpoint)이나 CLI 스크립트(analyze_main.py 등)는 숨긴
+    키워드도 실존 데이터로 취급해야 하므로 여기서 걸러내면 안 된다. 화면에 보여줄
+    목록만 걸러내려면 list_visible_keywords()를 쓴다.
+    """
     collection = get_collection()
     keywords = collection.distinct("keyword", {"is_embedded": True})
     return sorted(keywords)
+
+
+def list_hidden_keywords() -> list[str]:
+    """숨김 처리된 키워드 목록 (정렬됨)."""
+    collection = get_collection(HIDDEN_KEYWORDS_COLLECTION)
+    return sorted(doc["_id"] for doc in collection.find({}, {"_id": 1}))
+
+
+def list_visible_keywords() -> list[str]:
+    """list_analyzable_keywords()에서 숨김 처리된 키워드를 뺀 목록. 검색창 등 사용자용 목록에 쓴다."""
+    hidden = set(list_hidden_keywords())
+    return [k for k in list_analyzable_keywords() if k not in hidden]
+
+
+def hide_keyword(keyword: str) -> None:
+    """키워드를 검색 목록에서 숨긴다. 데이터는 그대로 남고, unhide_keyword로 되돌릴 수 있다."""
+    get_collection(HIDDEN_KEYWORDS_COLLECTION).update_one(
+        {"_id": keyword}, {"$setOnInsert": {"_id": keyword}}, upsert=True
+    )
+
+
+def unhide_keyword(keyword: str) -> None:
+    """숨김을 해제해 다시 검색 목록에 보이게 한다."""
+    get_collection(HIDDEN_KEYWORDS_COLLECTION).delete_one({"_id": keyword})
+
+
+def delete_keyword_permanently(keyword: str) -> None:
+    """키워드와 관련된 데이터를 전부 지운다. 되돌릴 수 없다.
+
+    memes/cleaned_memes/trend_scores는 (keyword, ...) 조합으로 문서가 여러 개
+    쌓이므로 delete_many를 쓴다. crawl_requests/hidden_keywords는 keyword 자체가
+    _id라 문서가 하나뿐이다. Qdrant는 payload.keyword로 필터링해 지운다.
+    """
+    get_collection().delete_many({"keyword": keyword})
+    get_collection(CLEANED_COLLECTION).delete_many({"keyword": keyword})
+    get_collection(TREND_COLLECTION).delete_many({"keyword": keyword})
+    get_collection(CRAWL_REQUESTS_COLLECTION).delete_one({"_id": keyword})
+    get_collection(HIDDEN_KEYWORDS_COLLECTION).delete_one({"_id": keyword})
+    client.delete(
+        collection_name=QDRANT_COLLECTION,
+        points_selector=models.Filter(
+            must=[models.FieldCondition(key="keyword", match=models.MatchValue(value=keyword))]
+        ),
+    )
 
 
 _SCROLL_BATCH_SIZE = 100
