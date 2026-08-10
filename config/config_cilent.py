@@ -149,6 +149,18 @@ RAG_FACET_MERGED_MAX_PER_SOURCE = 6  # facet 전체 합산 기준 소스당 상�
 RAG_FACET_MIN_MERGED_TOTAL = 8       # 소스 상한 때문에 컨텍스트가 비지 않도록 최소 확보 개수
 RAG_FACET_NEAR_DUP_THRESHOLD = 0.8   # 이 이상 유사하면 재게시(미러링)로 보고 제외
 
+# ── 품질 계측 (quality_test) ────────────────────────────────────────────────
+# 산출물 경로. cwd가 아니라 프로젝트 루트 기준으로 고정한다 —
+# 다른 폴더에서 실행해도 같은 곳에 쌓이게 하기 위함.
+DATA_TEST_DIR = os.path.join(_ROOT, "data_test")
+FIXTURE_DIR = os.path.join(DATA_TEST_DIR, "fixtures")
+RUNS_DIR = os.path.join(DATA_TEST_DIR, "runs")
+DEFAULT_FIXTURE_NAME = "raw_sample.jsonl"
+
+# 품질 판정 임계값. signals.py는 값만 계산하고, 판정은 이 상수를 읽는 쪽에서 한다.
+MIN_HANGUL_RATIO = 0.3      # 국내 소스인데 이 미만이면 본문 추출 실패 의심
+DOMESTIC_SOURCES = ("natepann", "dcinside", "namuwiki")  # 한글 비율 규칙을 적용할 소스
+
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
 
