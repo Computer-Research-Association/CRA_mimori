@@ -84,6 +84,44 @@ def _crawl_tavily_with_fallback(keyword: str) -> dict[str, tuple[int, str]]:
     return updates
 
 
+def crawl_keyword(keyword: str) -> dict[str, tuple[int, str]]:
+    """한 키워드에 대해 커뮤니티 우선 → 부족 시 Tavily/DuckDuckGo 보완 크롤을 수행한다.
+
+    crawl_all()의 다중 키워드 flat-pool 최적화는 건드리지 않고, RAG 질의처럼
+    키워드 하나만 그 자리에서 수집해야 하는 호출부(rag_main.py 등)를 위한
+    별도 진입점이다. 우선순위 로직(_crawl_one/_crawl_tavily_with_fallback)은
+    crawl_all()과 동일한 것을 그대로 재사용한다.
+
+    반환: {source: (count, status)}
+    """
+    results: dict[str, tuple[int, str]] = {}
+    with ThreadPoolExecutor(max_workers=len(COMMUNITY_CRAWLERS)) as executor:
+        future_to_name = {
+            executor.submit(_crawl_one, keyword, name, crawler): name
+            for name, crawler in COMMUNITY_CRAWLERS.items()
+        }
+        for future in as_completed(future_to_name):
+            results[future_to_name[future]] = future.result()
+
+    if sum(count for count, _ in results.values()) < MIN_COMMUNITY_DOCS_FOR_TAVILY:
+        results.update(_crawl_tavily_with_fallback(keyword))
+
+    return results
+
+
+def add_keyword_if_missing(keyword: str) -> bool:
+    """Keywords.md에 없는 키워드면 한 줄 추가한다. 추가했으면 True, 이미 있었으면 False.
+
+    온디맨드로 수집된 키워드를 다음 배치 크롤/트렌드 판정 대상에 편입시키기 위함
+    (issue #69). load_keywords()와 동일하게 줄 단위 strip 기준으로 중복을 비교한다.
+    """
+    if keyword in load_keywords():
+        return False
+    with open(KEYWORDS_PATH, "a", encoding="utf-8") as f:
+        f.write(f"{keyword}\n")
+    return True
+
+
 def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
     """크롤을 2단계로 나눠 돈다.
 

@@ -22,6 +22,7 @@ if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
 
+import main
 from analysis.pipeline import analyze, list_analyzable_keywords
 from analysis.query import build_search_query
 from analysis.rag_pipeline import (
@@ -34,7 +35,42 @@ from analysis.rag_pipeline import (
     search_relevant_chunks,
 )
 from embedding.encoder import encode_batch, unload_model
+from embedding.pipeline import embed_documents
+from preprocessing.pipeline import preprocess_documents
 from trend.trend_service import format_trend_for_rag
+
+
+def ensure_keyword_ready(keyword: str) -> bool:
+    """Qdrant에 이 키워드의 임베딩이 없으면(=list_analyzable_keywords에 없으면) 그
+    자리에서 크롤 → 전처리 → 임베딩까지 수행한다(issue #69, 온디맨드 RAG 크롤).
+
+    main.py의 배치 크롤(Keywords.md 전체를 매일 무인 처리)과 별개로, 사용자가
+    질문한 키워드 하나만 즉시 수집한다. crawl_keyword()는 main.py의 크롤
+    우선순위(커뮤니티 우선 → 부족 시 Tavily/DuckDuckGo 보완)를 그대로 재사용한다.
+
+    반환: 이후 검색이 가능한 상태가 됐으면 True, 수집된 문서가 0건이라 답변할
+    근거가 없으면 False.
+    """
+    print(f"[온디맨드] '{keyword}'는 아직 수집된 적 없는 키워드입니다. 지금 크롤링합니다... (수십 초 소요될 수 있음)")
+    results = main.crawl_keyword(keyword)
+    total = sum(count for count, _ in results.values())
+    print(f"[온디맨드] 크롤 완료 — 총 {total}건 수집")
+
+    if total == 0:
+        print(f"[온디맨드] 수집된 문서가 없어 '{keyword}'에 대해 답변할 수 없습니다.")
+        return False
+
+    print("[온디맨드] 전처리(정제+청킹) 중...")
+    preprocess_documents(keyword)
+
+    print("[온디맨드] 임베딩 중...")
+    embed_documents(keyword)
+
+    if main.add_keyword_if_missing(keyword):
+        print(f"[온디맨드] '{keyword}'를 Keywords.md에 추가했습니다 (다음 배치부터 자동으로 트렌드 추적 대상).")
+
+    return True
+
 
 if __name__ == "__main__":
     keywords = list_analyzable_keywords()
@@ -46,12 +82,18 @@ if __name__ == "__main__":
     for i, keyword in enumerate(keywords, start=1):
         print(f"  {i}. {keyword}")
 
-    raw_choice = input("키워드 선택 (번호 입력): ").strip()
-    if not raw_choice.isdigit() or not (1 <= int(raw_choice) <= len(keywords)):
+    raw_choice = input("키워드 선택 (번호 입력, 또는 목록에 없는 새 키워드 직접 입력): ").strip()
+    if not raw_choice:
         print("잘못된 선택입니다.")
         sys.exit(1)
 
-    selected_keyword = keywords[int(raw_choice) - 1]
+    if raw_choice.isdigit() and 1 <= int(raw_choice) <= len(keywords):
+        selected_keyword = keywords[int(raw_choice) - 1]
+    else:
+        # 번호가 아니거나 목록 범위를 벗어난 입력은 새 키워드로 간주한다.
+        selected_keyword = raw_choice
+        if selected_keyword not in keywords and not ensure_keyword_ready(selected_keyword):
+            sys.exit(1)
 
     # 유행 판정은 키워드당 한 번만 계산 (네트워크 중복 호출 방지)
     print(f"[트렌드 조회 중] '{selected_keyword}' 유행 판정 중... (10~30초 소요)")
