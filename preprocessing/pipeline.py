@@ -17,6 +17,7 @@ from config.config_cilent import CLEANED_COLLECTION
 from DB.mongo_client import get_collection
 from preprocessing.cleaner import clean_text
 from preprocessing.chunker import chunk_document
+from preprocessing.relevance import judge_doc
 from quality_test.matching import find_keyword
 
 
