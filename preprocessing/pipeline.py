@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 from config.config_cilent import CLEANED_COLLECTION
 from DB.mongo_client import get_collection
+from perf_log import accumulate
 from preprocessing.cleaner import clean_text
 from preprocessing.chunker import chunk_document
 from preprocessing.relevance import judge_doc
@@ -54,9 +55,12 @@ def process_one(doc: dict) -> tuple[str, list[dict]]:
     반환: (clean_content, chunks). 각 청크에는 is_relevant/relevance_position/
     relevance_match_count가 문서 단위 판정 결과로 동일하게 붙는다.
     """
-    clean_content = clean_text(doc.get("content", ""))
-    chunks = chunk_document({**doc, "clean_content": clean_content})
-    _attach_relevance(doc.get("title") or "", doc.get("keyword") or "", clean_content, chunks)
+    with accumulate("전처리:정제(clean_text)"):
+        clean_content = clean_text(doc.get("content", ""))
+    with accumulate("전처리:청킹(chunk_document)"):
+        chunks = chunk_document({**doc, "clean_content": clean_content})
+    with accumulate("전처리:관련성판정(find_keyword)"):
+        _attach_relevance(doc.get("title") or "", doc.get("keyword") or "", clean_content, chunks)
     return clean_content, chunks
 
 
@@ -84,11 +88,12 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
 
         clean_content, chunks = process_one(doc)
 
-        relevance = judge_doc({
-            "keyword": doc.get("keyword"),
-            "title": doc.get("title"),
-            "chunks": chunks,
-        })
+        with accumulate("전처리:judge_doc"):
+            relevance = judge_doc({
+                "keyword": doc.get("keyword"),
+                "title": doc.get("title"),
+                "chunks": chunks,
+            })
         for chunk in chunks:
             chunk["is_relevant"] = relevance.is_relevant
             chunk["relevance_position"] = relevance.position
@@ -110,7 +115,8 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
             "relevance_position": relevance.position,
             "processed_at": datetime.now(timezone.utc),
         }
-        output_collection.replace_one({"_id": doc["_id"]}, output_doc, upsert=True)
+        with accumulate("전처리:Mongo쓰기(replace_one)"):
+            output_collection.replace_one({"_id": doc["_id"]}, output_doc, upsert=True)
 
         all_chunks.extend(chunks)
         processed += 1

@@ -8,6 +8,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
 from logging_config import get_logger
+from perf_log import stage, report_totals
 from crawlers.tavily_crawler import crawl
 from crawlers.youtube_crawler import crawl_youtube
 from crawlers.namuwiki_crawler import crawl_namuwiki
@@ -46,7 +47,8 @@ def _crawl_one(keyword: str, name: str, crawler) -> tuple[int, str]:
     에러 print 가 다른 작업 사이에 파묻히므로, 요약표에서 사유를 볼 수 있어야 한다.
     """
     try:
-        docs = crawler(keyword)
+        with stage("크롤", keyword=keyword, source=name):
+            docs = crawler(keyword)
         return len(docs), "ok"
     except Exception as e:
         with _PRINT_LOCK:
@@ -70,16 +72,17 @@ def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
     ]
     results: dict[str, dict[str, tuple[int, str]]] = defaultdict(dict)
 
-    with ThreadPoolExecutor(max_workers=CRAWL_WORKERS) as executor:
-        future_to_task = {
-            executor.submit(_crawl_one, kw, name, crawler): (kw, name)
-            for kw, name, crawler in tasks
-        }
-        # as_completed + 개별 결과 저장: 한 작업이 죽어도 나머지 결과는 온전히 남는다
-        # (executor.map 은 첫 예외에서 소비가 끊겨 뒤 작업 결과가 통째로 유실됨).
-        for future in as_completed(future_to_task):
-            kw, name = future_to_task[future]
-            results[kw][name] = future.result()  # _crawl_one 은 예외를 삼키므로 안전
+    with stage("크롤 전체(벽시계)", 작업수=len(tasks), 워커=CRAWL_WORKERS):
+        with ThreadPoolExecutor(max_workers=CRAWL_WORKERS) as executor:
+            future_to_task = {
+                executor.submit(_crawl_one, kw, name, crawler): (kw, name)
+                for kw, name, crawler in tasks
+            }
+            # as_completed + 개별 결과 저장: 한 작업이 죽어도 나머지 결과는 온전히 남는다
+            # (executor.map 은 첫 예외에서 소비가 끊겨 뒤 작업 결과가 통째로 유실됨).
+            for future in as_completed(future_to_task):
+                kw, name = future_to_task[future]
+                results[kw][name] = future.result()  # _crawl_one 은 예외를 삼키므로 안전
 
     return results
 
@@ -96,7 +99,8 @@ def judge_and_report(keyword: str, source_results: dict[str, tuple[int, str]]) -
     trend = None
     trend_line = f"  {'트렌드':<12}: 판정 안 됨"
     try:
-        trend = get_meme_trend(keyword)
+        with stage("트렌드 판정", keyword=keyword):
+            trend = get_meme_trend(keyword)
         sources = ", ".join(trend["sources"]) or "없음"
         trend_line = f"  {'트렌드':<12}: {trend['status']} (z={trend['final_z']:.2f}, 소스: {sources})"
     except Exception as e:
@@ -104,7 +108,8 @@ def judge_and_report(keyword: str, source_results: dict[str, tuple[int, str]]) -
 
     if trend is not None:
         try:
-            save_trend_score(trend)
+            with stage("트렌드 저장", keyword=keyword):
+                save_trend_score(trend)
         except Exception as e:
             trend_line += f"  [저장 실패: {e}]"
 
@@ -129,3 +134,5 @@ if __name__ == "__main__":
     results = crawl_all(keywords)
     for keyword in keywords:
         judge_and_report(keyword, results[keyword])
+
+    report_totals("main.py 단계별 누적 소요 시간")
