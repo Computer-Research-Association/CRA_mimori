@@ -23,7 +23,11 @@ _model_lock = threading.Lock()
 def _get_model() -> BGEM3FlagModel:
     global _model
     if _model is None:
-
+        with _model_lock:
+            if _model is None:
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+                print(f"[임베딩] {EMBEDDING_MODEL} 로드 중... (device={device})")
+                _model = BGEM3FlagModel(EMBEDDING_MODEL, use_fp16=(device == "cuda"))
     return _model
 
 
