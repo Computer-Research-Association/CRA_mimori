@@ -32,6 +32,7 @@ from config.config_cilent import (
 from DB.mongo_client import get_collection
 from DB.drant_clitent import client, ensure_collection
 from embedding.encoder import encode_batch
+from perf_log import accumulate
 
 _ID_NAMESPACE = uuid.NAMESPACE_DNS
 
@@ -132,7 +133,8 @@ def _build_points(chunks: list[dict]) -> list[models.PointStruct]:
     points = []
     for start in range(0, len(chunks), EMBEDDING_BATCH_SIZE):
         batch = chunks[start:start + EMBEDDING_BATCH_SIZE]
-        dense_vecs, lexical_weights = encode_batch([_encoding_text(c) for c in batch])
+        with accumulate("임베딩:BGE-M3 인코딩"):
+            dense_vecs, lexical_weights = encode_batch([_encoding_text(c) for c in batch])
 
         for chunk, dense, sparse in zip(batch, dense_vecs, lexical_weights):
             parent_id = str(chunk["parent_id"])
@@ -196,8 +198,10 @@ def embed_documents(keyword: str | None = None) -> dict:
 
         if raw_chunks:
             if doc_keyword not in keyword_texts_cache:
-                keyword_texts_cache[doc_keyword] = _fetch_existing_texts(client, QDRANT_COLLECTION, doc_keyword)
-            chunks = _filter_near_duplicates(raw_chunks, keyword_texts_cache[doc_keyword])
+                with accumulate("임베딩:Qdrant 기존청크 조회(scroll)"):
+                    keyword_texts_cache[doc_keyword] = _fetch_existing_texts(client, QDRANT_COLLECTION, doc_keyword)
+            with accumulate("임베딩:근접중복 필터(difflib)"):
+                chunks = _filter_near_duplicates(raw_chunks, keyword_texts_cache[doc_keyword])
             near_dup_skipped += len(raw_chunks) - len(chunks)
             keyword_texts_cache[doc_keyword].extend(c["text"].strip() for c in chunks)
         else:
@@ -225,14 +229,17 @@ def embed_documents(keyword: str | None = None) -> dict:
         # 추가되면 현실화된다. 그전에 순서 재검토 또는 재시도 로직 추가를 고려하자.
         try:
             points = _build_points(chunks)
-            _delete_existing_points(str(doc["_id"]))
-            client.upsert(collection_name=QDRANT_COLLECTION, points=points)
+            with accumulate("임베딩:Qdrant 기존point 삭제"):
+                _delete_existing_points(str(doc["_id"]))
+            with accumulate("임베딩:Qdrant upsert"):
+                client.upsert(collection_name=QDRANT_COLLECTION, points=points)
         except Exception as e:
             print(f"[임베딩] 실패 ({doc.get('title')}): {e}")
             failed += 1
             continue  # is_embedded는 False로 남아 다음 실행에서 재시도
 
-        memes.update_one({"_id": doc["_id"]}, {"$set": {"is_embedded": True}})
+        with accumulate("임베딩:Mongo is_embedded 갱신"):
+            memes.update_one({"_id": doc["_id"]}, {"$set": {"is_embedded": True}})
         doc_count += 1
         chunk_count += len(points)
         print(f"[임베딩] {doc.get('title')} — 청크 {len(points)}개 적재 완료")

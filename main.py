@@ -8,25 +8,32 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
 
 from logging_config import get_logger
+from perf_log import stage, report_totals
 from crawlers.tavily_crawler import crawl
+from crawlers.duckduckgo_crawler import crawl_duckduckgo
 from crawlers.youtube_crawler import crawl_youtube
 from crawlers.namuwiki_crawler import crawl_namuwiki
 from crawlers.natepann_crawler import crawl_natepann
 from crawlers.dcinside_crawler import crawl_dcinside
 from crawlers.todayhumor_crawler import crawl_todayhumor
-from config.config_cilent import CRAWL_WORKERS
+from config.config_cilent import CRAWL_WORKERS, MIN_COMMUNITY_DOCS_FOR_TAVILY
 from trend.trend_service import get_meme_trend, save_trend_score
 
 logger = get_logger("main")
 
-CRAWLERS = {
-    "tavily":     crawl,
+# 1단계: 항상 먼저 도는 커뮤니티 크롤러. 이 합계가 MIN_COMMUNITY_DOCS_FOR_TAVILY
+# 미만인 키워드만 2단계(Tavily → 실패 시 DuckDuckGo)로 보완한다.
+COMMUNITY_CRAWLERS = {
     "youtube":    crawl_youtube,
     "namuwiki":   crawl_namuwiki,
     "natepann":   crawl_natepann,
     "dcinside":   crawl_dcinside,
     "todayhumor": crawl_todayhumor,
 }
+
+# 요약표 출력 순서 고정용(judge_and_report). 실제로 호출됐는지와 무관하게 항상
+# 이 순서로 표시하고, 호출 안 된 소스는 "미실행"으로 나온다.
+CRAWLERS = {**COMMUNITY_CRAWLERS, "tavily": crawl, "duckduckgo": crawl_duckduckgo}
 
 KEYWORDS_PATH = os.path.join(BASE_DIR, "crawlers", "Keywords.md")
 
@@ -46,7 +53,8 @@ def _crawl_one(keyword: str, name: str, crawler) -> tuple[int, str]:
     에러 print 가 다른 작업 사이에 파묻히므로, 요약표에서 사유를 볼 수 있어야 한다.
     """
     try:
-        docs = crawler(keyword)
+        with stage("크롤", keyword=keyword, source=name):
+            docs = crawler(keyword)
         return len(docs), "ok"
     except Exception as e:
         with _PRINT_LOCK:
@@ -54,32 +62,80 @@ def _crawl_one(keyword: str, name: str, crawler) -> tuple[int, str]:
         return 0, f"실패({type(e).__name__})"
 
 
-def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
-    """모든 (키워드 × 소스) 작업을 하나의 평평한 풀에서 병렬 크롤한다.
+def _crawl_tavily_with_fallback(keyword: str) -> dict[str, tuple[int, str]]:
+    """Tavily를 시도하고, 예외로 실패한 경우에만 DuckDuckGo로 한 번 더 보완한다.
 
-    키워드마다 중첩 풀을 만들지 않고(head-of-line blocking 제거) 전 작업을 한 풀에
-    넣는다. 스크래퍼의 요청 rate 는 crawlers/base.py 의 도메인별 RateLimiter 가
-    직렬 수준으로 묶으므로, 워커 수를 늘려도 사이트별 rate 는 안전하게 유지된다.
+    두 시도의 결과를 모두 남긴다 — Tavily가 실패했다는 사실 자체가 진단에 필요한
+    정보라, DuckDuckGo 성공으로 덮어써서 감추지 않는다(요약표에 둘 다 나와야
+    "Tavily가 왜 안 도나"를 나중에 로그로 추적할 수 있다).
+
+    DuckDuckGo는 Tavily가 예외를 던졌을 때만 호출한다 — Tavily가 정상적으로
+    0건을 반환한 경우(필터로 다 걸러짐, 최근 재크롤 스킵 등)는 실패가 아니므로
+    폴백을 트리거하지 않는다.
+    """
+    updates: dict[str, tuple[int, str]] = {}
+    count, status = _crawl_one(keyword, "tavily", crawl)
+    updates["tavily"] = (count, status)
+
+    if status.startswith("실패"):
+        logger.info("[%s] Tavily 실패(%s) — DuckDuckGo 폴백 시도", keyword, status)
+        updates["duckduckgo"] = _crawl_one(keyword, "duckduckgo", crawl_duckduckgo)
+
+    return updates
+
+
+def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
+    """크롤을 2단계로 나눠 돈다.
+
+    1단계: 커뮤니티 크롤러(COMMUNITY_CRAWLERS)를 (키워드 × 소스) 전체가 하나의 평평한
+    풀에서 병렬로 돈다. 키워드마다 중첩 풀을 만들지 않아(head-of-line blocking 제거)
+    스크래퍼의 요청 rate 는 crawlers/base.py 의 도메인별 RateLimiter 가 직렬 수준으로
+    묶으므로, 워커 수를 늘려도 사이트별 rate 는 안전하게 유지된다.
+
+    2단계: 1단계 합계가 MIN_COMMUNITY_DOCS_FOR_TAVILY 미만인 키워드만 Tavily로
+    보완한다(그 키워드들끼리도 평평한 풀에서 병렬 — Tavily/DuckDuckGo는 API·쿼터
+    기반이라 동시 요청에 관대함). Tavily가 예외로 실패하면 DuckDuckGo까지 보완한다.
 
     반환: {keyword: {source: (count, status)}}
     """
-    tasks = [
+    community_tasks = [
         (kw, name, crawler)
         for kw in keywords
-        for name, crawler in CRAWLERS.items()
+        for name, crawler in COMMUNITY_CRAWLERS.items()
     ]
     results: dict[str, dict[str, tuple[int, str]]] = defaultdict(dict)
 
-    with ThreadPoolExecutor(max_workers=CRAWL_WORKERS) as executor:
-        future_to_task = {
-            executor.submit(_crawl_one, kw, name, crawler): (kw, name)
-            for kw, name, crawler in tasks
-        }
-        # as_completed + 개별 결과 저장: 한 작업이 죽어도 나머지 결과는 온전히 남는다
-        # (executor.map 은 첫 예외에서 소비가 끊겨 뒤 작업 결과가 통째로 유실됨).
-        for future in as_completed(future_to_task):
-            kw, name = future_to_task[future]
-            results[kw][name] = future.result()  # _crawl_one 은 예외를 삼키므로 안전
+    with stage("크롤:커뮤니티(벽시계)", 작업수=len(community_tasks), 워커=CRAWL_WORKERS):
+        with ThreadPoolExecutor(max_workers=CRAWL_WORKERS) as executor:
+            future_to_task = {
+                executor.submit(_crawl_one, kw, name, crawler): (kw, name)
+                for kw, name, crawler in community_tasks
+            }
+            # as_completed + 개별 결과 저장: 한 작업이 죽어도 나머지 결과는 온전히 남는다
+            # (executor.map 은 첫 예외에서 소비가 끊겨 뒤 작업 결과가 통째로 유실됨).
+            for future in as_completed(future_to_task):
+                kw, name = future_to_task[future]
+                results[kw][name] = future.result()  # _crawl_one 은 예외를 삼키므로 안전
+
+    needs_tavily = [
+        kw for kw in keywords
+        if sum(count for count, _ in results[kw].values()) < MIN_COMMUNITY_DOCS_FOR_TAVILY
+    ]
+
+    if needs_tavily:
+        logger.info(
+            "커뮤니티 수집 %d건 미만: %d개 키워드에 Tavily 보완 — %s",
+            MIN_COMMUNITY_DOCS_FOR_TAVILY, len(needs_tavily), ", ".join(needs_tavily),
+        )
+        with stage("크롤:Tavily 보완(벽시계)", 작업수=len(needs_tavily)):
+            with ThreadPoolExecutor(max_workers=CRAWL_WORKERS) as executor:
+                future_to_kw = {
+                    executor.submit(_crawl_tavily_with_fallback, kw): kw
+                    for kw in needs_tavily
+                }
+                for future in as_completed(future_to_kw):
+                    kw = future_to_kw[future]
+                    results[kw].update(future.result())
 
     return results
 
@@ -96,7 +152,8 @@ def judge_and_report(keyword: str, source_results: dict[str, tuple[int, str]]) -
     trend = None
     trend_line = f"  {'트렌드':<12}: 판정 안 됨"
     try:
-        trend = get_meme_trend(keyword)
+        with stage("트렌드 판정", keyword=keyword):
+            trend = get_meme_trend(keyword)
         sources = ", ".join(trend["sources"]) or "없음"
         trend_line = f"  {'트렌드':<12}: {trend['status']} (z={trend['final_z']:.2f}, 소스: {sources})"
     except Exception as e:
@@ -104,7 +161,8 @@ def judge_and_report(keyword: str, source_results: dict[str, tuple[int, str]]) -
 
     if trend is not None:
         try:
-            save_trend_score(trend)
+            with stage("트렌드 저장", keyword=keyword):
+                save_trend_score(trend)
         except Exception as e:
             trend_line += f"  [저장 실패: {e}]"
 
@@ -129,3 +187,5 @@ if __name__ == "__main__":
     results = crawl_all(keywords)
     for keyword in keywords:
         judge_and_report(keyword, results[keyword])
+
+    report_totals("main.py 단계별 누적 소요 시간")

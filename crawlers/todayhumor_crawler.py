@@ -27,8 +27,11 @@ from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
-from config.config_cilent import CRAWL_MAX_POSTS
-from crawlers.base import make_session, safe_get, get_date_cutoff
+from config.config_cilent import CRAWL_MAX_POSTS, CRAWL_REJECT_TTL_DAYS, REJECT_COLLECTION
+from crawlers.base import (
+    make_session, safe_get, get_date_cutoff, filter_already_saved,
+    filter_recently_rejected, record_reject,
+)
 from DB.mongo_client import get_collection
 
 BASE_URL = "https://www.todayhumor.co.kr"
@@ -101,12 +104,17 @@ def _get_post_urls(session, keyword: str, max_posts: int) -> list[tuple[str, dat
     return posts
 
 
-def _parse_post(soup: BeautifulSoup) -> tuple[str, str]:
+def _parse_post(soup: BeautifulSoup) -> tuple[str, str, bool]:
     """
     게시글 페이지에서 제목과 본문 텍스트를 추출.
 
     댓글은 JS로 사후 로딩돼 정적 HTML에 없으므로 포함하지 않는다.
     이미지만 있는 게시물은 본문이 빈 문자열로 반환된다(호출부에서 스킵 처리).
+
+    반환하는 bool은 viewContent 컨테이너 자체를 찾았는지 여부다. 컨테이너를
+    찾았는데 텍스트가 비어있으면 "이미지 전용 글"로 확정할 수 있지만, 컨테이너
+    자체를 못 찾은 경우는 페이지 구조 변경(파서 회귀) 가능성을 배제할 수 없어
+    호출부에서 구분해 처리한다.
     """
     title = ""
     if soup.title:
@@ -118,7 +126,7 @@ def _parse_post(soup: BeautifulSoup) -> tuple[str, str]:
     if content_div:
         body = content_div.get_text(separator="\n", strip=True)
 
-    return title, body
+    return title, body, content_div is not None
 
 
 def crawl_todayhumor(keyword: str) -> list[dict]:
@@ -132,6 +140,17 @@ def crawl_todayhumor(keyword: str) -> list[dict]:
     posts = _get_post_urls(session, keyword, CRAWL_MAX_POSTS)
     print(f"[오늘의유머] {len(posts)}개 URL 수집 완료")
 
+    # 이미 가진 글은 여기서 걸러 요청 자체를 생략한다.
+    posts, already_saved = filter_already_saved(collection, keyword, posts, make_doc_id)
+    # 최근 내용 필터로 걸러낸 글도 다시 받지 않는다(받아봐야 또 버려짐).
+    rejects = get_collection(REJECT_COLLECTION)
+    posts, rejected_before = filter_recently_rejected(
+        rejects, keyword, posts, make_doc_id, CRAWL_REJECT_TTL_DAYS
+    )
+    if already_saved or rejected_before:
+        print(f"[오늘의유머] 요청 생략 — 이미 저장 {already_saved}개 / "
+              f"최근 제외 이력 {rejected_before}개, {len(posts)}개만 수집")
+
     saved, skipped, failed, irrelevant, no_content = 0, 0, 0, 0, 0
     documents = []
 
@@ -142,19 +161,26 @@ def crawl_todayhumor(keyword: str) -> list[dict]:
             continue
 
         soup = BeautifulSoup(resp.text, "lxml")
-        title, content = _parse_post(soup)
+        title, content, container_found = _parse_post(soup)
 
         if not content.strip():
             no_content += 1
+            if container_found:
+                # 컨테이너는 찾았는데 텍스트가 비어있음 = 이미지 전용 글로 확정.
+                # 컨테이너 자체를 못 찾은 경우(페이지 구조 변경 가능성)는 기록하지
+                # 않는다 — 캐시했다가 파서 회귀를 TTL 동안 숨기게 되기 때문이다.
+                record_reject(rejects, keyword, url, "todayhumor", "image_only", make_doc_id)
             continue
 
         if len(content.strip()) < MIN_CONTENT_LEN:
             print(f"[오늘의유머] 너무 짧음({len(content.strip())}자), 제외: {title[:40]!r}")
+            record_reject(rejects, keyword, url, "todayhumor", "too_short", make_doc_id)
             irrelevant += 1
             continue
 
         if not _is_relevant(keyword, title, content):
             print(f"[오늘의유머] 관련 없음, 제외: {title[:40]!r}")
+            record_reject(rejects, keyword, url, "todayhumor", "irrelevant", make_doc_id)
             irrelevant += 1
             continue
 

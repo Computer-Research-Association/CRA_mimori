@@ -43,6 +43,14 @@ CRAWL_DELAY_MAX = 4.0       # 요청 사이 최대 대기 (초)
 CRAWL_MAX_RETRIES = 3       # 실패 시 최대 재시도 횟수
 CRAWL_MAX_POSTS = 20        # 사이트당 최대 수집 게시글 수
 
+# 내용 필터(본문 길이/관련성)로 걸러낸 글을 기록해 두는 컬렉션.
+# 걸러진 글은 memes에 저장되지 않아 '이미 저장됨' 판정에 안 걸리고, 그래서 매 실행마다
+# 다시 다운로드된 뒤 다시 버려졌다(요청 1건당 도메인 rate limit 평균 2.3초).
+REJECT_COLLECTION = os.getenv("REJECT_COLLECTION", "crawl_rejects")
+# 거절 이력의 유효기간. 이 기간이 지나면 다시 한 번 받아서 재평가한다 —
+# 영구 스킵으로 두면 필터 기준(MIN_CONTENT_LEN 등)을 고쳐도 옛 판정이 그대로 굳는다.
+CRAWL_REJECT_TTL_DAYS = 30
+
 # 크롤링 병렬화 설정 (main.py)
 # 모든 (키워드 × 소스) 크롤 작업을 하나의 평평한 스레드풀에서 병렬 실행한다.
 #
@@ -52,6 +60,16 @@ CRAWL_MAX_POSTS = 20        # 사이트당 최대 수집 게시글 수
 # CRAWL_DELAY_MIN/MAX 재사용). 워커 수를 늘려도 한 사이트로 가는 rate 는 그대로다.
 # API 소스(tavily/youtube)는 IP 차단이 아니라 쿼터 방식이라 동시 요청에 관대.
 CRAWL_WORKERS = 8          # (키워드 × 소스) 평평한 풀의 워커 수
+
+# 배치 크롤 우선순위(main.py): 커뮤니티 크롤러(dcinside/namuwiki/youtube/natepann/
+# todayhumor)를 먼저 돌리고, 한 키워드의 합계 문서 수가 이 기준 미만이면 그 키워드만
+# Tavily로 보완 호출한다. Tavily 자체가 예외로 실패하면 DuckDuckGo로 한 번 더
+# 보완한다(폴백의 폴백). 전체 실패는 합계가 자연히 0이 되어 같은 조건에 포함된다.
+MIN_COMMUNITY_DOCS_FOR_TAVILY = 3
+
+# DuckDuckGo 폴백 검색 설정 — Tavily 크롤이 예외로 실패했을 때만 호출된다.
+DUCKDUCKGO_MAX_RESULTS = 10   # 페이지네이션 없이 첫 페이지만 사용(폴백이라 비용 대비 실효 우선)
+DUCKDUCKGO_RECRAWL_DAYS = 3   # Tavily가 며칠째 계속 실패해도 이 폴백을 매일 다시 두드리지 않음
 
 # 크롤링 필터링 기준
 # 밈은 생명주기가 있어 오래된 글은 현재 맥락과 다를 수 있음 → 날짜 하한선 적용
@@ -133,6 +151,38 @@ RAG_FACET_NEAR_DUP_THRESHOLD = 0.8   # 이 이상 유사하면 재게시(미러�
 
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
+
+# ── 품질 계측 (quality_test) ────────────────────────────────────────────────
+# 산출물 경로. cwd가 아니라 프로젝트 루트 기준으로 고정한다 —
+# 다른 폴더에서 실행해도 같은 곳에 쌓이게 하기 위함.
+DATA_TEST_DIR = os.path.join(_ROOT, "data_test")
+FIXTURE_DIR = os.path.join(DATA_TEST_DIR, "fixtures")
+RUNS_DIR = os.path.join(DATA_TEST_DIR, "runs")
+DEFAULT_FIXTURE_NAME = "raw_sample.jsonl"
+
+# 품질 판정 임계값. signals.py는 값만 계산하고, 판정은 이 상수를 읽는 쪽에서 한다.
+# 전부 '확실히 나쁜 것만' 잡도록 보수적으로 잡은 시작값이며, 리포트로 분포를 보고 조정한다.
+MIN_CHUNK_CHARS = 30        # 이 미만이면 정보 없는 청크로 본다 (RAG 필터와 같은 값)
+MIN_HANGUL_RATIO = 0.3      # 국내 소스인데 이 미만이면 본문 추출 실패 의심
+SPAM_HIT_THRESHOLD = 3      # 스팸 패턴이 이 개수 이상이면 광고로 본다
+DOMESTIC_SOURCES = ("natepann", "dcinside", "namuwiki", "todayhumor")  # 한글 비율 규칙을 적용할 소스
+
+# 사이트 UI 상투어. 본문 추출이 사이드바/위젯까지 긁어왔을 때 나타난다.
+# quality_test/signals.py(개수 세기)와 preprocessing/cleaner.py(실제 제거) 둘 다
+# 이 목록을 쓴다 — 탐지 기준과 제거 기준이 어긋나면 안 되므로 한 곳에 둔다.
+BOILERPLATE_PHRASES = (
+    "본문 바로가기", "메뉴 바로가기", "마이페이지",
+    "이웃추가", "구독하기", "공유하기", "URL복사", "신고하기",
+    "찬반대결", "책갈피", "최신순", "추천순",
+    "dc official App",
+    # Daum 카페(tavily가 그대로 긁어오는 경우, 실사례 2026-08-04 cafe.daum.net) UI 상투어.
+    # "로그인"/"스크랩0"처럼 너무 흔하거나(오탐 위험) 이번 건에만 해당하는(방문자 수 등)
+    # 문구는 일부러 제외했다 — 일반화 가능한 것만 넣는다.
+    "카페정보", "카페 프로필 이미지", "카페 가입하기", "카페 전체 메뉴",
+    "검색이 허용된 게시물입니다", "게시글 본문내용", "검색 옵션 선택상자",
+    "댓글내용선택됨", "서비스 약관/정책", "권리침해신고", "카페 고객센터", "검색비공개 요청",
+    "카페 게시글", "목록 이전글 다음글", "다음검색", "옵션 더 보기", "댓글 작성자", "최신목록",
+)
 
 
 

@@ -24,9 +24,14 @@ from bs4 import BeautifulSoup
 from config.config_cilent import (
     CRAWL_MAX_POSTS,
     CRAWL_MAX_SEARCH_PAGES,
+    CRAWL_REJECT_TTL_DAYS,
     NATEPANN_SORTS,
+    REJECT_COLLECTION,
 )
-from crawlers.base import make_session, safe_get, get_date_cutoff, merge_dedup_by_url
+from crawlers.base import (
+    make_session, safe_get, get_date_cutoff, merge_dedup_by_url, filter_already_saved,
+    filter_recently_rejected, record_reject,
+)
 from DB.mongo_client import get_collection
 
 BASE_URL = "https://pann.nate.com"
@@ -214,6 +219,17 @@ def crawl_natepann(keyword: str) -> list[dict]:
     posts = _get_post_urls_multi(session, keyword, CRAWL_MAX_POSTS, NATEPANN_SORTS)
     print(f"[네이트판] 총 {len(posts)}개 URL 수집 완료 (정렬: {', '.join(NATEPANN_SORTS)})")
 
+    # 이미 가진 글은 여기서 걸러 요청 자체를 생략한다.
+    posts, already_saved = filter_already_saved(collection, keyword, posts, make_doc_id)
+    # 최근 내용 필터로 걸러낸 글도 다시 받지 않는다(받아봐야 또 버려짐).
+    rejects = get_collection(REJECT_COLLECTION)
+    posts, rejected_before = filter_recently_rejected(
+        rejects, keyword, posts, make_doc_id, CRAWL_REJECT_TTL_DAYS
+    )
+    if already_saved or rejected_before:
+        print(f"[네이트판] 요청 생략 — 이미 저장 {already_saved}개 / "
+              f"최근 제외 이력 {rejected_before}개, {len(posts)}개만 수집")
+
     saved, skipped, failed, irrelevant = 0, 0, 0, 0
     documents = []
 
@@ -233,12 +249,14 @@ def crawl_natepann(keyword: str) -> list[dict]:
         # 최소 길이: 감탄사성 짧은 글 제외
         if len(content.strip()) < MIN_CONTENT_LEN:
             print(f"[네이트판] 너무 짧음({len(content.strip())}자), 제외: {title[:40]!r}")
+            record_reject(rejects, keyword, url, "natepann", "too_short", make_doc_id)
             irrelevant += 1
             continue
 
         # 관련성 게이트: 제목·본문에 키워드 없으면 제외
         if not _is_relevant(keyword, title, content):
             print(f"[네이트판] 관련 없음, 제외: {title[:40]!r}")
+            record_reject(rejects, keyword, url, "natepann", "irrelevant", make_doc_id)
             irrelevant += 1
             continue
 

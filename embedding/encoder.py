@@ -12,6 +12,7 @@ import torch
 from FlagEmbedding import BGEM3FlagModel
 
 from config.config_cilent import EMBEDDING_MODEL
+from perf_log import stage
 
 # BGEM3FlagModel 생성은 GIL을 놓기 때문에, 락 없이 두 스레드가 `_model is None`을
 # 동시에 통과하면 모델이 2개 만들어질 수 있다(각각 수GB) → 이중 검사 락으로 1개만 만든다.
@@ -22,11 +23,7 @@ _model_lock = threading.Lock()
 def _get_model() -> BGEM3FlagModel:
     global _model
     if _model is None:
-        with _model_lock:
-            if _model is None:
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-                print(f"[임베딩] {EMBEDDING_MODEL} 로드 중... (device={device})")
-                _model = BGEM3FlagModel(EMBEDDING_MODEL, use_fp16=(device == "cuda"))
+
     return _model
 
 
