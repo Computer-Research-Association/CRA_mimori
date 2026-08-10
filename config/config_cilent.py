@@ -60,6 +60,16 @@ CRAWL_REJECT_TTL_DAYS = 30
 # API 소스(tavily/youtube)는 IP 차단이 아니라 쿼터 방식이라 동시 요청에 관대.
 CRAWL_WORKERS = 8          # (키워드 × 소스) 평평한 풀의 워커 수
 
+# 배치 크롤 우선순위(main.py): 커뮤니티 크롤러(dcinside/namuwiki/youtube/natepann/
+# todayhumor)를 먼저 돌리고, 한 키워드의 합계 문서 수가 이 기준 미만이면 그 키워드만
+# Tavily로 보완 호출한다. Tavily 자체가 예외로 실패하면 DuckDuckGo로 한 번 더
+# 보완한다(폴백의 폴백). 전체 실패는 합계가 자연히 0이 되어 같은 조건에 포함된다.
+MIN_COMMUNITY_DOCS_FOR_TAVILY = 3
+
+# DuckDuckGo 폴백 검색 설정 — Tavily 크롤이 예외로 실패했을 때만 호출된다.
+DUCKDUCKGO_MAX_RESULTS = 10   # 페이지네이션 없이 첫 페이지만 사용(폴백이라 비용 대비 실효 우선)
+DUCKDUCKGO_RECRAWL_DAYS = 3   # Tavily가 며칠째 계속 실패해도 이 폴백을 매일 다시 두드리지 않음
+
 # 크롤링 필터링 기준
 # 밈은 생명주기가 있어 오래된 글은 현재 맥락과 다를 수 있음 → 날짜 하한선 적용
 CRAWL_MAX_AGE_YEARS = 3       # 이보다 오래된 게시글은 수집 제외

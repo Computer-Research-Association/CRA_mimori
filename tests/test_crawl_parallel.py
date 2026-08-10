@@ -47,20 +47,40 @@ def test_rate_limiter_holds_rate_under_many_threads():
 
 def test_crawl_all_isolates_failures():
     def good(keyword):
-        return [1, 2, 3]  # 3건 수집한 척
+        return [1, 2, 3]  # 3건 수집한 척 (MIN_COMMUNITY_DOCS_FOR_TAVILY=3 이상이라
+        # Tavily 보완 단계가 트리거되지 않아야 함 — 아래 _no_network가 그걸 검증)
 
     def boom(keyword):
         raise RuntimeError("quota exceeded")
 
-    main.CRAWLERS = {"good": good, "bad": boom}
-    results = main.crawl_all(["k1", "k2", "k3"])
+    def _no_network(keyword):
+        raise AssertionError(
+            f"'{keyword}': 커뮤니티 수집이 기준 이상인데 Tavily/DuckDuckGo가 호출됨 "
+            "(2단계 보완 로직이 트리거되면 안 되는 케이스)"
+        )
+
+    orig_community, orig_tavily, orig_ddg = (
+        main.COMMUNITY_CRAWLERS, main.crawl, main.crawl_duckduckgo,
+    )
+    try:
+        main.COMMUNITY_CRAWLERS = {"good": good, "bad": boom}
+        main.crawl = _no_network
+        main.crawl_duckduckgo = _no_network
+
+        results = main.crawl_all(["k1", "k2", "k3"])
+    finally:
+        main.COMMUNITY_CRAWLERS, main.crawl, main.crawl_duckduckgo = (
+            orig_community, orig_tavily, orig_ddg,
+        )
 
     assert set(results) == {"k1", "k2", "k3"}, f"키워드 유실: {set(results)}"
     for kw in ("k1", "k2", "k3"):
         assert results[kw]["good"] == (3, "ok"), results[kw]["good"]
         count, status = results[kw]["bad"]
         assert count == 0 and status.startswith("실패"), (count, status)
+        assert "tavily" not in results[kw], "커뮤니티 수집 충분한데 Tavily가 호출됨"
     print(f"[OK] 예외 격리: 한 소스가 죽어도 3키워드 전부 결과 보존, 실패/0건 구분")
+    print(f"[OK] 커뮤니티 합계가 기준 이상이면 Tavily/DuckDuckGo 호출 안 됨(네트워크 0건)")
 
 
 if __name__ == "__main__":
