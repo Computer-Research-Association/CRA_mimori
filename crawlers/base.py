@@ -68,6 +68,45 @@ def rate_limit(url: str) -> None:
     limiter.acquire()
 
 
+def filter_already_saved(
+    collection,
+    keyword: str,
+    posts: list[tuple[str, datetime | None]],
+    make_doc_id,
+) -> tuple[list[tuple[str, datetime | None]], int]:
+    """이미 저장된 게시글을 '요청을 보내기 전에' 걸러낸다.
+
+    왜 필요한가:
+      기존에는 본문 GET + 댓글 POST 를 모두 치른 뒤에야 insert_one 의 duplicate key
+      예외로 중복을 발견했다. 요청 하나가 도메인 RateLimiter 때문에 평균 2.3초를
+      물기 때문에, 이미 가진 글 하나마다 약 4.7초를 버리고 그 결과를 그대로 폐기했다.
+      매일 도는 스케줄러에서는 대부분의 글이 이미 가진 글이라 실행 시간의 거의 전부가
+      여기로 샜다(2026-08-05 EC2 실행: 약 25분 소요, 신규 문서 2건).
+
+    안전한 이유:
+      _id 는 (keyword, url) 만으로 결정되고 url 은 검색 목록 단계에서 이미 알 수 있다.
+      그리고 지금도 재수집한 내용은 insert_one 실패로 버려지므로, 요청을 생략해도
+      저장되는 데이터는 달라지지 않는다 — 낭비되던 왕복만 사라진다.
+
+    주의:
+      따라서 이 함수는 '기존 문서 갱신'을 하지 않는다. 나중에 댓글 증가분 반영 같은
+      갱신이 필요해지면 여기서 거르지 말고 별도 갱신 경로를 두어야 한다.
+
+    반환: (아직 저장 안 된 posts, 걸러진 개수)
+    """
+    if not posts:
+        return posts, 0
+
+    ids = [make_doc_id(keyword, url) for url, _ in posts]
+    # 조회는 한 번만 — URL 마다 find_one 을 돌면 요청 대신 DB 왕복이 병목이 된다.
+    existing = {
+        doc["_id"]
+        for doc in collection.find({"_id": {"$in": ids}}, {"_id": 1})
+    }
+    fresh = [post for post, doc_id in zip(posts, ids) if doc_id not in existing]
+    return fresh, len(posts) - len(fresh)
+
+
 def get_date_cutoff() -> datetime:
     """
     수집 대상 게시글의 날짜 하한선 반환.

@@ -30,7 +30,10 @@ from config.config_cilent import (
     CRAWL_MAX_SEARCH_PAGES,
     DCINSIDE_SORTS,
 )
-from crawlers.base import make_session, safe_get, rate_limit, get_date_cutoff, merge_dedup_by_url
+from crawlers.base import (
+    make_session, safe_get, rate_limit, get_date_cutoff, merge_dedup_by_url,
+    filter_already_saved,
+)
 from DB.mongo_client import get_collection
 
 SEARCH_BASE = "https://search.dcinside.com"
@@ -257,6 +260,11 @@ def crawl_dcinside(keyword: str) -> list[dict]:
     print(f"[디시인사이드] '{keyword}' 검색 시작...")
     posts = _get_post_urls_multi(session, keyword, CRAWL_MAX_POSTS, DCINSIDE_SORTS)
     print(f"[디시인사이드] 총 {len(posts)}개 URL 수집 완료 (정렬: {', '.join(DCINSIDE_SORTS)})")
+
+    # 이미 가진 글은 여기서 걸러 요청 자체를 생략한다(게시글당 GET+POST 2회 절약).
+    posts, already_saved = filter_already_saved(collection, keyword, posts, make_doc_id)
+    if already_saved:
+        print(f"[디시인사이드] 이미 저장된 {already_saved}개는 요청 생략, {len(posts)}개만 수집")
 
     saved, skipped, failed, irrelevant = 0, 0, 0, 0
     documents = []
