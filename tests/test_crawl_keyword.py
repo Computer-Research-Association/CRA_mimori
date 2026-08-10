@@ -5,8 +5,9 @@ issue #69 (온디맨드 RAG 크롤)에서 rag_main.py가 재사용하는 두 함
 확인하는 것:
   1. crawl_keyword: 커뮤니티 수집이 기준 이상이면 Tavily를 호출하지 않는다
   2. crawl_keyword: 기준 미만이면 Tavily로 보완하고, 실패하면 DuckDuckGo까지 보완한다
-  3. add_keyword_if_missing: 이미 있는 키워드는 추가하지 않고 False, 파일 변경 없음
-  4. add_keyword_if_missing: 없는 키워드는 한 줄 추가하고 True, 재호출해도 중복 안 됨
+  3. crawl_keyword: 진행 콜백(on_source_done)이 두 단계 모두에서 정확히 호출된다
+  4. add_keyword_if_missing: 이미 있는 키워드는 추가하지 않고 False, 파일 변경 없음
+  5. add_keyword_if_missing: 없는 키워드는 한 줄 추가하고 True, 재호출해도 중복 안 됨
 
 실행:  uv run python tests/test_crawl_keyword.py
 """
@@ -76,6 +77,43 @@ def test_crawl_keyword_커뮤니티_부족하면_Tavily_실패시_DDG_보완():
     assert count == 0 and status.startswith("실패"), results["tavily"]
     assert results["duckduckgo"] == (2, "ok"), results["duckduckgo"]
     print("[OK] crawl_keyword: 커뮤니티 부족 + Tavily 실패 → DuckDuckGo 보완")
+
+
+def test_crawl_keyword_진행_콜백이_커뮤니티와_Tavily_보완_모두에서_호출됨():
+    """온디맨드 크롤은 20분 넘게 걸릴 수 있어 소스별 진행 표시가 유일한 생존신호다.
+    2단계(Tavily 보완)에서 끝난 소스도 빠짐없이 보고돼야 한다."""
+    def few(keyword):
+        return [1]
+
+    def tavily_ok(keyword):
+        return [1, 2]
+
+    seen = []
+
+    with _Patched(
+        COMMUNITY_CRAWLERS={"dcinside": few, "natepann": few},
+        crawl=tavily_ok,
+        crawl_duckduckgo=_no_call,
+    ):
+        results = main.crawl_keyword("k1", on_source_done=lambda kw, src, cnt, st: seen.append((kw, src, cnt, st)))
+
+    assert sorted(s[1] for s in seen) == ["dcinside", "natepann", "tavily"], seen
+    assert all(kw == "k1" for kw, _, _, _ in seen), seen
+    # 콜백으로 보고된 값이 최종 반환값과 일치해야 한다(진행 표시가 거짓말하면 안 됨)
+    assert {src: (cnt, st) for _, src, cnt, st in seen} == results, (seen, results)
+    print("[OK] crawl_keyword: 진행 콜백이 커뮤니티 + Tavily 보완 모두에서 호출됨")
+
+
+def test_crawl_all_콜백_없이도_동작함():
+    """배치(main.py)는 콜백을 안 넘긴다 — 기본값 None 경로가 깨지지 않았는지 확인."""
+    def many(keyword):
+        return [1, 2, 3, 4]
+
+    with _Patched(COMMUNITY_CRAWLERS={"dcinside": many}, crawl=_no_call, crawl_duckduckgo=_no_call):
+        results = main.crawl_all(["k1", "k2"])
+    assert results["k1"]["dcinside"] == (4, "ok"), results
+    assert results["k2"]["dcinside"] == (4, "ok"), results
+    print("[OK] crawl_all: 콜백 없이(배치 경로) 정상 동작")
 
 
 def test_add_keyword_if_missing_이미_있으면_False_추가안함():
@@ -148,6 +186,8 @@ def test_add_keyword_if_missing_두번_호출해도_중복_안됨():
 if __name__ == "__main__":
     test_crawl_keyword_커뮤니티_충분하면_Tavily_호출_안됨()
     test_crawl_keyword_커뮤니티_부족하면_Tavily_실패시_DDG_보완()
+    test_crawl_keyword_진행_콜백이_커뮤니티와_Tavily_보완_모두에서_호출됨()
+    test_crawl_all_콜백_없이도_동작함()
     test_add_keyword_if_missing_이미_있으면_False_추가안함()
     test_add_keyword_if_missing_없으면_추가하고_True()
     test_add_keyword_if_missing_파일이_개행없이_끝나도_줄이_안_합쳐짐()

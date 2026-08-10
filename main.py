@@ -2,6 +2,7 @@ import sys
 import os
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +37,11 @@ COMMUNITY_CRAWLERS = {
 CRAWLERS = {**COMMUNITY_CRAWLERS, "tavily": crawl, "duckduckgo": crawl_duckduckgo}
 
 KEYWORDS_PATH = os.path.join(BASE_DIR, "crawlers", "Keywords.md")
+
+# 소스 하나가 끝날 때마다 (키워드, 소스, 문서 수, 상태)로 호출되는 진행 콜백.
+# 무인 배치는 필요 없어서 None이 기본이고, 사람이 기다리는 온디맨드 크롤(rag_main)에서만
+# 넘긴다 — 20분 가까이 걸리는 동안 화면이 멈춘 것처럼 보이지 않게 하기 위함.
+ProgressCallback = Callable[[str, str, int, str], None] | None
 
 # 병렬 크롤 중 에러 로그가 다른 작업 로그와 섞여도 한 줄은 온전히 찍히게 한다.
 _PRINT_LOCK = threading.Lock()
@@ -84,29 +90,18 @@ def _crawl_tavily_with_fallback(keyword: str) -> dict[str, tuple[int, str]]:
     return updates
 
 
-def crawl_keyword(keyword: str) -> dict[str, tuple[int, str]]:
-    """한 키워드에 대해 커뮤니티 우선 → 부족 시 Tavily/DuckDuckGo 보완 크롤을 수행한다.
+def crawl_keyword(
+    keyword: str, on_source_done: ProgressCallback = None
+) -> dict[str, tuple[int, str]]:
+    """한 키워드만 크롤하는 진입점(RAG 온디맨드 수집 등). crawl_all()에 그대로 위임한다.
 
-    crawl_all()의 다중 키워드 flat-pool 최적화는 건드리지 않고, RAG 질의처럼
-    키워드 하나만 그 자리에서 수집해야 하는 호출부(rag_main.py 등)를 위한
-    별도 진입점이다. 우선순위 로직(_crawl_one/_crawl_tavily_with_fallback)은
-    crawl_all()과 동일한 것을 그대로 재사용한다.
+    키워드가 하나면 flat-pool 최적화는 (1 × 소스 수) 풀과 동작이 같아서, 따로
+    구현하면 2단계 게이팅(커뮤니티 부족 → Tavily 보완) 로직만 두 벌이 된다.
+    그러다 한쪽만 바뀌면 배치와 온디맨드의 수집 기준이 조용히 갈라지므로 위임한다.
 
     반환: {source: (count, status)}
     """
-    results: dict[str, tuple[int, str]] = {}
-    with ThreadPoolExecutor(max_workers=len(COMMUNITY_CRAWLERS)) as executor:
-        future_to_name = {
-            executor.submit(_crawl_one, keyword, name, crawler): name
-            for name, crawler in COMMUNITY_CRAWLERS.items()
-        }
-        for future in as_completed(future_to_name):
-            results[future_to_name[future]] = future.result()
-
-    if sum(count for count, _ in results.values()) < MIN_COMMUNITY_DOCS_FOR_TAVILY:
-        results.update(_crawl_tavily_with_fallback(keyword))
-
-    return results
+    return crawl_all([keyword], on_source_done=on_source_done)[keyword]
 
 
 def add_keyword_if_missing(keyword: str) -> bool:
@@ -130,7 +125,9 @@ def add_keyword_if_missing(keyword: str) -> bool:
     return True
 
 
-def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
+def crawl_all(
+    keywords: list[str], on_source_done: ProgressCallback = None
+) -> dict[str, dict[str, tuple[int, str]]]:
     """크롤을 2단계로 나눠 돈다.
 
     1단계: 커뮤니티 크롤러(COMMUNITY_CRAWLERS)를 (키워드 × 소스) 전체가 하나의 평평한
@@ -141,6 +138,8 @@ def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
     2단계: 1단계 합계가 MIN_COMMUNITY_DOCS_FOR_TAVILY 미만인 키워드만 Tavily로
     보완한다(그 키워드들끼리도 평평한 풀에서 병렬 — Tavily/DuckDuckGo는 API·쿼터
     기반이라 동시 요청에 관대함). Tavily가 예외로 실패하면 DuckDuckGo까지 보완한다.
+
+    on_source_done을 주면 소스 하나가 끝날 때마다 호출한다(진행 표시용, ProgressCallback 참고).
 
     반환: {keyword: {source: (count, status)}}
     """
@@ -162,6 +161,8 @@ def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
             for future in as_completed(future_to_task):
                 kw, name = future_to_task[future]
                 results[kw][name] = future.result()  # _crawl_one 은 예외를 삼키므로 안전
+                if on_source_done is not None:
+                    on_source_done(kw, name, *results[kw][name])
 
     needs_tavily = [
         kw for kw in keywords
@@ -181,7 +182,11 @@ def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
                 }
                 for future in as_completed(future_to_kw):
                     kw = future_to_kw[future]
-                    results[kw].update(future.result())
+                    updates = future.result()
+                    results[kw].update(updates)
+                    if on_source_done is not None:
+                        for name, (count, status) in updates.items():
+                            on_source_done(kw, name, count, status)
 
     return results
 
