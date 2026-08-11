@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { fetchTrend, analyzeKeyword } from '../api.js'
 import TrendChart from './TrendChart.jsx'
-import { pickPrimarySeries, computeChangeRate } from '../trendUtils.js'
+import { pickPrimarySeries, computeChangeRate, trendDirectionLabel } from '../trendUtils.js'
 
 export default function AnalysisPanel({ keyword }) {
   const [loading, setLoading] = useState(true)
@@ -55,20 +55,21 @@ export default function AnalysisPanel({ keyword }) {
   const z = trend?.final_z ?? trend?.z_score
   const primarySeries = pickPrimarySeries(trend)
   const changeRate = primarySeries ? computeChangeRate(primarySeries.points) : null
-  const changeSentence = typeof changeRate === 'number'
-    ? `최근 평균보다 ${Math.abs(changeRate).toFixed(0)}% ${changeRate >= 0 ? '더' : '덜'} 언급되고 있다.`
-    : null
+  const changeSentence = typeof changeRate === 'number' && primarySeries
+    ? `최근 ${primarySeries.points.length}일간 ${primarySeries.label}가 평균보다 ${Math.abs(changeRate).toFixed(0)}% ${changeRate >= 0 ? '더 높다' : '더 낮다'}.`
+    : trendDirectionLabel({ z })
+      ? `${trendDirectionLabel({ z })}.`
+      : null
+  const zNote = typeof z === 'number' ? ` (z ${z >= 0 ? '+' : ''}${z.toFixed(2)})` : ''
   const trendLine = trend ? `트렌드: ${trend.status}.` : null
 
   return (
     <div className="entry">
       {trendLine && (
-        <p
-          className="trend-line"
-          title={typeof z === 'number' ? `z-score ${z >= 0 ? '+' : ''}${z.toFixed(2)}` : undefined}
-        >
+        <p className="trend-line">
           {trend.status === '핫함' ? <strong className="trend-line__hot">{trendLine}</strong> : trendLine}
           {changeSentence && ` ${changeSentence}`}
+          {zNote}
         </p>
       )}
       {primarySeries && <TrendChart points={primarySeries.points} label={primarySeries.label} />}
