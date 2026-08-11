@@ -27,7 +27,10 @@ def _get_model() -> BGEM3FlagModel:
             if _model is None:
                 device = "cuda" if torch.cuda.is_available() else "cpu"
                 print(f"[임베딩] {EMBEDDING_MODEL} 로드 중... (device={device})")
-                _model = BGEM3FlagModel(EMBEDDING_MODEL, use_fp16=(device == "cuda"))
+                # 모델 로드는 1회성이지만 수십 초가 걸릴 수 있어, 인코딩 시간과 섞이면
+                # "임베딩이 느리다"는 오진을 부른다. 그래서 따로 계측한다.
+                with stage("임베딩:모델 로드", model=EMBEDDING_MODEL, device=device):
+                    _model = BGEM3FlagModel(EMBEDDING_MODEL, use_fp16=(device == "cuda"))
     return _model
 
 

@@ -14,6 +14,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import scripts.crawl_request_worker as worker
 
 
+def _apply_set(doc, changes):
+    """$set을 적용한다. 'progress.dcinside'처럼 점 표기 경로도 Mongo와 같게 중첩 반영한다
+    (진행 콜백이 필드 단위 $set을 쓰기 때문 — 통째로 덮어쓰면 스레드끼리 갱신을 잃는다)."""
+    for key, value in changes.items():
+        if "." not in key:
+            doc[key] = value
+            continue
+        head, _, tail = key.partition(".")
+        doc.setdefault(head, {})[tail] = value
+
+
 class _FakeCollection:
     """find_one_and_update와 update_one만 흉내낸다 (run_once가 쓰는 두 가지)."""
 
@@ -26,12 +37,12 @@ class _FakeCollection:
             return None
         candidates.sort(key=lambda d: d["requested_at"])
         doc = candidates[0]
-        doc.update(update["$set"])
+        _apply_set(doc, update["$set"])
         return doc
 
     def update_one(self, filter_, update):
         doc = self._docs[filter_["_id"]]
-        doc.update(update["$set"])
+        _apply_set(doc, update["$set"])
 
     def update_many(self, filter_, update):
         """단순한 $lt 비교 + 동등 비교만 지원 (run_once의 _requeue_stale_running이 쓰는 형태)."""
@@ -69,7 +80,7 @@ def test_큐가_비어있으면_아무것도_안한다():
     collection = _FakeCollection([])
     calls = []
     original = worker.crawl_all
-    worker.crawl_all = lambda kws: calls.append(kws)
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws)
     try:
         worker.run_once(collection=collection)
         assert calls == [], "큐가 비었는데 크롤링이 호출됨"
@@ -91,7 +102,7 @@ def test_정상_처리시_done으로_바뀐다():
         calls["embed"] = kw
         return {"documents": 1, "chunks": 3}
 
-    worker.crawl_all = lambda kws: calls.setdefault("crawl", kws)
+    worker.crawl_all = lambda kws, on_source_done=None: calls.setdefault("crawl", kws)
     worker.preprocess_documents = lambda kw: calls.setdefault("preprocess", kw)
     worker.embed_documents = fake_embed
     worker.acquire_heavy_job_lock_blocking = lambda owner: True
@@ -113,7 +124,7 @@ def test_예외_발생시_failed와_에러메시지가_기록된다():
          "started_at": None, "completed_at": None, "error": None},
     ])
     original = worker.crawl_all
-    worker.crawl_all = lambda kws: (_ for _ in ()).throw(RuntimeError("크롤 실패 테스트"))
+    worker.crawl_all = lambda kws, on_source_done=None: (_ for _ in ()).throw(RuntimeError("크롤 실패 테스트"))
     try:
         worker.run_once(collection=collection)
         doc = collection._docs["쌰갈"]
@@ -220,7 +231,7 @@ def test_최근_running_요청은_requeue되지_않는다():
     ])
     calls = []
     original_crawl = worker.crawl_all
-    worker.crawl_all = lambda kws: calls.append(kws[0])
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws[0])
     try:
         worker.run_once(collection=collection)
         doc = collection._docs["진행중인요청"]

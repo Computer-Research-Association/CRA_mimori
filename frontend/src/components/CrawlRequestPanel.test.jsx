@@ -54,6 +54,40 @@ describe('CrawlRequestPanel', () => {
     expect(screen.getByRole('button', { name: '다시 시도' })).toBeInTheDocument()
   })
 
+  it('진행 상황이 오면 단계와 소스별 결과를 보여준다', async () => {
+    vi.spyOn(api, 'requestCrawl').mockResolvedValue({ keyword: '흘로망', status: 'queued' })
+    vi.spyOn(api, 'fetchCrawlStatus').mockResolvedValue({
+      keyword: '흘로망',
+      status: 'running',
+      stage: 'crawl',
+      progress: {
+        dcinside: { count: 12, status: 'ok' },
+        youtube: { count: 0, status: 'ok' },
+        namuwiki: { count: 0, status: '실패(HTTPError)' },
+      },
+    })
+
+    render(<CrawlRequestPanel keyword="흘로망" onDone={vi.fn()} />)
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(await screen.findByText(/웹에서 자료 수집 중/)).toBeInTheDocument()
+    expect(screen.getByText('디시인사이드')).toBeInTheDocument()
+    expect(screen.getByText('12건')).toBeInTheDocument()
+    // 성공했지만 0건인 소스와 실패한 소스는 구분해서 보여야 한다
+    expect(screen.getByText('자료 없음')).toBeInTheDocument()
+    expect(screen.getByText('실패(HTTPError)')).toBeInTheDocument()
+  })
+
+  it('stage/progress가 없는 옛 응답에도 스피너만 띄우고 깨지지 않는다', async () => {
+    vi.spyOn(api, 'requestCrawl').mockResolvedValue({ keyword: '흘로망', status: 'queued' })
+    vi.spyOn(api, 'fetchCrawlStatus').mockResolvedValue({ keyword: '흘로망', status: 'running' })
+
+    render(<CrawlRequestPanel keyword="흘로망" onDone={vi.fn()} />)
+    await vi.advanceTimersByTimeAsync(5000)
+
+    expect(await screen.findByText(/수집 중/)).toBeInTheDocument()
+  })
+
   it('폴링 중 네트워크 오류가 발생하면 에러와 재시도 버튼을 보여주고 폴링을 멈춘다', async () => {
     vi.spyOn(api, 'requestCrawl').mockResolvedValue({ keyword: '흘로망', status: 'queued' })
     const fetchStatusSpy = vi.spyOn(api, 'fetchCrawlStatus')
