@@ -1,32 +1,68 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { askRag, AVAILABLE_SOURCES } from '../api.js'
+import { submitRagRequest, fetchRagStatus, AVAILABLE_SOURCES } from '../api.js'
 import SourceFilter from './SourceFilter.jsx'
+
+const POLL_INTERVAL_MS = 3000
 
 export default function RagPanel({ keyword }) {
   const [selectedSources, setSelectedSources] = useState([...AVAILABLE_SOURCES])
   const [question, setQuestion] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [status, setStatus] = useState(null)
   const [error, setError] = useState(null)
   const [answer, setAnswer] = useState(null)
   const [sources, setSources] = useState([])
+  const timerRef = useRef(null)
+  const cancelledRef = useRef(false)
+
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true
+      clearInterval(timerRef.current)
+    }
+  }, [])
+
+  function startPolling(jobId) {
+    clearInterval(timerRef.current)
+    timerRef.current = setInterval(async () => {
+      try {
+        const data = await fetchRagStatus(jobId)
+        if (cancelledRef.current) return
+        setStatus(data.status)
+        if (data.status === 'done') {
+          clearInterval(timerRef.current)
+          setAnswer(data.answer)
+          setSources(data.sources || [])
+        } else if (data.status === 'failed') {
+          clearInterval(timerRef.current)
+          setError(data.error)
+        }
+      } catch (e) {
+        if (cancelledRef.current) return
+        clearInterval(timerRef.current)
+        setError(e.message || '네트워크 오류가 발생했습니다')
+      }
+    }, POLL_INTERVAL_MS)
+  }
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (!question.trim()) return
-    setLoading(true)
+    cancelledRef.current = false
+    setStatus('queued')
     setError(null)
     setAnswer(null)
+    setSources([])
     try {
-      const data = await askRag(keyword, question, selectedSources)
-      setAnswer(data.answer)
-      setSources(data.sources)
+      const data = await submitRagRequest(keyword, question, selectedSources)
+      if (cancelledRef.current) return
+      startPolling(data.job_id)
     } catch (e) {
-      setError(e.message)
-    } finally {
-      setLoading(false)
+      if (!cancelledRef.current) setError(e.message)
     }
   }
+
+  const loading = status === 'queued' || status === 'running'
 
   return (
     <div className="card">

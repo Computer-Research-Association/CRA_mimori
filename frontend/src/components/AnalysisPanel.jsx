@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { fetchTrend, analyzeKeyword } from '../api.js'
+import { fetchTrend, submitAnalyzeRequest, fetchAnalyzeStatus } from '../api.js'
 import TrendGauge from './TrendGauge.jsx'
+
+const POLL_INTERVAL_MS = 3000
 
 function TrendBadge({ trend }) {
   if (!trend) return null
@@ -16,53 +18,77 @@ function TrendBadge({ trend }) {
 }
 
 export default function AnalysisPanel({ keyword }) {
-  const [loading, setLoading] = useState(true)
+  const [status, setStatus] = useState('queued')
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
   const [sources, setSources] = useState([])
   const [trend, setTrend] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
+  const timerRef = useRef(null)
+  const cancelledRef = useRef(false)
+
+  function startPolling() {
+    timerRef.current = setInterval(async () => {
+      try {
+        const data = await fetchAnalyzeStatus(keyword)
+        if (cancelledRef.current) return
+        setStatus(data.status)
+        if (data.status === 'done') {
+          clearInterval(timerRef.current)
+          setResult(data.result)
+          setSources(data.sources || [])
+        } else if (data.status === 'failed') {
+          clearInterval(timerRef.current)
+          setError(data.error)
+        }
+      } catch (e) {
+        if (cancelledRef.current) return
+        clearInterval(timerRef.current)
+        setError(e.message || '네트워크 오류가 발생했습니다')
+      }
+    }, POLL_INTERVAL_MS)
+  }
 
   useEffect(() => {
-    let cancelled = false
-    setLoading(true)
+    cancelledRef.current = false
+    setStatus('queued')
     setError(null)
     setResult(null)
     setSources([])
     setTrend(null)
 
-    Promise.all([fetchTrend(keyword), analyzeKeyword(keyword)])
-      .then(([trendData, analysisData]) => {
-        if (cancelled) return
-        setTrend(trendData)
-        setResult(analysisData.result)
-        setSources(analysisData.sources || [])
+    fetchTrend(keyword).then((data) => {
+      if (!cancelledRef.current) setTrend(data)
+    })
+
+    submitAnalyzeRequest(keyword)
+      .then(() => {
+        if (!cancelledRef.current) startPolling()
       })
       .catch((e) => {
-        if (cancelled) return
-        setError(e.message)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (!cancelledRef.current) setError(e.message || '네트워크 오류가 발생했습니다')
       })
 
     return () => {
-      cancelled = true
+      cancelledRef.current = true
+      clearInterval(timerRef.current)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [keyword, retryCount])
 
-  if (loading) {
-    return (
-      <div className="card">
-        <p className="loading-line"><span className="spinner" aria-hidden="true" />분석 중...</p>
-      </div>
-    )
-  }
   if (error) {
     return (
       <div className="card card--error">
         <p role="alert" className="alert">{error}</p>
         <button className="btn btn--ghost" onClick={() => setRetryCount((c) => c + 1)}>다시 시도</button>
+      </div>
+    )
+  }
+
+  if (status !== 'done') {
+    return (
+      <div className="card">
+        <p className="loading-line"><span className="spinner" aria-hidden="true" />분석 중...</p>
       </div>
     )
   }
