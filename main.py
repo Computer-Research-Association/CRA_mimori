@@ -2,6 +2,7 @@ import sys
 import os
 import threading
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +37,11 @@ COMMUNITY_CRAWLERS = {
 CRAWLERS = {**COMMUNITY_CRAWLERS, "tavily": crawl, "duckduckgo": crawl_duckduckgo}
 
 KEYWORDS_PATH = os.path.join(BASE_DIR, "crawlers", "Keywords.md")
+
+# 소스 하나가 끝날 때마다 (키워드, 소스, 문서 수, 상태)로 호출되는 진행 콜백.
+# 무인 배치는 필요 없어서 None이 기본이고, 사람이 기다리는 온디맨드 크롤(rag_main)에서만
+# 넘긴다 — 20분 가까이 걸리는 동안 화면이 멈춘 것처럼 보이지 않게 하기 위함.
+ProgressCallback = Callable[[str, str, int, str], None] | None
 
 # 병렬 크롤 중 에러 로그가 다른 작업 로그와 섞여도 한 줄은 온전히 찍히게 한다.
 _PRINT_LOCK = threading.Lock()
@@ -84,7 +90,44 @@ def _crawl_tavily_with_fallback(keyword: str) -> dict[str, tuple[int, str]]:
     return updates
 
 
-def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
+def crawl_keyword(
+    keyword: str, on_source_done: ProgressCallback = None
+) -> dict[str, tuple[int, str]]:
+    """한 키워드만 크롤하는 진입점(RAG 온디맨드 수집 등). crawl_all()에 그대로 위임한다.
+
+    키워드가 하나면 flat-pool 최적화는 (1 × 소스 수) 풀과 동작이 같아서, 따로
+    구현하면 2단계 게이팅(커뮤니티 부족 → Tavily 보완) 로직만 두 벌이 된다.
+    그러다 한쪽만 바뀌면 배치와 온디맨드의 수집 기준이 조용히 갈라지므로 위임한다.
+
+    반환: {source: (count, status)}
+    """
+    return crawl_all([keyword], on_source_done=on_source_done)[keyword]
+
+
+def add_keyword_if_missing(keyword: str) -> bool:
+    """Keywords.md에 없는 키워드면 한 줄 추가한다. 추가했으면 True, 이미 있었으면 False.
+
+    온디맨드로 수집된 키워드를 다음 배치 크롤/트렌드 판정 대상에 편입시키기 위함
+    (issue #69). load_keywords()와 동일하게 줄 단위 strip 기준으로 중복을 비교한다.
+
+    파일이 개행 없이 끝나는 경우(에디터에 따라 흔함) 그냥 append하면 새 키워드가
+    마지막 줄에 그대로 붙어버려 두 키워드가 한 줄로 합쳐진다 — 실제로 겪은 문제라
+    append 전에 파일이 개행으로 끝나는지 확인해 필요하면 먼저 채워 넣는다.
+    """
+    if keyword in load_keywords():
+        return False
+    with open(KEYWORDS_PATH, "r", encoding="utf-8") as f:
+        content = f.read()
+    with open(KEYWORDS_PATH, "a", encoding="utf-8") as f:
+        if content and not content.endswith("\n"):
+            f.write("\n")
+        f.write(f"{keyword}\n")
+    return True
+
+
+def crawl_all(
+    keywords: list[str], on_source_done: ProgressCallback = None
+) -> dict[str, dict[str, tuple[int, str]]]:
     """크롤을 2단계로 나눠 돈다.
 
     1단계: 커뮤니티 크롤러(COMMUNITY_CRAWLERS)를 (키워드 × 소스) 전체가 하나의 평평한
@@ -95,6 +138,8 @@ def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
     2단계: 1단계 합계가 MIN_COMMUNITY_DOCS_FOR_TAVILY 미만인 키워드만 Tavily로
     보완한다(그 키워드들끼리도 평평한 풀에서 병렬 — Tavily/DuckDuckGo는 API·쿼터
     기반이라 동시 요청에 관대함). Tavily가 예외로 실패하면 DuckDuckGo까지 보완한다.
+
+    on_source_done을 주면 소스 하나가 끝날 때마다 호출한다(진행 표시용, ProgressCallback 참고).
 
     반환: {keyword: {source: (count, status)}}
     """
@@ -116,6 +161,8 @@ def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
             for future in as_completed(future_to_task):
                 kw, name = future_to_task[future]
                 results[kw][name] = future.result()  # _crawl_one 은 예외를 삼키므로 안전
+                if on_source_done is not None:
+                    on_source_done(kw, name, *results[kw][name])
 
     needs_tavily = [
         kw for kw in keywords
@@ -135,7 +182,11 @@ def crawl_all(keywords: list[str]) -> dict[str, dict[str, tuple[int, str]]]:
                 }
                 for future in as_completed(future_to_kw):
                     kw = future_to_kw[future]
-                    results[kw].update(future.result())
+                    updates = future.result()
+                    results[kw].update(updates)
+                    if on_source_done is not None:
+                        for name, (count, status) in updates.items():
+                            on_source_done(kw, name, count, status)
 
     return results
 
