@@ -177,7 +177,7 @@ def analyze(prompt: str, model: str = ANALYSIS_MODEL) -> str:
         api_key=NIM_KEY,
         temperature=1,
         top_p=0.95,
-        max_completion_tokens=16384,
+        max_completion_tokens=4096,
         timeout=6000
     )
 
