@@ -180,6 +180,8 @@ def crawl_request_endpoint():
                 "started_at": None,
                 "completed_at": None,
                 "error": None,
+                "stage": None,
+                "progress": {},
             }},
         )
         return jsonify({"keyword": keyword, "status": "queued"}), 202
@@ -203,10 +205,14 @@ def crawl_request_status(keyword):
     doc = get_collection(CRAWL_REQUESTS_COLLECTION).find_one({"_id": keyword})
     if doc is None:
         return jsonify({"error": "요청 이력이 없습니다"}), 404
+    # stage/progress는 워커가 채우는 진행 표시용 필드다. 이 기능이 생기기 전에
+    # 들어온 요청 문서에는 없으므로 get으로 읽는다(없으면 프론트가 스피너만 보여준다).
     return jsonify({
         "keyword": doc["_id"],
         "status": doc["status"],
         "requested_at": doc["requested_at"].isoformat(),
         "completed_at": doc["completed_at"].isoformat() if doc["completed_at"] else None,
         "error": doc["error"],
+        "stage": doc.get("stage"),
+        "progress": doc.get("progress") or {},
     })
