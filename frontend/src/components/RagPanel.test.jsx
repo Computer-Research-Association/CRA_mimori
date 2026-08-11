@@ -1,4 +1,5 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import RagPanel from './RagPanel.jsx'
 import * as api from '../api.js'
@@ -69,5 +70,39 @@ describe('RagPanel', () => {
     await vi.advanceTimersByTimeAsync(3000)
 
     expect(await screen.findByText(/RAG 처리 실패했습니다/)).toBeInTheDocument()
+  })
+
+  it('기본적으로 모든 소스가 체크된 상태로 시작한다', () => {
+    render(<RagPanel keyword="야르" />)
+    for (const source of api.AVAILABLE_SOURCES) {
+      expect(screen.getByLabelText(source)).toBeChecked()
+    }
+  })
+
+  it('질문을 보내면 체크된 소스만 submitRagRequest에 전달된다', async () => {
+    const submitSpy = vi.spyOn(api, 'submitRagRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
+    vi.spyOn(api, 'fetchRagStatus').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
+
+    render(<RagPanel keyword="야르" />)
+
+    await userEvent.click(screen.getByLabelText('tavily'))  // tavily 체크 해제
+    fireEvent.change(screen.getByLabelText('질문'), { target: { value: '무슨 뜻이야?' } })
+    await userEvent.click(screen.getByRole('button', { name: '질문하기' }))
+
+    expect(submitSpy).toHaveBeenCalledWith(
+      '야르', '무슨 뜻이야?',
+      expect.not.arrayContaining(['tavily']),
+    )
+  })
+
+  it('모든 소스를 해제하면 질문하기 버튼이 비활성화된다', async () => {
+    render(<RagPanel keyword="야르" />)
+
+    for (const source of api.AVAILABLE_SOURCES) {
+      await userEvent.click(screen.getByLabelText(source))
+    }
+
+    expect(screen.getByRole('button', { name: '질문하기' })).toBeDisabled()
+    expect(screen.getByText('최소 하나의 출처를 선택하세요')).toBeInTheDocument()
   })
 })

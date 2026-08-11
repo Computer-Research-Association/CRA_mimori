@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { submitRagRequest, fetchRagStatus, AVAILABLE_SOURCES } from '../api.js'
 import SourceFilter from './SourceFilter.jsx'
@@ -15,7 +15,15 @@ export default function RagPanel({ keyword }) {
   const timerRef = useRef(null)
   const cancelledRef = useRef(false)
 
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true
+      clearInterval(timerRef.current)
+    }
+  }, [])
+
   function startPolling(jobId) {
+    clearInterval(timerRef.current)
     timerRef.current = setInterval(async () => {
       try {
         const data = await fetchRagStatus(jobId)
