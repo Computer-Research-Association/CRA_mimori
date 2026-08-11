@@ -16,10 +16,11 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from DB.mongo_client import get_collection
-from config.config_cilent import CRAWL_REQUESTS_COLLECTION
+from config.config_cilent import CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION
 from main import crawl_all
 from preprocessing.pipeline import preprocess_documents
 from embedding.pipeline import embed_documents
+from scripts.heavy_job_lock import acquire_heavy_job_lock_blocking, release_heavy_job_lock
 
 
 def _mark(collection, keyword: str, status: str, error: str | None = None) -> None:
@@ -39,10 +40,12 @@ def _requeue_stale_running(collection, stale_after: timedelta = timedelta(hours=
     )
 
 
-def run_once(collection=None) -> None:
+def run_once(collection=None, llm_requests_collection=None) -> None:
     """큐에서 가장 오래된 queued 요청 하나를 처리. 없으면 즉시 반환."""
     if collection is None:
         collection = get_collection(CRAWL_REQUESTS_COLLECTION)
+    if llm_requests_collection is None:
+        llm_requests_collection = get_collection(LLM_REQUESTS_COLLECTION)
 
     _requeue_stale_running(collection)
 
@@ -58,11 +61,23 @@ def run_once(collection=None) -> None:
     try:
         crawl_all([keyword])
         preprocess_documents(keyword)
-        embed_result = embed_documents(keyword)
+
+        # crawl_all/preprocess_documents는 이미 끝낸 sunk cost라, 락을 못 잡아도
+        # 포기하지 않고 최대 10분까지 기다린다(짧게 한 번 시도하고 포기하는
+        # llm_request_worker와 다른 이유: 거긴 사전 작업이 없어 포기 비용이 0).
+        if not acquire_heavy_job_lock_blocking("crawl_request_worker"):
+            _mark(collection, keyword, "failed", error="임베딩 락 획득 시간 초과(다른 무거운 작업이 오래 실행 중)")
+            return
+        try:
+            embed_result = embed_documents(keyword)
+        finally:
+            release_heavy_job_lock("crawl_request_worker")
+
         if embed_result.get("documents", 0) == 0:
             _mark(collection, keyword, "failed", error="수집된 데이터가 없습니다 (모든 소스에서 관련 자료를 찾지 못했습니다)")
         else:
             _mark(collection, keyword, "done")
+            llm_requests_collection.delete_many({"keyword": keyword})
     except Exception as e:
         _mark(collection, keyword, "failed", error=str(e))
 
