@@ -1,13 +1,17 @@
 """
 routes.py
-웹사이트가 호출하는 HTTP API 엔드포인트. 기존 analysis/rag/trend 파이프라인
-함수를 그대로 재사용하고, 여기서는 HTTP 요청/응답 형태로 감싸는 역할만 한다.
+웹사이트가 호출하는 HTTP API 엔드포인트.
+
+analyze/rag는 더 이상 여기서 직접 계산하지 않는다 — llm_requests 컬렉션에
+큐잉/조회만 하고, 실제 임베딩+검색+LLM 호출은 scheduler의
+scripts/llm_request_worker.py가 처리한다(docs/superpowers/specs/2026-08-11-analyze-rag-async-perf-design.md).
 """
+import hashlib
 from datetime import datetime, timezone
+
 from flask import Blueprint, jsonify, request
 
 from analysis.pipeline import (
-    analyze,
     delete_keyword_permanently,
     hide_keyword,
     list_analyzable_keywords,
@@ -16,20 +20,8 @@ from analysis.pipeline import (
     unhide_keyword,
 )
 from DB.mongo_client import get_collection
-from config.config_cilent import CRAWL_REQUESTS_COLLECTION
-from analysis.query import build_search_query
-from analysis.rag_pipeline import (
-    build_facet_prompt,
-    build_rag_prompt,
-    clean_source_url,
-    default_facet_config,
-    encode_facets,
-    facet_search,
-    search_relevant_chunks,
-)
-from api.app import limited
-from embedding.encoder import encode_batch
-from trend.trend_service import format_trend_context, get_cached_trend
+from config.config_cilent import CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION
+from trend.trend_service import get_cached_trend
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -80,83 +72,109 @@ def trend(keyword):
     return jsonify(result)
 
 
-@bp.route("/analyze", methods=["POST"])
-@limited
-def analyze_endpoint():
+def _rag_job_id(keyword: str, question: str, sources: list[str] | None) -> str:
+    normalized_sources = ",".join(sorted(sources)) if sources else ""
+    raw = f"{keyword}|{question}|{normalized_sources}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+@bp.route("/analyze-request", methods=["POST"])
+def analyze_request_endpoint():
     data = request.get_json(silent=True) or {}
     keyword = (data.get("keyword") or "").strip()
     if not keyword:
         return jsonify({"error": "keyword가 필요합니다"}), 400
-
-    facet_config = default_facet_config(keyword)
-    facet_vectors = encode_facets(facet_config)
-    points, _ = facet_search(keyword, facet_config, facet_vectors=facet_vectors, is_relevant=True)
-    if not points:
+    if keyword not in list_analyzable_keywords():
         return jsonify({"error": f"'{keyword}' 데이터를 찾을 수 없습니다"}), 404
 
-    cached_trend = get_cached_trend(keyword)
-    if cached_trend:
-        try:
-            trend_info = format_trend_context(keyword, result=cached_trend)
-        except Exception:
-            trend_info = ""
-    else:
-        trend_info = ""
+    collection = get_collection(LLM_REQUESTS_COLLECTION)
+    existing = collection.find_one({"_id": keyword})
+    if existing and existing["status"] == "failed":
+        collection.update_one(
+            {"_id": keyword},
+            {"$set": {
+                "status": "queued", "requested_at": datetime.now(timezone.utc),
+                "started_at": None, "completed_at": None, "error": None, "result": None,
+            }},
+        )
+        return jsonify({"keyword": keyword, "status": "queued"}), 202
+    if existing:
+        return jsonify({"keyword": keyword, "status": existing["status"]}), 202
 
-    prompt = build_facet_prompt(keyword, points, trend_info=trend_info)
-    result = analyze(prompt)
-
-    sources = [
-        {
-            "title": point.payload.get("title") or "제목 없음",
-            "url": clean_source_url(point.payload.get("url")),
-        }
-        for point in points
-    ]
-    trend_response = {k: v for k, v in cached_trend.items() if k != "_id"} if cached_trend else None
-    return jsonify({"result": result, "sources": sources, "trend": trend_response})
+    collection.insert_one({
+        "_id": keyword, "kind": "analyze", "keyword": keyword,
+        "question": None, "sources": None,
+        "status": "queued", "requested_at": datetime.now(timezone.utc),
+        "started_at": None, "completed_at": None, "error": None, "result": None,
+    })
+    return jsonify({"keyword": keyword, "status": "queued"}), 202
 
 
-@bp.route("/rag", methods=["POST"])
-@limited
-def rag_endpoint():
+@bp.route("/analyze-request/<keyword>")
+def analyze_request_status(keyword):
+    doc = get_collection(LLM_REQUESTS_COLLECTION).find_one({"_id": keyword, "kind": "analyze"})
+    if doc is None:
+        return jsonify({"error": "요청 이력이 없습니다"}), 404
+    result = doc.get("result") or {}
+    return jsonify({
+        "keyword": doc["keyword"],
+        "status": doc["status"],
+        "result": result.get("result"),
+        "sources": result.get("sources"),
+        "trend": result.get("trend"),
+        "error": doc["error"],
+    })
+
+
+@bp.route("/rag-request", methods=["POST"])
+def rag_request_endpoint():
     data = request.get_json(silent=True) or {}
     keyword = (data.get("keyword") or "").strip()
     question = (data.get("question") or "").strip()
     if not keyword or not question:
         return jsonify({"error": "keyword와 question이 모두 필요합니다"}), 400
+    if keyword not in list_analyzable_keywords():
+        return jsonify({"error": f"'{keyword}' 데이터를 찾을 수 없습니다"}), 404
 
-    sources = data.get("sources")  # list[str] | None. 생략하면 전체 소스 검색(기존 동작과 동일)
+    sources = data.get("sources")  # list[str] | None
+    job_id = _rag_job_id(keyword, question, sources)
+    collection = get_collection(LLM_REQUESTS_COLLECTION)
+    existing = collection.find_one({"_id": job_id})
+    if existing and existing["status"] == "failed":
+        collection.update_one(
+            {"_id": job_id},
+            {"$set": {
+                "status": "queued", "requested_at": datetime.now(timezone.utc),
+                "started_at": None, "completed_at": None, "error": None, "result": None,
+            }},
+        )
+        return jsonify({"job_id": job_id, "status": "queued"}), 202
+    if existing:
+        return jsonify({"job_id": job_id, "status": existing["status"]}), 202
 
-    search_query = build_search_query(keyword, question)
-    dense_vecs, lexical_weights = encode_batch([search_query])
-    points = search_relevant_chunks(
-        keyword, dense_vecs[0], lexical_weights[0], sources=sources, is_relevant=True
-    )
-    if not points:
-        return jsonify({"error": f"'{keyword}'에 대한 검색 결과가 없습니다"}), 404
+    collection.insert_one({
+        "_id": job_id, "kind": "rag", "keyword": keyword,
+        "question": question, "sources": sources,
+        "status": "queued", "requested_at": datetime.now(timezone.utc),
+        "started_at": None, "completed_at": None, "error": None, "result": None,
+    })
+    return jsonify({"job_id": job_id, "status": "queued"}), 202
 
-    cached_trend = get_cached_trend(keyword)
-    if cached_trend:
-        try:
-            trend_info = format_trend_context(keyword, result=cached_trend)
-        except Exception:
-            trend_info = ""
-    else:
-        trend_info = ""
 
-    prompt = build_rag_prompt(keyword, question, points, trend_info=trend_info)
-    answer = analyze(prompt)
-
-    sources = [
-        {
-            "title": point.payload.get("title") or "제목 없음",
-            "url": clean_source_url(point.payload.get("url")),
-        }
-        for point in points
-    ]
-    trend_response = {k: v for k, v in cached_trend.items() if k != "_id"} if cached_trend else None
-    return jsonify({"answer": answer, "sources": sources, "trend": trend_response})
+@bp.route("/rag-request/<job_id>")
+def rag_request_status(job_id):
+    doc = get_collection(LLM_REQUESTS_COLLECTION).find_one({"_id": job_id, "kind": "rag"})
+    if doc is None:
+        return jsonify({"error": "요청 이력이 없습니다"}), 404
+    result = doc.get("result") or {}
+    return jsonify({
+        "job_id": doc["_id"],
+        "status": doc["status"],
+        "answer": result.get("answer"),
+        "sources": result.get("sources"),
+        "trend": result.get("trend"),
+        "error": doc["error"],
+    })
 
 
 @bp.route("/crawl-request", methods=["POST"])
