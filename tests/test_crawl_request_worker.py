@@ -51,11 +51,18 @@ class _FakeCollection:
 
 
 class _FakeLlmRequestsCollection:
-    def __init__(self):
+    def __init__(self, docs=None):
         self.deleted_filters = []
+        self._docs = {d["_id"]: d for d in (docs or [])}
 
     def delete_many(self, filter_):
         self.deleted_filters.append(filter_)
+        to_delete = [
+            _id for _id, doc in self._docs.items()
+            if all(doc.get(k) == v for k, v in filter_.items())
+        ]
+        for _id in to_delete:
+            del self._docs[_id]
 
 
 def test_큐가_비어있으면_아무것도_안한다():
@@ -93,7 +100,7 @@ def test_정상_처리시_done으로_바뀐다():
         worker.run_once(collection=collection, llm_requests_collection=fake_llm)
         assert calls == {"crawl": ["야르"], "preprocess": "야르", "embed": "야르"}, calls
         assert collection._docs["야르"]["status"] == "done", collection._docs["야르"]
-        assert fake_llm.deleted_filters == [{"keyword": "야르"}], fake_llm.deleted_filters
+        assert fake_llm.deleted_filters == [{"keyword": "야르", "status": "done"}], fake_llm.deleted_filters
     finally:
         worker.crawl_all, worker.preprocess_documents, worker.embed_documents = original_crawl, original_pre, original_embed
         worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock = original_lock, original_release
@@ -272,6 +279,38 @@ def test_예외_발생시_락_함수가_호출되지_않은_경우에도_안전�
     print("[OK] crawl_all 단계 예외는 락 시도 전에 걸러짐")
 
 
+def test_delete_many이_done_상태만_지우고_진행중인_요청은_보존한다():
+    """crawl_request_worker가 완료 후 llm_requests 캐시를 무효화할 때, 같은 keyword로
+    이미 캐시된(done) 결과만 지워야 한다. embed_documents가 문서 단위로
+    is_embedded를 켜는 도중 list_analyzable_keywords()가 그 keyword를 조기에
+    노출해 다른 클라이언트가 analyze/rag 요청을 새로 만들면, 그 요청(queued/running)
+    문서까지 delete_many가 지워버리면 폴링 중이던 클라이언트가 404를 받는
+    버그가 될 수 있다 — status: done 필터로 그걸 막는다."""
+    collection = _FakeCollection([
+        {"_id": "야르", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    fake_llm = _FakeLlmRequestsCollection([
+        {"_id": "docA", "keyword": "야르", "status": "done"},
+        {"_id": "docB", "keyword": "야르", "status": "running"},
+    ])
+    original_crawl, original_pre, original_embed = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
+    original_lock, original_release = worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock
+    worker.crawl_all = lambda kws: None
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
+    worker.acquire_heavy_job_lock_blocking = lambda owner: True
+    worker.release_heavy_job_lock = lambda owner: None
+    try:
+        worker.run_once(collection=collection, llm_requests_collection=fake_llm)
+        assert "docA" not in fake_llm._docs, "done 상태의 캐시 문서는 지워졌어야 함"
+        assert "docB" in fake_llm._docs, "running 상태의 진행 중인 요청은 보존됐어야 함"
+    finally:
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents = original_crawl, original_pre, original_embed
+        worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock = original_lock, original_release
+    print("[OK] delete_many는 done 상태만 지우고 진행 중인 요청은 보존함")
+
+
 if __name__ == "__main__":
     test_큐가_비어있으면_아무것도_안한다()
     test_정상_처리시_done으로_바뀐다()
@@ -282,4 +321,5 @@ if __name__ == "__main__":
     test_최근_running_요청은_requeue되지_않는다()
     test_임베딩_락을_못잡으면_failed로_기록되고_임베딩은_호출되지_않는다()
     test_예외_발생시_락_함수가_호출되지_않은_경우에도_안전하다()
+    test_delete_many이_done_상태만_지우고_진행중인_요청은_보존한다()
     print("\nALL PASS ✅")

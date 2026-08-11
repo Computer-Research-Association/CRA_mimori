@@ -77,7 +77,7 @@ def run_once(collection=None, llm_requests_collection=None) -> None:
             _mark(collection, keyword, "failed", error="수집된 데이터가 없습니다 (모든 소스에서 관련 자료를 찾지 못했습니다)")
         else:
             _mark(collection, keyword, "done")
-            llm_requests_collection.delete_many({"keyword": keyword})
+            llm_requests_collection.delete_many({"keyword": keyword, "status": "done"})
     except Exception as e:
         _mark(collection, keyword, "failed", error=str(e))
 
