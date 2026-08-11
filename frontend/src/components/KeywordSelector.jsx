@@ -15,8 +15,9 @@ export default function KeywordSelector({ keywords, onSelect, onNewKeyword }) {
   }
 
   return (
-    <form onSubmit={handleSubmit}>
+    <form className="form-row search-form" onSubmit={handleSubmit}>
       <input
+        className="input"
         list="keyword-options"
         aria-label="키워드 검색"
         value={value}
@@ -28,7 +29,7 @@ export default function KeywordSelector({ keywords, onSelect, onNewKeyword }) {
           <option key={kw} value={kw} />
         ))}
       </datalist>
-      <button type="submit">검색</button>
+      <button type="submit" className="btn btn--primary">검색</button>
     </form>
   )
 }

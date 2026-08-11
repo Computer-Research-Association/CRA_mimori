@@ -10,10 +10,10 @@ export default function SourceFilter({ selected, onChange }) {
   }
 
   return (
-    <fieldset>
+    <fieldset className="chip-group">
       <legend>출처 필터</legend>
       {AVAILABLE_SOURCES.map((source) => (
-        <label key={source}>
+        <label key={source} className="chip">
           <input
             type="checkbox"
             checked={selected.includes(source)}

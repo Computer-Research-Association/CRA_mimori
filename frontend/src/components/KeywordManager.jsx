@@ -62,50 +62,56 @@ export default function KeywordManager({ keywords, onHidden, onUnhidden, onDelet
 
   return (
     <div>
-      <button onClick={() => setOpen((o) => !o)}>
+      <button className="btn btn--ghost" onClick={() => setOpen((o) => !o)}>
         {open ? '키워드 관리 닫기' : '키워드 관리'}
       </button>
       {open && (
-        <div>
-          {error && <p role="alert">{error}</p>}
+        <div className="card manager-body">
+          {error && <p role="alert" className="alert">{error}</p>}
 
           <h3>검색 목록</h3>
           {keywords.length === 0 && <p>키워드가 없습니다</p>}
-          <ul>
+          <ul className="keyword-list">
             {keywords.map((kw) => (
               <li key={kw}>
-                {kw}{' '}
-                <button onClick={() => handleHide(kw)}>숨기기</button>
+                {kw}
+                <span className="keyword-list__actions">
+                  <button className="btn btn--sm btn--ghost" onClick={() => handleHide(kw)}>숨기기</button>
+                </span>
               </li>
             ))}
           </ul>
 
           <h3>숨긴 키워드</h3>
           {hiddenKeywords.length === 0 && <p>숨긴 키워드가 없습니다</p>}
-          <ul>
+          <ul className="keyword-list">
             {hiddenKeywords.map((kw) => (
               <li key={kw}>
-                {kw}{' '}
-                <button onClick={() => handleUnhide(kw)}>복구</button>{' '}
-                {confirmDelete === kw ? (
-                  <>
-                    <input
-                      aria-label={`${kw} 완전삭제 확인 입력`}
-                      value={confirmText}
-                      onChange={(e) => setConfirmText(e.target.value)}
-                      placeholder="확인을 위해 키워드를 그대로 입력"
-                    />
-                    <button
-                      disabled={confirmText !== kw}
-                      onClick={() => handleDeleteConfirmed(kw)}
-                    >
-                      완전삭제 확정
-                    </button>
-                    <button onClick={cancelDelete}>취소</button>
-                  </>
-                ) : (
-                  <button onClick={() => startDelete(kw)}>완전삭제</button>
-                )}
+                {kw}
+                <span className="keyword-list__actions">
+                  <button className="btn btn--sm btn--ghost" onClick={() => handleUnhide(kw)}>복구</button>
+                  {confirmDelete === kw ? (
+                    <>
+                      <input
+                        className="input"
+                        aria-label={`${kw} 완전삭제 확인 입력`}
+                        value={confirmText}
+                        onChange={(e) => setConfirmText(e.target.value)}
+                        placeholder="확인을 위해 키워드를 그대로 입력"
+                      />
+                      <button
+                        className="btn btn--sm btn--danger"
+                        disabled={confirmText !== kw}
+                        onClick={() => handleDeleteConfirmed(kw)}
+                      >
+                        완전삭제 확정
+                      </button>
+                      <button className="btn btn--sm btn--ghost" onClick={cancelDelete}>취소</button>
+                    </>
+                  ) : (
+                    <button className="btn btn--sm btn--danger" onClick={() => startDelete(kw)}>완전삭제</button>
+                  )}
+                </span>
               </li>
             ))}
           </ul>

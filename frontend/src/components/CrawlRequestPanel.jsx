@@ -60,12 +60,19 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
 
   if (error) {
     return (
-      <div>
-        <p>'{keyword}' 수집에 실패했습니다: {error}</p>
-        <button onClick={handleRetry}>다시 시도</button>
+      <div className="card card--error">
+        <p role="alert" className="alert">'{keyword}' 수집에 실패했습니다: {error}</p>
+        <button className="btn btn--ghost" onClick={handleRetry}>다시 시도</button>
       </div>
     )
   }
 
-  return <p>'{keyword}' 수집 중입니다... (보통 수십 분 소요, 잠시 기다려 주세요)</p>
+  return (
+    <div className="card">
+      <p className="loading-line">
+        <span className="spinner" aria-hidden="true" />
+        '{keyword}' 수집 중입니다... (보통 수십 분 소요, 잠시 기다려 주세요)
+      </p>
+    </div>
+  )
 }

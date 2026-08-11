@@ -53,28 +53,32 @@ export default function App() {
 
   return (
     <div>
-      <h1>mimori — 밈/신조어 검색</h1>
-      {keywordsError && <p role="alert">{keywordsError}</p>}
-      {keywordsLoaded || keywordsError ? (
-        <>
-          <KeywordSelector keywords={keywords} onSelect={handleSelect} onNewKeyword={handleNewKeyword} />
-          <KeywordManager
-            keywords={keywords}
-            onHidden={handleKeywordHidden}
-            onUnhidden={handleKeywordUnhidden}
-            onDeleted={handleKeywordDeleted}
-          />
-        </>
-      ) : (
-        <p>불러오는 중...</p>
-      )}
-      {pendingKeyword && <CrawlRequestPanel key={pendingKeyword} keyword={pendingKeyword} onDone={handleCrawlDone} />}
-      {selectedKeyword && (
-        <>
-          <AnalysisPanel key={`analysis-${selectedKeyword}`} keyword={selectedKeyword} />
-          <RagPanel key={`rag-${selectedKeyword}`} keyword={selectedKeyword} />
-        </>
-      )}
+      <header className="app-header">
+        <h1>mimori — 밈/신조어 검색</h1>
+      </header>
+      <main className="app-main">
+        {keywordsError && <p role="alert" className="alert">{keywordsError}</p>}
+        {keywordsLoaded || keywordsError ? (
+          <>
+            <KeywordSelector keywords={keywords} onSelect={handleSelect} onNewKeyword={handleNewKeyword} />
+            <KeywordManager
+              keywords={keywords}
+              onHidden={handleKeywordHidden}
+              onUnhidden={handleKeywordUnhidden}
+              onDeleted={handleKeywordDeleted}
+            />
+          </>
+        ) : (
+          <p className="loading-line"><span className="spinner" aria-hidden="true" />불러오는 중...</p>
+        )}
+        {pendingKeyword && <CrawlRequestPanel key={pendingKeyword} keyword={pendingKeyword} onDone={handleCrawlDone} />}
+        {selectedKeyword && (
+          <div className="result-grid">
+            <AnalysisPanel key={`analysis-${selectedKeyword}`} keyword={selectedKeyword} />
+            <RagPanel key={`rag-${selectedKeyword}`} keyword={selectedKeyword} />
+          </div>
+        )}
+      </main>
     </div>
   )
 }

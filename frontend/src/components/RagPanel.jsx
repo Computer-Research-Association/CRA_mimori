@@ -29,28 +29,29 @@ export default function RagPanel({ keyword }) {
   }
 
   return (
-    <div>
+    <div className="card">
       <SourceFilter selected={selectedSources} onChange={setSelectedSources} />
-      <form onSubmit={handleSubmit}>
-        <label htmlFor="rag-question">질문</label>
+      <form className="form-row" onSubmit={handleSubmit}>
+        <label htmlFor="rag-question" className="sr-only">질문</label>
         <input
           id="rag-question"
+          className="input"
           aria-label="질문"
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
           placeholder="더 궁금한 게 있으세요?"
         />
-        <button type="submit" disabled={loading || selectedSources.length === 0}>질문하기</button>
+        <button type="submit" className="btn btn--primary" disabled={loading || selectedSources.length === 0}>질문하기</button>
       </form>
-      {selectedSources.length === 0 && <p>최소 하나의 출처를 선택하세요</p>}
-      {loading && <p>답변 생성 중...</p>}
-      {error && <p role="alert">{error}</p>}
+      {selectedSources.length === 0 && <p className="loading-line">최소 하나의 출처를 선택하세요</p>}
+      {loading && <p className="loading-line"><span className="spinner" aria-hidden="true" />답변 생성 중...</p>}
+      {error && <p role="alert" className="alert">{error}</p>}
       {answer && (
         <div>
           <div className="markdown-body">
             <ReactMarkdown>{answer}</ReactMarkdown>
           </div>
-          <ul>
+          <ul className="source-list">
             {sources.map((s, i) => (
               <li key={i}>
                 <a href={s.url}>{s.title}</a>
