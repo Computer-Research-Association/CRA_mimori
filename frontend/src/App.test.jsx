@@ -38,7 +38,9 @@ describe('App', () => {
     await userEvent.type(input, '흘로망')
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
 
-    expect(await screen.findByText(/수집 중입니다/)).toBeInTheDocument()
+    // 큐에 들어갔지만 워커가 아직 안 집은 상태의 문구.
+    // (단계가 잡히면 '웹에서 자료 수집 중' 등으로 바뀐다 — CrawlRequestPanel.test.jsx 참고)
+    expect(await screen.findByText(/순서를 기다리는 중/)).toBeInTheDocument()
   })
 
   it('키워드 목록을 불러오지 못하면 에러 메시지를 보여준다', async () => {

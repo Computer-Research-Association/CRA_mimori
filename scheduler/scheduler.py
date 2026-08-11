@@ -152,10 +152,15 @@ scheduler.add_job(
     replace_existing=True,
 )
 
+# 사용자가 화면 앞에서 기다리는 큐라, 폴링 간격이 그대로 대기 시간에 얹힌다
+# (1분이면 최대 60초, 평균 30초를 아무 일도 안 하고 버렸다). 빈 틱 비용은
+# crawl_request_worker의 지연 임포트로 이미 낮아서 간격을 줄여도 부담이 없다.
+# 여러 요청이 몰려도 동시 실행은 max_instances 기본값 1이 계속 막아준다 —
+# 앞 작업이 안 끝났으면 다음 틱은 그냥 건너뛴다.
 scheduler.add_job(
     crawl_request_run,
     'interval',
-    minutes=1,
+    seconds=15,
     id='crawl_request_job',
     coalesce=True,
     misfire_grace_time=60,

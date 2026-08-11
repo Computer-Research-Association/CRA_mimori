@@ -13,6 +13,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import scripts.crawl_request_worker as worker
 
 
+def _apply_set(doc, changes):
+    """$set을 적용한다. 'progress.dcinside'처럼 점 표기 경로도 Mongo와 같게 중첩 반영한다
+    (진행 콜백이 필드 단위 $set을 쓰기 때문 — 통째로 덮어쓰면 스레드끼리 갱신을 잃는다)."""
+    for key, value in changes.items():
+        if "." not in key:
+            doc[key] = value
+            continue
+        head, _, tail = key.partition(".")
+        doc.setdefault(head, {})[tail] = value
+
+
 class _FakeCollection:
     """find_one_and_update와 update_one만 흉내낸다 (run_once가 쓰는 두 가지)."""
 
@@ -25,12 +36,12 @@ class _FakeCollection:
             return None
         candidates.sort(key=lambda d: d["requested_at"])
         doc = candidates[0]
-        doc.update(update["$set"])
+        _apply_set(doc, update["$set"])
         return doc
 
     def update_one(self, filter_, update):
         doc = self._docs[filter_["_id"]]
-        doc.update(update["$set"])
+        _apply_set(doc, update["$set"])
 
     def update_many(self, filter_, update):
         """단순한 $lt 비교 + 동등 비교만 지원 (run_once의 _requeue_stale_running이 쓰는 형태)."""
@@ -53,7 +64,7 @@ def test_큐가_비어있으면_아무것도_안한다():
     collection = _FakeCollection([])
     calls = []
     original = worker.crawl_all
-    worker.crawl_all = lambda kws: calls.append(kws)
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws)
     try:
         worker.run_once(collection=collection)
         assert calls == [], "큐가 비었는데 크롤링이 호출됨"
@@ -73,7 +84,7 @@ def test_정상_처리시_done으로_바뀐다():
         calls["embed"] = kw
         return {"documents": 1, "chunks": 3}
 
-    worker.crawl_all = lambda kws: calls.setdefault("crawl", kws)
+    worker.crawl_all = lambda kws, on_source_done=None: calls.setdefault("crawl", kws)
     worker.preprocess_documents = lambda kw: calls.setdefault("preprocess", kw)
     worker.embed_documents = fake_embed
     try:
@@ -93,7 +104,7 @@ def test_예외_발생시_failed와_에러메시지가_기록된다():
          "started_at": None, "completed_at": None, "error": None},
     ])
     original = worker.crawl_all
-    worker.crawl_all = lambda kws: (_ for _ in ()).throw(RuntimeError("크롤 실패 테스트"))
+    worker.crawl_all = lambda kws, on_source_done=None: (_ for _ in ()).throw(RuntimeError("크롤 실패 테스트"))
     try:
         worker.run_once(collection=collection)
         doc = collection._docs["쌰갈"]
@@ -113,7 +124,7 @@ def test_가장_오래된_큐_항목부터_처리한다():
     ])
     calls = []
     original_crawl, original_pre, original_embed = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
-    worker.crawl_all = lambda kws: calls.append(kws[0])
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws[0])
     worker.preprocess_documents = lambda kw: None
     worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
     try:
@@ -132,7 +143,7 @@ def test_임베딩_결과가_0건이면_failed로_기록된다():
          "started_at": None, "completed_at": None, "error": None},
     ])
     original_crawl, original_pre, original_embed = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
-    worker.crawl_all = lambda kws: None
+    worker.crawl_all = lambda kws, on_source_done=None: None
     worker.preprocess_documents = lambda kw: None
     worker.embed_documents = lambda kw: {"documents": 0, "chunks": 0, "failed": 0, "near_dup_skipped": 0}
     try:
@@ -159,7 +170,7 @@ def test_오래된_running_요청은_requeue되어_같은_실행에서_처리된
     ])
     calls = []
     original_crawl, original_pre, original_embed = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
-    worker.crawl_all = lambda kws: calls.append(kws[0])
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws[0])
     worker.preprocess_documents = lambda kw: None
     worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
     try:
@@ -184,7 +195,7 @@ def test_최근_running_요청은_requeue되지_않는다():
     ])
     calls = []
     original_crawl = worker.crawl_all
-    worker.crawl_all = lambda kws: calls.append(kws[0])
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws[0])
     try:
         worker.run_once(collection=collection)
         doc = collection._docs["진행중인요청"]
@@ -195,6 +206,144 @@ def test_최근_running_요청은_requeue되지_않는다():
     print("[OK] 최근 running은 requeue되지 않고 그대로 유지됨")
 
 
+def test_소스가_끝날_때마다_progress에_기록된다():
+    """사용자가 20분을 기다리는 동안 진행이 보이게 하는 부분 — 콜백이 실제로
+    crawl_requests 문서에 소스별 결과를 남기는지 확인한다."""
+    collection = _FakeCollection([
+        {"_id": "야르", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    originals = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
+
+    def fake_crawl(kws, on_source_done=None):
+        on_source_done(kws[0], "dcinside", 12, "ok")
+        on_source_done(kws[0], "youtube", 0, "실패(HTTPError)")
+
+    worker.crawl_all = fake_crawl
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 1, "chunks": 5}
+    try:
+        worker.run_once(collection=collection)
+        progress = collection._docs["야르"]["progress"]
+        assert progress["dcinside"] == {"count": 12, "status": "ok"}, progress
+        assert progress["youtube"] == {"count": 0, "status": "실패(HTTPError)"}, progress
+    finally:
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents = originals
+    print("[OK] 소스별 진행 상황이 progress에 기록됨")
+
+
+def test_단계가_crawl_preprocess_embed_순으로_기록된다():
+    collection = _FakeCollection([
+        {"_id": "쌰갈", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    originals = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
+    seen = []
+    worker.crawl_all = lambda kws, on_source_done=None: seen.append(collection._docs["쌰갈"]["stage"])
+    worker.preprocess_documents = lambda kw: seen.append(collection._docs["쌰갈"]["stage"])
+    def fake_embed(kw):
+        seen.append(collection._docs["쌰갈"]["stage"])
+        return {"documents": 1, "chunks": 1}
+    worker.embed_documents = fake_embed
+    try:
+        worker.run_once(collection=collection)
+        assert seen == ["crawl", "preprocess", "embed"], seen
+    finally:
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents = originals
+    print("[OK] 단계가 crawl→preprocess→embed 순으로 기록됨")
+
+
+def test_재처리시_이전_진행상황이_초기화된다():
+    """고아 회수/재시도로 다시 도는 요청에 지난 실행의 progress가 남아 있으면
+    한 번도 안 돈 소스가 '완료'로 보인다."""
+    collection = _FakeCollection([
+        {"_id": "고아된요청", "status": "running",
+         "requested_at": datetime(2026, 8, 10, 6, 0, tzinfo=timezone.utc),
+         "started_at": datetime.now(timezone.utc) - timedelta(hours=3),
+         "completed_at": None, "error": None,
+         "stage": "embed", "progress": {"dcinside": {"count": 99, "status": "ok"}}},
+    ])
+    originals = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
+    observed = {}
+    worker.crawl_all = lambda kws, on_source_done=None: observed.update(
+        progress=dict(collection._docs["고아된요청"]["progress"])
+    )
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
+    try:
+        worker.run_once(collection=collection)
+        assert observed["progress"] == {}, f"이전 실행의 진행 상황이 남아 있음: {observed}"
+    finally:
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents = originals
+    print("[OK] 재처리 시 progress가 초기화됨")
+
+
+def test_문서수가_기준_이상이면_Keywords_md에_편입된다():
+    """웹 경로(crawl-request 큐)도 rag_main.py의 온디맨드 CLI 경로와 동일하게
+    Keywords.md 자동 편입이 일어나야 한다 (issue #69) — 이전엔 이 워커만 빠져 있었다."""
+    collection = _FakeCollection([
+        {"_id": "야르", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    originals = worker.crawl_all, worker.preprocess_documents, worker.embed_documents, worker.add_keyword_if_missing
+    added = []
+    worker.crawl_all = lambda kws, on_source_done=None: None
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 3, "chunks": 5}
+    worker.add_keyword_if_missing = lambda kw: added.append(kw)
+    try:
+        worker.run_once(collection=collection)
+        assert added == ["야르"], f"기준(3건) 이상인데 Keywords.md 편입이 호출 안 됨: {added}"
+        assert collection._docs["야르"]["status"] == "done", collection._docs["야르"]
+    finally:
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents, worker.add_keyword_if_missing = originals
+    print("[OK] 문서 수가 기준 이상이면 Keywords.md에 편입됨")
+
+
+def test_문서수가_기준_미만이면_Keywords_md에_편입되지_않는다():
+    collection = _FakeCollection([
+        {"_id": "쌰갈", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    originals = worker.crawl_all, worker.preprocess_documents, worker.embed_documents, worker.add_keyword_if_missing
+    added = []
+    worker.crawl_all = lambda kws, on_source_done=None: None
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
+    worker.add_keyword_if_missing = lambda kw: added.append(kw)
+    try:
+        worker.run_once(collection=collection)
+        assert added == [], f"기준(3건) 미만인데 Keywords.md 편입이 호출됨: {added}"
+        assert collection._docs["쌰갈"]["status"] == "done", collection._docs["쌰갈"]
+    finally:
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents, worker.add_keyword_if_missing = originals
+    print("[OK] 문서 수가 기준 미만이면 Keywords.md 편입 안 됨")
+
+
+def test_진행상황_기록이_실패해도_수집은_계속된다():
+    """진행 표시는 부가 정보다. Mongo 쓰기 하나가 수십 분짜리 수집을 날리면 안 된다."""
+    class _FlakyCollection(_FakeCollection):
+        def update_one(self, filter_, update):
+            if any(k.startswith("progress.") for k in update["$set"]):
+                raise RuntimeError("진행 기록용 쓰기 실패")
+            super().update_one(filter_, update)
+
+    collection = _FlakyCollection([
+        {"_id": "야르", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    originals = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
+    worker.crawl_all = lambda kws, on_source_done=None: on_source_done(kws[0], "dcinside", 3, "ok")
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
+    try:
+        worker.run_once(collection=collection)
+        assert collection._docs["야르"]["status"] == "done", collection._docs["야르"]
+    finally:
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents = originals
+    print("[OK] 진행 기록 실패해도 수집은 done까지 진행")
+
+
 if __name__ == "__main__":
     test_큐가_비어있으면_아무것도_안한다()
     test_정상_처리시_done으로_바뀐다()
@@ -203,4 +352,10 @@ if __name__ == "__main__":
     test_임베딩_결과가_0건이면_failed로_기록된다()
     test_오래된_running_요청은_requeue되어_같은_실행에서_처리된다()
     test_최근_running_요청은_requeue되지_않는다()
+    test_소스가_끝날_때마다_progress에_기록된다()
+    test_단계가_crawl_preprocess_embed_순으로_기록된다()
+    test_재처리시_이전_진행상황이_초기화된다()
+    test_문서수가_기준_이상이면_Keywords_md에_편입된다()
+    test_문서수가_기준_미만이면_Keywords_md에_편입되지_않는다()
+    test_진행상황_기록이_실패해도_수집은_계속된다()
     print("\nALL PASS ✅")
