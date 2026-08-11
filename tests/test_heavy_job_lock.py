@@ -12,7 +12,6 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import scripts.heavy_job_lock as lock_module
 from scripts.heavy_job_lock import (
     acquire_heavy_job_lock,
     acquire_heavy_job_lock_blocking,
@@ -146,6 +145,40 @@ def test_blocking_획득은_타임아웃되면_False를_반환한다():
     print(f"[OK] blocking 획득 타임아웃 (elapsed={elapsed:.2f}s)")
 
 
+def test_naive_datetime_5분전_회수되지_않음():
+    """MongoDB에서 반환된 naive datetime에 대한 regression test.
+    locked_at이 naive datetime일 때도 TypeError 없이 제대로 처리되어야 함."""
+    collection = _FakeLocksCollection()
+    # pymongo는 기본적으로 naive datetime을 반환한다 (tzinfo=None)
+    # MongoDB는 UTC로 저장하고 naive UTC datetime을 반환한다
+    naive_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=5)
+    collection._docs["heavy_job_lock"] = {
+        "_id": "heavy_job_lock", "locked": True, "owner": "진행중워커",
+        "locked_at": naive_time,  # naive UTC datetime
+    }
+    # TypeError 없이 False를 반환해야 함 (20분 미만이므로 회수 불가)
+    assert acquire_heavy_job_lock("워커B", collection=collection) is False
+    print("[OK] naive datetime 5분전: 회수되지 않음 (TypeError 없음)")
+
+
+def test_naive_datetime_25분전_회수됨():
+    """MongoDB에서 반환된 naive datetime이 stale인 경우의 regression test.
+    locked_at이 naive datetime일 때도 stale 판정이 올바르게 되어야 함."""
+    collection = _FakeLocksCollection()
+    # pymongo는 기본적으로 naive datetime을 반환한다 (tzinfo=None)
+    # MongoDB는 UTC로 저장하고 naive UTC datetime을 반환한다
+    naive_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=25)
+    collection._docs["heavy_job_lock"] = {
+        "_id": "heavy_job_lock", "locked": True, "owner": "죽은워커",
+        "locked_at": naive_time,  # naive UTC datetime (20분 초과)
+    }
+    # TypeError 없이 True를 반환해야 함 (20분 초과이므로 stale, 회수 가능)
+    assert acquire_heavy_job_lock("워커B", collection=collection) is True
+    doc = collection._docs["heavy_job_lock"]
+    assert doc["owner"] == "워커B", "stale lock 회수 실패"
+    print("[OK] naive datetime 25분전: 회수됨 (TypeError 없음, stale 판정 올바름)")
+
+
 if __name__ == "__main__":
     test_처음_획득은_성공한다()
     test_이미_잠겨있으면_실패한다()
@@ -155,4 +188,6 @@ if __name__ == "__main__":
     test_20분_이내_락은_회수되지_않는다()
     test_blocking_획득은_풀릴때까지_기다렸다가_성공한다()
     test_blocking_획득은_타임아웃되면_False를_반환한다()
+    test_naive_datetime_5분전_회수되지_않음()
+    test_naive_datetime_25분전_회수됨()
     print("\nALL PASS")

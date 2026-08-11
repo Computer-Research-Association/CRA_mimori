@@ -38,12 +38,19 @@ def acquire_heavy_job_lock(owner: str, collection=None) -> bool:
 
     doc = collection.find_one({"_id": _LOCK_ID})
     now = datetime.now(timezone.utc)
-    stale = bool(doc["locked"] and doc["locked_at"] and (now - doc["locked_at"]) > _STALE_AFTER)
+
+    # MongoDB returns naive datetimes by default. Normalize to tz-aware for comparison.
+    locked_at = doc["locked_at"]
+    if locked_at is not None and locked_at.tzinfo is None:
+        locked_at = locked_at.replace(tzinfo=timezone.utc)
+
+    stale = bool(doc["locked"] and locked_at and (now - locked_at) > _STALE_AFTER)
     if doc["locked"] and not stale:
         return False
 
     # doc을 읽은 시점의 locked_at을 필터에 넣어, 그 사이 다른 프로세스가 먼저
     # 채갔으면(locked_at이 바뀌었으면) 이 update가 실패하게 한다(원자적 획득).
+    # 필터는 DB에 실제로 저장된 원본 값(doc["locked_at"])을 사용해야 매칭된다.
     result = collection.update_one(
         {"_id": _LOCK_ID, "locked_at": doc["locked_at"]},
         {"$set": {"locked": True, "owner": owner, "locked_at": now}},
