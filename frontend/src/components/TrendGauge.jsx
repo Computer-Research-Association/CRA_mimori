@@ -47,6 +47,7 @@ export default function TrendGauge({ trend }) {
           </span>
         ))}
       </div>
+      <p className="trend-gauge__caption">최근 언급량을 평소와 비교해 보여줘요</p>
     </div>
   )
 }

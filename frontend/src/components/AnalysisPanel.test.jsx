@@ -44,6 +44,16 @@ describe('AnalysisPanel', () => {
     expect(fetchStatusSpy.mock.calls.length).toBe(callsAfterDone)
   })
 
+  it('분석이 아직 done이 아니어도 트렌드는 먼저 보여준다', async () => {
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
+    vi.spyOn(api, 'fetchTrend').mockResolvedValue({ status: '유행 중', final_z: 1.2 })
+    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({ keyword: '야르', status: 'running' })
+
+    render(<AnalysisPanel keyword="야르" />)
+
+    expect(await screen.findByText(/트렌드: 유행 중/)).toBeInTheDocument()
+  })
+
   it('status가 failed면 에러와 재시도 버튼을 보여준다', async () => {
     vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)

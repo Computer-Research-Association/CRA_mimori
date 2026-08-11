@@ -2,8 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { fetchTrend, submitAnalyzeRequest, fetchAnalyzeStatus } from '../api.js'
 import TrendGauge from './TrendGauge.jsx'
+import LoadingStages from './LoadingStages.jsx'
+import SourceIcon from './SourceIcon.jsx'
+import { sourceMetaForUrl } from '../sourceMeta.js'
 
 const POLL_INTERVAL_MS = 3000
+
+const ANALYZE_LOADING_MESSAGES = [
+  '관련 커뮤니티 자료를 찾는 중...',
+  '반응과 사용 맥락을 정리하는 중...',
+  'AI가 분석을 작성하는 중...',
+]
 
 function TrendBadge({ trend }) {
   if (!trend) return null
@@ -85,29 +94,28 @@ export default function AnalysisPanel({ keyword }) {
     )
   }
 
-  if (status !== 'done') {
-    return (
-      <div className="card">
-        <p className="loading-line"><span className="spinner" aria-hidden="true" />분석 중...</p>
-      </div>
-    )
-  }
-
   return (
     <div className="card">
       <TrendBadge trend={trend} />
       <TrendGauge trend={trend} />
-      <div className="markdown-body">
-        <ReactMarkdown>{result}</ReactMarkdown>
-      </div>
-      {sources.length > 0 && (
-        <ul className="source-list">
-          {sources.map((s, i) => (
-            <li key={i}>
-              <a href={s.url}>{s.title}</a>
-            </li>
-          ))}
-        </ul>
+      {status !== 'done' ? (
+        <LoadingStages messages={ANALYZE_LOADING_MESSAGES} />
+      ) : (
+        <>
+          <div className="markdown-body">
+            <ReactMarkdown>{result}</ReactMarkdown>
+          </div>
+          {sources.length > 0 && (
+            <ul className="source-list">
+              {sources.map((s, i) => (
+                <li key={i}>
+                  <SourceIcon meta={sourceMetaForUrl(s.url)} />
+                  <a href={s.url}>{s.title}</a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   )

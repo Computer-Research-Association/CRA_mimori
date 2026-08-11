@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import RagPanel from './RagPanel.jsx'
 import * as api from '../api.js'
+import { sourceMetaFor } from '../sourceMeta.js'
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -12,13 +13,6 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.useRealTimers()
 })
-
-async function submitQuestion(user_input = '무슨 뜻이야?') {
-  const input = screen.getByLabelText('질문')
-  input.focus()
-  // jsdom에서 fireEvent 대신 직접 값 설정 + change 이벤트를 쓰지 않고,
-  // React Testing Library 관례대로 userEvent를 쓰고 싶다면 이 함수를 그렇게 바꿔도 된다.
-}
 
 describe('RagPanel', () => {
   it('질문을 제출하면 submitRagRequest를 호출한다', async () => {
@@ -72,10 +66,21 @@ describe('RagPanel', () => {
     expect(await screen.findByText(/RAG 처리 실패했습니다/)).toBeInTheDocument()
   })
 
+  it('예시 질문 칩을 클릭하면 해당 질문으로 바로 제출된다', async () => {
+    const submitSpy = vi.spyOn(api, 'submitRagRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
+    vi.spyOn(api, 'fetchRagStatus').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
+
+    render(<RagPanel keyword="야르" />)
+    screen.getByRole('button', { name: '왜 유행했나요?' }).click()
+
+    await waitFor(() => expect(submitSpy).toHaveBeenCalledWith('야르', '왜 유행했나요?', expect.any(Array)))
+    expect(screen.getByLabelText('질문')).toHaveValue('왜 유행했나요?')
+  })
+
   it('기본적으로 모든 소스가 체크된 상태로 시작한다', () => {
     render(<RagPanel keyword="야르" />)
     for (const source of api.AVAILABLE_SOURCES) {
-      expect(screen.getByLabelText(source)).toBeChecked()
+      expect(screen.getByLabelText(sourceMetaFor(source).label)).toBeChecked()
     }
   })
 
@@ -85,7 +90,7 @@ describe('RagPanel', () => {
 
     render(<RagPanel keyword="야르" />)
 
-    await userEvent.click(screen.getByLabelText('tavily'))  // tavily 체크 해제
+    await userEvent.click(screen.getByLabelText(sourceMetaFor('tavily').label))  // tavily 체크 해제
     fireEvent.change(screen.getByLabelText('질문'), { target: { value: '무슨 뜻이야?' } })
     await userEvent.click(screen.getByRole('button', { name: '질문하기' }))
 
@@ -99,7 +104,7 @@ describe('RagPanel', () => {
     render(<RagPanel keyword="야르" />)
 
     for (const source of api.AVAILABLE_SOURCES) {
-      await userEvent.click(screen.getByLabelText(source))
+      await userEvent.click(screen.getByLabelText(sourceMetaFor(source).label))
     }
 
     expect(screen.getByRole('button', { name: '질문하기' })).toBeDisabled()

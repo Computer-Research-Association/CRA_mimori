@@ -2,8 +2,23 @@ import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { submitRagRequest, fetchRagStatus, AVAILABLE_SOURCES } from '../api.js'
 import SourceFilter from './SourceFilter.jsx'
+import LoadingStages from './LoadingStages.jsx'
+import SourceIcon from './SourceIcon.jsx'
+import { sourceMetaForUrl } from '../sourceMeta.js'
 
 const POLL_INTERVAL_MS = 3000
+
+const EXAMPLE_QUESTIONS = [
+  '무슨 뜻이에요?',
+  '왜 유행했나요?',
+  '누가 주로 써요?',
+  '어떻게 사용하나요?',
+]
+
+const RAG_LOADING_MESSAGES = [
+  '관련 자료를 찾는 중...',
+  'AI가 답변을 작성하는 중...',
+]
 
 export default function RagPanel({ keyword }) {
   const [selectedSources, setSelectedSources] = useState([...AVAILABLE_SOURCES])
@@ -45,16 +60,14 @@ export default function RagPanel({ keyword }) {
     }, POLL_INTERVAL_MS)
   }
 
-  async function handleSubmit(e) {
-    e.preventDefault()
-    if (!question.trim()) return
+  async function submitQuestion(text) {
     cancelledRef.current = false
     setStatus('queued')
     setError(null)
     setAnswer(null)
     setSources([])
     try {
-      const data = await submitRagRequest(keyword, question, selectedSources)
+      const data = await submitRagRequest(keyword, text, selectedSources)
       if (cancelledRef.current) return
       startPolling(data.job_id)
     } catch (e) {
@@ -62,11 +75,37 @@ export default function RagPanel({ keyword }) {
     }
   }
 
+  function handleSubmit(e) {
+    e.preventDefault()
+    const trimmed = question.trim()
+    if (!trimmed) return
+    submitQuestion(trimmed)
+  }
+
+  function handleExampleClick(text) {
+    setQuestion(text)
+    submitQuestion(text)
+  }
+
   const loading = status === 'queued' || status === 'running'
 
   return (
     <div className="card">
       <SourceFilter selected={selectedSources} onChange={setSelectedSources} />
+      <div className="example-chips">
+        <span className="example-chips__label">예시:</span>
+        {EXAMPLE_QUESTIONS.map((q) => (
+          <button
+            key={q}
+            type="button"
+            className="chip chip--button"
+            onClick={() => handleExampleClick(q)}
+            disabled={loading || selectedSources.length === 0}
+          >
+            {q}
+          </button>
+        ))}
+      </div>
       <form className="form-row" onSubmit={handleSubmit}>
         <label htmlFor="rag-question" className="sr-only">질문</label>
         <input
@@ -80,7 +119,7 @@ export default function RagPanel({ keyword }) {
         <button type="submit" className="btn btn--primary" disabled={loading || selectedSources.length === 0}>질문하기</button>
       </form>
       {selectedSources.length === 0 && <p className="loading-line">최소 하나의 출처를 선택하세요</p>}
-      {loading && <p className="loading-line"><span className="spinner" aria-hidden="true" />답변 생성 중...</p>}
+      {loading && <LoadingStages messages={RAG_LOADING_MESSAGES} />}
       {error && <p role="alert" className="alert">{error}</p>}
       {answer && (
         <div>
@@ -90,6 +129,7 @@ export default function RagPanel({ keyword }) {
           <ul className="source-list">
             {sources.map((s, i) => (
               <li key={i}>
+                <SourceIcon meta={sourceMetaForUrl(s.url)} />
                 <a href={s.url}>{s.title}</a>
               </li>
             ))}

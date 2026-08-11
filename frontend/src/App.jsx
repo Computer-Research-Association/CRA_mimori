@@ -55,12 +55,28 @@ export default function App() {
     <div>
       <header className="app-header">
         <h1>mimori — 밈/신조어 검색</h1>
+        <p className="app-intro">궁금한 유행어나 신조어를 검색하면 AI가 뜻과 유행 이유를 분석해드려요.</p>
       </header>
       <main className="app-main">
         {keywordsError && <p role="alert" className="alert">{keywordsError}</p>}
         {keywordsLoaded || keywordsError ? (
           <>
             <KeywordSelector keywords={keywords} onSelect={handleSelect} onNewKeyword={handleNewKeyword} />
+            {keywords.length > 0 && !selectedKeyword && !pendingKeyword && (
+              <div className="example-chips">
+                <span className="example-chips__label">예시:</span>
+                {keywords.slice(0, 5).map((kw) => (
+                  <button
+                    key={kw}
+                    type="button"
+                    className="chip chip--button"
+                    onClick={() => handleSelect(kw)}
+                  >
+                    {kw}
+                  </button>
+                ))}
+              </div>
+            )}
             <KeywordManager
               keywords={keywords}
               onHidden={handleKeywordHidden}

@@ -15,6 +15,28 @@ describe('App', () => {
     expect(await screen.findByRole('combobox')).toBeInTheDocument()
   })
 
+  it('키워드 목록이 있으면 예시 키워드 칩을 보여준다', async () => {
+    vi.spyOn(api, 'fetchKeywords').mockResolvedValue(['야르', '쌰갈'])
+    render(<App />)
+    expect(await screen.findByRole('button', { name: '야르' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '쌰갈' })).toBeInTheDocument()
+  })
+
+  it('키워드를 선택하면 예시 키워드 칩이 사라진다', async () => {
+    vi.spyOn(api, 'fetchKeywords').mockResolvedValue(['야르'])
+    vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
+    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
+      keyword: '야르', status: 'done', result: '야르 분석 결과', sources: [], trend: null, error: null,
+    })
+
+    render(<App />)
+    await userEvent.click(await screen.findByRole('button', { name: '야르' }))
+
+    expect(await screen.findByText('야르 분석 결과', {}, { timeout: 4000 })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '야르' })).not.toBeInTheDocument()
+  }, 6000)
+
   it('기존 키워드를 검색하면 AnalysisPanel이 뜬다', async () => {
     vi.spyOn(api, 'fetchKeywords').mockResolvedValue(['야르'])
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
