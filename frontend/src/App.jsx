@@ -76,8 +76,7 @@ export default function App() {
         {selectedKeyword && (
           <div>
             <div className="keyword-hero">
-              <span className="eyebrow">검색 결과</span>
-              <h2 className="keyword-hero__title">{selectedKeyword}</h2>
+              <h2 className="keyword-hero__title">「{selectedKeyword}」</h2>
             </div>
             <div className="result-grid">
               <AnalysisPanel key={`analysis-${selectedKeyword}`} keyword={selectedKeyword} />

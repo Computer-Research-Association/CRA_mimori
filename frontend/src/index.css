@@ -1,5 +1,5 @@
 :root {
-  /* color — 순백 배경 + 딥네이비 잉크. 액센트는 하나뿐이고 CTA·상태(핫함) 배지에만 쓴다.
+  /* color — 순백 배경 + 딥네이비 잉크. 액센트는 하나뿐이고 CTA·"핫함" 상태에만 쓴다.
      나머지는 전부 회색조. */
   --c-bg: #ffffff;
   --c-surface: #ffffff;
@@ -17,14 +17,8 @@
   --c-danger: #a3271f;
   --c-danger-soft: #faeceb;
 
-  /* 회색조 램프 — 트렌드 강도처럼 "크기"를 나타낼 때 색상 대신 명도로 표현한다 */
   --gray-100: #f6f7f9;
   --gray-200: #e2e5ea;
-  --gray-300: #c9ced6;
-  --gray-400: #a8afb9;
-  --gray-500: #7c8493;
-  --gray-600: #4a5568;
-  --gray-700: #2d3542;
 
   /* spacing — 4px 그리드. 큰 값일수록 섹션을 밀어내 한 번에 하나에 집중시킨다 */
   --s-1: 4px;
@@ -59,9 +53,7 @@
   --tracking-snug: -0.01em;
 
   --r-xs: 4px;
-  --r-sm: 6px;
-  --r-md: 8px;
-  --r-pill: 999px;
+  --r-sm: 4px;
 
   --h-control: 40px;
 
@@ -95,22 +87,11 @@ body {
   background: var(--c-bg);
 }
 
-/* 문단 속 숫자는 기본(고비례) 자형, 표·배지·차트처럼 자릿수가 맞아야 하는
-   곳에서만 이 유틸리티로 tabular 자형을 켠다. 절대 섞이지 않는다. */
+/* 문단 속 숫자는 기본(고비례) 자형, 표처럼 자릿수가 맞아야 하는 곳에서만
+   이 유틸리티로 tabular 자형을 켠다. 절대 섞이지 않는다. */
 .num-tabular {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "lnum" 1;
-}
-
-/* 메타데이터용 작은 라벨 — 본문 위계와 구분되는 트래킹 넓은 대문자 */
-.eyebrow {
-  display: block;
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--c-text-subtle);
-  margin: 0 0 var(--s-2);
 }
 
 .app-header {
@@ -144,24 +125,6 @@ body {
 }
 
 /* --- primitives --- */
-
-.card {
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-md);
-  padding: var(--s-8);
-}
-
-.card--error {
-  border-color: var(--c-danger);
-}
-
-.card h3 {
-  margin: 0 0 var(--s-4);
-  font-size: var(--fs-lg);
-  font-weight: 700;
-  letter-spacing: var(--tracking-snug);
-}
 
 .btn {
   height: var(--h-control);
@@ -246,43 +209,14 @@ a:focus-visible {
   border-left: 3px solid var(--c-danger);
   background: var(--c-danger-soft);
   color: var(--c-danger);
-  border-radius: 0 var(--r-xs) var(--r-xs) 0;
   padding: var(--s-3) var(--s-4);
   font-size: var(--fs-sm);
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--s-1);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-pill);
-  padding: var(--s-1) var(--s-3);
-  font-size: var(--fs-xs);
-  font-weight: 600;
-  letter-spacing: var(--tracking-snug);
-  background: var(--c-surface-sunken);
-  color: var(--c-text-muted);
-}
-
-/* 액센트는 상태 배지 중에서도 "핫함"에만 쓴다 — 그 외 상태는 전부 회색조 */
-.badge--hot {
-  background: var(--c-accent-soft);
-  border-color: transparent;
-  color: var(--c-accent-hover);
-}
-
-.badge--muted,
-.badge--none {
-  background: var(--c-surface-sunken);
-  border-color: var(--c-border);
-  color: var(--c-text-muted);
 }
 
 .chip-group {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--s-2);
+  gap: var(--s-1) var(--s-4);
   border: none;
   margin: 0;
   padding: 0;
@@ -290,29 +224,42 @@ a:focus-visible {
 
 .chip-group legend {
   width: 100%;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--c-text-muted);
+  margin: 0 0 var(--s-2);
+  padding: 0;
 }
 
+/* 알약 배지 대신 각진 대괄호 태그 — 체크되면 잉크색으로 굵어진다 */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: var(--s-1);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-pill);
-  padding: var(--s-1) var(--s-3);
-  font-size: var(--fs-xs);
+  padding: var(--s-1) 0;
+  font-size: var(--fs-sm);
+  color: var(--c-text-subtle);
   cursor: pointer;
-  background: var(--c-surface);
-  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.chip::before {
+  content: "[";
+  color: var(--c-border-strong);
+}
+
+.chip::after {
+  content: "]";
+  color: var(--c-border-strong);
 }
 
 .chip:has(input:checked) {
-  background: var(--c-surface-sunken);
-  border-color: var(--c-border-strong);
   color: var(--c-text);
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .chip input {
+  width: 14px;
+  height: 14px;
   accent-color: var(--c-text);
 }
 
@@ -355,14 +302,15 @@ a:focus-visible {
   font-size: var(--fs-sm);
 }
 
+/* 출처 인용 — 알약 배지 대신 각진 대괄호 태그를 가로로 나열 */
 .source-list {
   list-style: none;
   margin: var(--s-6) 0 0;
-  padding-top: var(--s-6);
+  padding-top: var(--s-4);
   border-top: 1px solid var(--c-border);
   display: flex;
-  flex-direction: column;
-  gap: var(--s-2);
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-4);
 }
 
 .source-list li {
@@ -370,26 +318,35 @@ a:focus-visible {
 }
 
 .source-list a {
-  color: var(--c-text);
-  text-decoration: underline;
-  text-decoration-color: var(--c-border-strong);
-  text-underline-offset: 3px;
+  color: var(--c-text-muted);
+  text-decoration: none;
+}
+
+.source-list a::before {
+  content: "[";
+  color: var(--c-border-strong);
+}
+
+.source-list a::after {
+  content: "]";
+  color: var(--c-border-strong);
 }
 
 .source-list a:hover {
-  text-decoration-color: var(--c-text);
+  color: var(--c-text);
+  text-decoration: underline;
 }
 
 /* 온디맨드 수집 진행 상황 — 소스별로 몇 건 끝났는지. 수집이 수십 분 걸려서
    진행이 안 보이면 멈춘 것처럼 느껴지기 때문에 넣는다. */
 .progress-list {
   list-style: none;
-  margin: var(--s-6) 0 0;
-  padding-top: var(--s-6);
+  margin: var(--s-4) 0 0;
+  padding-top: var(--s-4);
   border-top: 1px solid var(--c-border);
   display: flex;
   flex-direction: column;
-  gap: var(--s-2);
+  gap: var(--s-1);
 }
 
 .progress-list li {
@@ -413,7 +370,6 @@ a:focus-visible {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--s-2);
 }
 
 .keyword-list li {
@@ -421,9 +377,8 @@ a:focus-visible {
   align-items: center;
   justify-content: space-between;
   gap: var(--s-2);
-  padding: var(--s-3);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-sm);
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--c-border);
   font-size: var(--fs-sm);
 }
 
@@ -439,17 +394,32 @@ a:focus-visible {
   border-top: 1px solid var(--c-border);
 }
 
+.manager-body h3 {
+  margin: 0 0 var(--s-4);
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  letter-spacing: var(--tracking-snug);
+}
+
+/* --- 결과 영역 — 카드 그리드가 아니라 표제어 항목이 이어지는 문서 흐름 --- */
+
 .result-grid {
   display: flex;
   flex-direction: column;
-  gap: var(--s-6);
+  gap: var(--s-8);
   align-items: stretch;
 }
 
-/* --- 키워드 히어로 — 검색 결과 위에 선택된 키워드를 크고 타이트하게 건다 --- */
+.entry {
+  min-width: 0;
+}
+
+/* --- 키워드 히어로 — 표제어를 인용 부호로 감싸고 밑줄 하나로 본문과 나눈다 --- */
 
 .keyword-hero {
   margin: 0 0 var(--s-6);
+  padding-bottom: var(--s-5);
+  border-bottom: 1px solid var(--c-border);
 }
 
 .keyword-hero__title {
@@ -461,58 +431,45 @@ a:focus-visible {
   color: var(--c-text);
 }
 
-/* --- trend stat — 파생 변화율(%) 같은 핵심 수치 하나를 크게 건다 --- */
+/* --- trend line — 게이지/배지 위젯 대신 평서문 한 줄로 상태를 말한다 --- */
 
-.trend-stat {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s-2);
-  flex-wrap: wrap;
+.trend-line {
   margin: 0 0 var(--s-5);
-}
-
-.trend-stat__value {
-  font-size: var(--fs-xl);
-  font-weight: 800;
-  letter-spacing: var(--tracking-snug);
-  color: var(--c-text);
-}
-
-.trend-stat__label {
-  font-size: var(--fs-sm);
+  font-size: var(--fs-md);
   color: var(--c-text-muted);
 }
 
-/* --- trend chart — 라이브러리 없는 SVG 라인차트. 회색조 + 잉크 라인, 액센트는 안 씀 --- */
+.trend-line__hot {
+  color: var(--c-accent-hover);
+}
+
+/* --- trend chart — 라이브러리 없는 SVG 라인. 잉크색 실선 하나뿐, 장식 없음 --- */
 
 .trend-chart {
   margin: 0 0 var(--s-6);
 }
 
 .trend-chart__label {
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: var(--fs-xs);
+  font-style: italic;
   color: var(--c-text-subtle);
-  margin: 0 0 var(--s-3);
+  margin: 0 0 var(--s-2);
 }
 
 .trend-chart__svg {
   display: block;
   width: 100%;
-  height: 88px;
+  height: 72px;
 }
 
 .trend-chart__area {
-  fill: var(--gray-100);
-  stroke: none;
+  fill: none;
 }
 
 .trend-chart__line {
   fill: none;
   stroke: var(--c-text);
-  stroke-width: 2;
+  stroke-width: 1.5;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
@@ -523,106 +480,6 @@ a:focus-visible {
   margin-top: var(--s-2);
   font-size: var(--fs-2xs);
   color: var(--c-text-subtle);
-}
-
-/* --- trend gauge — 회색조 램프로 강도를 표현하고, "핫함" 구간에만 액센트를 쓴다 --- */
-
-.trend-gauge {
-  margin: var(--s-3) 0 var(--s-6);
-}
-
-.trend-gauge__track {
-  position: relative;
-  display: flex;
-  height: 8px;
-  border-radius: var(--r-pill);
-  overflow: visible;
-}
-
-.trend-gauge__zone {
-  height: 100%;
-}
-
-.trend-gauge__zone:first-child {
-  border-top-left-radius: var(--r-pill);
-  border-bottom-left-radius: var(--r-pill);
-}
-
-.trend-gauge__zone:last-child {
-  border-top-right-radius: var(--r-pill);
-  border-bottom-right-radius: var(--r-pill);
-}
-
-.trend-gauge__zone--extinct {
-  background: var(--gray-200);
-}
-
-.trend-gauge__zone--down {
-  background: var(--gray-300);
-}
-
-.trend-gauge__zone--neutral {
-  background: var(--gray-400);
-}
-
-.trend-gauge__zone--up {
-  background: var(--gray-700);
-}
-
-.trend-gauge__zone--hot {
-  background: var(--c-accent);
-}
-
-.trend-gauge__marker {
-  position: absolute;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--c-surface);
-  border: 3px solid var(--c-text);
-}
-
-.trend-gauge__marker-value {
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  margin-bottom: var(--s-1);
-  white-space: nowrap;
-  font-size: var(--fs-2xs);
-  font-weight: 700;
-  color: var(--c-text);
-  background: var(--c-surface);
-  border: 1px solid var(--c-border);
-  border-radius: var(--r-xs);
-  padding: 1px var(--s-1);
-}
-
-.trend-gauge__labels {
-  display: flex;
-  justify-content: space-between;
-  margin-top: var(--s-2);
-  font-size: var(--fs-2xs);
-  color: var(--c-text-subtle);
-}
-
-.trend-gauge__label--extinct {
-  flex: 1;
-  text-align: left;
-}
-
-.trend-gauge__label--hot {
-  flex: 1;
-  text-align: right;
-}
-
-.trend-gauge__label--down,
-.trend-gauge__label--neutral,
-.trend-gauge__label--up {
-  flex: 2;
-  text-align: center;
 }
 
 /* --- desktop layout --- */
@@ -637,15 +494,9 @@ a:focus-visible {
     max-width: 480px;
   }
 
-  .keyword-list {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  }
-
   .result-grid {
     flex-direction: row;
     align-items: flex-start;
-    gap: var(--s-8);
   }
 
   .result-grid > :first-child {
@@ -658,6 +509,8 @@ a:focus-visible {
     min-width: 0;
     position: sticky;
     top: var(--s-6);
+    border-left: 1px solid var(--c-border);
+    padding-left: var(--s-8);
   }
 }
 

@@ -21,7 +21,7 @@ export function sourceLabel(source) {
   return SOURCE_LABELS[source] ?? source
 }
 
-// TrendGauge/TrendBadge와 동일한 기준(데이터 부족이면 숨김, z가 숫자가 아니면 숨김).
+// AnalysisPanel의 트렌드 표시와 동일한 기준(데이터 부족이면 숨김, z가 숫자가 아니면 숨김).
 export function usableZ(trend) {
   if (!trend || trend.status === '데이터 부족') return null
   const z = trend.final_z ?? trend.z_score
