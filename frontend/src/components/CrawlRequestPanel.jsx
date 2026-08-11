@@ -113,7 +113,7 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
           {sources.map(([source, result]) => (
             <li key={source}>
               <span className="progress-list__source">{SOURCE_LABELS[source] ?? source}</span>
-              <span className="progress-list__result">{sourceResult(result)}</span>
+              <span className="progress-list__result num-tabular">{sourceResult(result)}</span>
             </li>
           ))}
         </ul>
