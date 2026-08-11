@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from DB.mongo_client import get_collection
-from config.config_cilent import CRAWL_REQUESTS_COLLECTION
+from config.config_cilent import CRAWL_REQUESTS_COLLECTION, MIN_COMMUNITY_DOCS_FOR_TAVILY
 
 # main/preprocessing.pipeline/embedding.pipeline은 torch, FlagEmbedding, 크롤러 6개,
 # boto3(CloudWatch 로그스트림 3개)를 끌고 와 임포트만으로 몇 초가 든다. 이 스크립트는
@@ -24,6 +24,7 @@ from config.config_cilent import CRAWL_REQUESTS_COLLECTION
 # 그 비용을 매 틱 문다(실측: 하루 1440회 × 약 8초). 그래서 처리할 큐 항목이 실제로
 # 있을 때만 _load_pipeline()에서 지연 로드한다 — None이 그 "아직 안 불렀다" 신호다.
 crawl_all = None
+add_keyword_if_missing = None
 preprocess_documents = None
 embed_documents = None
 # perf_log도 같은 이유로 지연 로드한다 — logging_config를 거쳐 boto3/watchtower를 끌고 온다.
@@ -34,17 +35,18 @@ def _load_pipeline() -> None:
     """crawl_all/preprocess_documents/embed_documents를 지연 임포트해 모듈 전역에 바인딩한다.
 
     이미 로드됐거나(None이 아님) 테스트가 worker.crawl_all 등을 직접 패치해둔 경우엔
-    다시 임포트하지 않는다 — tests/test_crawl_request_worker.py가 이 세 이름을 monkeypatch로
+    다시 임포트하지 않는다 — tests/test_crawl_request_worker.py가 이 이름들을 monkeypatch로
     갈아끼우는 패턴을 그대로 지원하기 위함.
     """
-    global crawl_all, preprocess_documents, embed_documents, report_totals
+    global crawl_all, add_keyword_if_missing, preprocess_documents, embed_documents, report_totals
     if crawl_all is not None:
         return
-    from main import crawl_all as _crawl_all
+    from main import crawl_all as _crawl_all, add_keyword_if_missing as _add_keyword_if_missing
     from preprocessing.pipeline import preprocess_documents as _preprocess_documents
     from embedding.pipeline import embed_documents as _embed_documents
     from perf_log import report_totals as _report_totals
     crawl_all = _crawl_all
+    add_keyword_if_missing = _add_keyword_if_missing
     preprocess_documents = _preprocess_documents
     embed_documents = _embed_documents
     report_totals = _report_totals
@@ -135,6 +137,12 @@ def run_once(collection=None) -> None:
         if embed_result.get("documents", 0) == 0:
             _mark(collection, keyword, "failed", error="수집된 데이터가 없습니다 (모든 소스에서 관련 자료를 찾지 못했습니다)")
         else:
+            # Keywords.md에 넣는 순간 매일 배치 크롤·트렌드 판정 대상이 되고 빼는 경로는
+            # 없다. 오타나 일회성 질의가 영구히 Tavily/YouTube 쿼터를 갉아먹지 않도록,
+            # 배치에서 커뮤니티 수집이 '충분하다'고 보는 기준(MIN_COMMUNITY_DOCS_FOR_TAVILY)을
+            # 넘긴 키워드만 편입한다(issue #69 — rag_main.py의 온디맨드 CLI 경로와 동일 기준).
+            if embed_result.get("documents", 0) >= MIN_COMMUNITY_DOCS_FOR_TAVILY:
+                add_keyword_if_missing(keyword)
             _mark(collection, keyword, "done")
     except Exception as e:
         _mark(collection, keyword, "failed", error=str(e))

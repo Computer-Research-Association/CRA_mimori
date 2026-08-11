@@ -278,6 +278,48 @@ def test_재처리시_이전_진행상황이_초기화된다():
     print("[OK] 재처리 시 progress가 초기화됨")
 
 
+def test_문서수가_기준_이상이면_Keywords_md에_편입된다():
+    """웹 경로(crawl-request 큐)도 rag_main.py의 온디맨드 CLI 경로와 동일하게
+    Keywords.md 자동 편입이 일어나야 한다 (issue #69) — 이전엔 이 워커만 빠져 있었다."""
+    collection = _FakeCollection([
+        {"_id": "야르", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    originals = worker.crawl_all, worker.preprocess_documents, worker.embed_documents, worker.add_keyword_if_missing
+    added = []
+    worker.crawl_all = lambda kws, on_source_done=None: None
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 3, "chunks": 5}
+    worker.add_keyword_if_missing = lambda kw: added.append(kw)
+    try:
+        worker.run_once(collection=collection)
+        assert added == ["야르"], f"기준(3건) 이상인데 Keywords.md 편입이 호출 안 됨: {added}"
+        assert collection._docs["야르"]["status"] == "done", collection._docs["야르"]
+    finally:
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents, worker.add_keyword_if_missing = originals
+    print("[OK] 문서 수가 기준 이상이면 Keywords.md에 편입됨")
+
+
+def test_문서수가_기준_미만이면_Keywords_md에_편입되지_않는다():
+    collection = _FakeCollection([
+        {"_id": "쌰갈", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    originals = worker.crawl_all, worker.preprocess_documents, worker.embed_documents, worker.add_keyword_if_missing
+    added = []
+    worker.crawl_all = lambda kws, on_source_done=None: None
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
+    worker.add_keyword_if_missing = lambda kw: added.append(kw)
+    try:
+        worker.run_once(collection=collection)
+        assert added == [], f"기준(3건) 미만인데 Keywords.md 편입이 호출됨: {added}"
+        assert collection._docs["쌰갈"]["status"] == "done", collection._docs["쌰갈"]
+    finally:
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents, worker.add_keyword_if_missing = originals
+    print("[OK] 문서 수가 기준 미만이면 Keywords.md 편입 안 됨")
+
+
 def test_진행상황_기록이_실패해도_수집은_계속된다():
     """진행 표시는 부가 정보다. Mongo 쓰기 하나가 수십 분짜리 수집을 날리면 안 된다."""
     class _FlakyCollection(_FakeCollection):
@@ -313,5 +355,7 @@ if __name__ == "__main__":
     test_소스가_끝날_때마다_progress에_기록된다()
     test_단계가_crawl_preprocess_embed_순으로_기록된다()
     test_재처리시_이전_진행상황이_초기화된다()
+    test_문서수가_기준_이상이면_Keywords_md에_편입된다()
+    test_문서수가_기준_미만이면_Keywords_md에_편입되지_않는다()
     test_진행상황_기록이_실패해도_수집은_계속된다()
     print("\nALL PASS ✅")
