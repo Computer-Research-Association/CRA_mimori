@@ -85,6 +85,7 @@ export default function AnalysisPanel({ keyword }) {
       : null
   const zNote = typeof z === 'number' ? ` (z ${z >= 0 ? '+' : ''}${z.toFixed(2)})` : ''
   const trendLine = trend ? `트렌드: ${trend.status}.` : null
+  const loading = status === 'queued' || status === 'running'
 
   return (
     <div className="entry">
@@ -96,17 +97,22 @@ export default function AnalysisPanel({ keyword }) {
         </p>
       )}
       {primarySeries && <TrendChart points={primarySeries.points} label={primarySeries.label} />}
-      <div className="markdown-body">
-        <ReactMarkdown>{result}</ReactMarkdown>
-      </div>
-      {sources.length > 0 && (
-        <ul className="source-list">
-          {sources.map((s, i) => (
-            <li key={i}>
-              <a href={s.url}>{s.title}</a>
-            </li>
-          ))}
-        </ul>
+      {loading && <p className="loading-line"><span className="spinner" aria-hidden="true" />분석 중...</p>}
+      {result && (
+        <>
+          <div className="markdown-body">
+            <ReactMarkdown>{result}</ReactMarkdown>
+          </div>
+          {sources.length > 0 && (
+            <ul className="source-list">
+              {sources.map((s, i) => (
+                <li key={i}>
+                  <a href={s.url}>{s.title}</a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   )
