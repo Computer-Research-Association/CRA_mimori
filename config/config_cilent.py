@@ -18,6 +18,8 @@ CLEANED_COLLECTION = os.getenv("CLEANED_COLLECTION", "cleaned_memes")
 TREND_COLLECTION = "trend_scores"     # 트렌드 판정 결과 저장용 (키워드+날짜 단위)
 CRAWL_REQUESTS_COLLECTION = "crawl_requests"     # 새 키워드 온디맨드 수집 큐
 HIDDEN_KEYWORDS_COLLECTION = "hidden_keywords"   # 검색 목록에서 숨긴 키워드 (완전삭제 전 1단계)
+LOCKS_COLLECTION = "locks"                        # heavy_job_lock 등 프로세스 간 락
+LLM_REQUESTS_COLLECTION = "llm_requests"          # analyze/rag 비동기 큐 겸 결과 캐시
 
 # 검색 설정
 TAVILY_MAX_RESULTS = 20

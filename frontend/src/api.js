@@ -39,8 +39,8 @@ export async function fetchTrend(keyword) {
   return handleResponse(res)
 }
 
-export async function analyzeKeyword(keyword) {
-  const res = await safeFetch(`${BASE}/analyze`, {
+export async function submitAnalyzeRequest(keyword) {
+  const res = await safeFetch(`${BASE}/analyze-request`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyword }),
@@ -48,12 +48,22 @@ export async function analyzeKeyword(keyword) {
   return handleResponse(res)
 }
 
-export async function askRag(keyword, question, sources) {
-  const res = await safeFetch(`${BASE}/rag`, {
+export async function fetchAnalyzeStatus(keyword) {
+  const res = await safeFetch(`${BASE}/analyze-request/${keyword}`)
+  return handleResponse(res)
+}
+
+export async function submitRagRequest(keyword, question, sources) {
+  const res = await safeFetch(`${BASE}/rag-request`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ keyword, question, sources }),
   })
+  return handleResponse(res)
+}
+
+export async function fetchRagStatus(jobId) {
+  const res = await safeFetch(`${BASE}/rag-request/${jobId}`)
   return handleResponse(res)
 }
 

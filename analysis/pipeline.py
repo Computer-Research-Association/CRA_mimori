@@ -15,6 +15,7 @@ from config.config_cilent import (
     CLEANED_COLLECTION,
     CRAWL_REQUESTS_COLLECTION,
     HIDDEN_KEYWORDS_COLLECTION,
+    LLM_REQUESTS_COLLECTION,
     NIM_KEY,
     QDRANT_COLLECTION,
     TREND_COLLECTION,
@@ -73,6 +74,7 @@ def delete_keyword_permanently(keyword: str) -> None:
     get_collection(TREND_COLLECTION).delete_many({"keyword": keyword})
     get_collection(CRAWL_REQUESTS_COLLECTION).delete_one({"_id": keyword})
     get_collection(HIDDEN_KEYWORDS_COLLECTION).delete_one({"_id": keyword})
+    get_collection(LLM_REQUESTS_COLLECTION).delete_many({"keyword": keyword})
     client.delete(
         collection_name=QDRANT_COLLECTION,
         points_selector=models.Filter(
@@ -177,7 +179,7 @@ def analyze(prompt: str, model: str = ANALYSIS_MODEL) -> str:
         api_key=NIM_KEY,
         temperature=1,
         top_p=0.95,
-        max_completion_tokens=16384,
+        max_completion_tokens=4096,
         timeout=6000
     )
 

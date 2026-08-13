@@ -18,6 +18,7 @@ logger = get_logger("scheduler")
 MAIN_PY = os.path.join(BASE_DIR, "main.py")
 PREPROCESS_EMBED_PY = os.path.join(BASE_DIR, "preprocess_embed_main.py")
 CRAWL_REQUEST_WORKER_PY = os.path.join(BASE_DIR, "scripts", "crawl_request_worker.py")
+LLM_REQUEST_WORKER_PY = os.path.join(BASE_DIR, "scripts", "llm_request_worker.py")
 DB_PATH = os.path.join(SCHEDULER_DIR, "scheduler.db")
 STATUS_PATH = os.path.join(SCHEDULER_DIR, "status.txt")
 LAST_CRAWL_PATH = os.path.join(SCHEDULER_DIR, "last_crawl_at.txt")
@@ -70,10 +71,52 @@ def preprocess_embed_run():
 def crawl_request_run():
     """온디맨드 키워드 수집 큐를 1회 확인해서, 있으면 하나 처리한다.
     큐가 비어있으면 crawl_request_worker.py 자체가 조용히 종료하므로 여기서
-    성공 로그를 남기지 않는다(1분마다 빈 로그가 쌓이는 걸 피하려고) — 실패했을 때만 기록."""
+    성공 로그를 남기지 않는다(1분마다 빈 로그가 쌓이는 걸 피하려고) — 실패했을 때만 기록.
+
+    서브프로세스를 띄우기 전에 가벼운 Mongo 조회로 처리할 게 있는지부터 확인한다 —
+    crawl_request_worker.py는 embedding.pipeline(torch)을 모듈 최상단에서 임포트해
+    빈 틱마다 매번 띄우면 1분 간격 대비 임포트 비용 비중이 상당하다. import는
+    함수 안에서 해서 scheduler.py 자체를 무겁게 만들지 않는다.
+    running까지 포함하는 이유: crawl_request_worker.py의 _requeue_stale_running은
+    워커 프로세스 '안'에서 2시간 기준으로 도는데, queued만 보면 running에 멈춰있는
+    고아 문서가 있어도 워커가 다시는 안 뜨게 되어 그 회수 로직 자체가 영영 실행되지
+    않는다."""
+    from DB.mongo_client import get_collection
+    from config.config_cilent import CRAWL_REQUESTS_COLLECTION
+    has_work = get_collection(CRAWL_REQUESTS_COLLECTION).find_one(
+        {"status": {"$in": ["queued", "running"]}}
+    )
+    if has_work is None:
+        return
     result = subprocess.run([sys.executable, CRAWL_REQUEST_WORKER_PY])
     if result.returncode != 0:
         logger.error("온디맨드 수집 워커 실패 (code=%d)", result.returncode)
+
+
+def llm_request_run():
+    """analyze/rag 큐를 1회 확인해서, 있으면 하나 처리한다.
+    큐가 비어있으면 llm_request_worker.py 자체가 조용히 종료하므로 여기서
+    성공 로그를 남기지 않는다(5초마다 빈 로그가 쌓이는 걸 피하려고) — 실패했을 때만 기록.
+
+    서브프로세스를 띄우기 전에 가벼운 Mongo 조회로 처리할 게 있는지부터 확인한다 —
+    llm_request_worker.py는 analysis.pipeline(ollama, langchain_nvidia_ai_endpoints)과
+    embedding.encoder/analysis.rag_pipeline(torch, FlagEmbedding)을 모듈 최상단에서
+    임포트해 임포트만 수십 초가 걸린다. 5초 간격에 빈 틱마다 매번 띄우면
+    max_instances=1 특성상 워커가 백투백으로 돌며 CPU 코어 하나를 영구 점유하게 된다.
+    import는 함수 안에서 해서 scheduler.py 자체를 무겁게 만들지 않는다.
+    running까지 포함하는 이유: _requeue_stale_running은 워커 프로세스 '안'에서
+    도는데, 워커가 죽으면 running 문서만 남고 queued는 없을 수 있어 queued만 보면
+    그 요청이 영원히 회수되지 않는다."""
+    from DB.mongo_client import get_collection
+    from config.config_cilent import LLM_REQUESTS_COLLECTION
+    has_work = get_collection(LLM_REQUESTS_COLLECTION).find_one(
+        {"status": {"$in": ["queued", "running"]}}
+    )
+    if has_work is None:
+        return
+    result = subprocess.run([sys.executable, LLM_REQUEST_WORKER_PY])
+    if result.returncode != 0:
+        logger.error("analyze/rag 워커 실패 (code=%d)", result.returncode)
 
 
 CRAWL_HOUR = 2   # KST 02:00 — 크론(hour=2, minute=0)과 반드시 같은 값을 유지해야 함
@@ -164,6 +207,16 @@ scheduler.add_job(
     id='crawl_request_job',
     coalesce=True,
     misfire_grace_time=60,
+    replace_existing=True,
+)
+
+scheduler.add_job(
+    llm_request_run,
+    'interval',
+    seconds=5,
+    id='llm_request_job',
+    coalesce=True,
+    misfire_grace_time=30,
     replace_existing=True,
 )
 

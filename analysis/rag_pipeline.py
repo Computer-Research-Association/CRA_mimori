@@ -4,6 +4,7 @@ rag_pipeline.py
 그 청크를 근거로 LLM에 넘길 프롬프트를 조립한다.
 """
 
+import concurrent.futures
 import difflib
 import time
 from urllib.parse import parse_qs, unquote, urlparse
@@ -459,16 +460,24 @@ def facet_search(
         facet_vectors = encode_facets(facet_config)
 
     facet_order = list(facet_config.keys())
-    facet_points: dict[str, list[models.ScoredPoint]] = {}
-    for name in facet_order:
+
+    def _search_one_facet(name: str) -> tuple[str, list[models.ScoredPoint]]:
         cfg = facet_config[name]
         vecs = facet_vectors[name]
-        facet_points[name] = search_relevant_chunks(
+        points = search_relevant_chunks(
             keyword, vecs["dense"], vecs["sparse"],
             top_k=cfg["top_k"], sources=sources, is_relevant=is_relevant,
             min_length=cfg["min_length"], over_fetch_factor=cfg["over_fetch_factor"],
             min_dense_score=cfg["min_dense_score"], max_per_source=cfg["max_per_source"],
         )
+        return name, points
+
+    facet_points: dict[str, list[models.ScoredPoint]] = {}
+    # Qdrant 쿼리는 I/O bound라 스레드가 대기 중 GIL을 놓는다 — 4개를 동시에 보내면
+    # 순차 실행(4배 시간) 대신 가장 느린 facet 하나만큼의 시간으로 끝난다.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(facet_order)) as executor:
+        for name, points in executor.map(_search_one_facet, facet_order):
+            facet_points[name] = points
 
     merged_points, diagnostics = merge_facet_results(
         facet_points, facet_order,
