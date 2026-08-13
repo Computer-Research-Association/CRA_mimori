@@ -65,5 +65,19 @@ services:
       - api
     restart: unless-stopped
 
+  # 미리보기 전용 — 별도 git worktree(../CRA_mimori-preview)에서 원하는 브랜치를
+  # 체크아웃해 빌드한다. web(80, 안정판)은 건드리지 않고 8080에서 신규 버전만 확인.
+  # 셋업: git worktree add ../CRA_mimori-preview dev  (레포 루트에서 최초 1회)
+  # 갱신: git -C ../CRA_mimori-preview pull && docker compose build web-preview && docker compose up -d web-preview
+  web-preview:
+    build:
+      context: ../CRA_mimori-preview/frontend
+    container_name: mimori-web-preview
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
 volumes:
   mongo_data:
