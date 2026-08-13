@@ -54,8 +54,12 @@
 
   --r-xs: 4px;
   --r-sm: 4px;
+  --r-md: 8px;
+  --r-lg: 12px;
 
   --h-control: 40px;
+  --h-search-hero: 52px;
+  --h-topbar: 56px;
 
   --font-sans: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard Variable",
     Pretendard, "Segoe UI", "Noto Sans KR", "Malgun Gothic", sans-serif;
@@ -93,6 +97,240 @@ body {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum" 1, "lnum" 1;
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   HOME SCREEN — 전체 뷰포트 중앙 정렬 히어로
+   ───────────────────────────────────────────────────────────────────────── */
+
+.home-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--c-bg);
+  padding: var(--s-6);
+}
+
+.home-hero {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-4);
+  /* 시각적 무게중심을 살짝 위로 */
+  margin-bottom: 6vh;
+}
+
+.home-hero__wordmark {
+  font-size: clamp(2.5rem, 7vw, 3.5rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1;
+  color: var(--c-text);
+  user-select: none;
+}
+
+.home-hero__subtitle {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 400;
+  color: var(--c-text-muted);
+  letter-spacing: 0.01em;
+}
+
+.home-hero__alert {
+  width: 100%;
+}
+
+.home-hero__loading {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  color: var(--c-text-muted);
+  font-size: var(--fs-sm);
+  margin-top: var(--s-2);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   SEARCH FORM — 히어로(hero) / 상단 바(compact) 두 가지 변형
+   ───────────────────────────────────────────────────────────────────────── */
+
+.search-form {
+  width: 100%;
+}
+
+.search-form__inner {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-form__input {
+  width: 100%;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--c-border);
+  font-size: var(--fs-base);
+  font-family: var(--font-sans);
+  color: var(--c-text);
+  background: var(--c-surface);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.search-form__input::placeholder {
+  color: var(--c-text-subtle);
+}
+
+.search-form__input:focus {
+  border-color: var(--c-border-strong);
+  box-shadow: 0 0 0 3px rgba(6, 27, 49, 0.07);
+}
+
+.search-form__btn {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--c-text-muted);
+  transition: color 0.15s ease;
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
+  padding: 0 var(--s-4);
+}
+
+.search-form__btn:hover {
+  color: var(--c-text);
+}
+
+.search-form__btn:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: -2px;
+  border-radius: var(--r-lg);
+}
+
+/* Hero variant */
+.search-form--hero {
+  max-width: 600px;
+}
+
+.search-form--hero .search-form__input {
+  height: var(--h-search-hero);
+  padding: 0 var(--s-12) 0 var(--s-5);
+  font-size: var(--fs-md);
+  box-shadow: 0 2px 12px rgba(6, 27, 49, 0.08);
+}
+
+.search-form--hero .search-form__btn {
+  padding: 0 var(--s-5);
+}
+
+/* Compact variant (results topbar) */
+.search-form--compact {
+  max-width: 340px;
+}
+
+.search-form--compact .search-form__input {
+  height: 36px;
+  padding: 0 var(--s-10) 0 var(--s-4);
+  font-size: var(--fs-sm);
+  border-radius: var(--r-md);
+  background: var(--c-surface-sunken);
+  border-color: transparent;
+}
+
+.search-form--compact .search-form__input:focus {
+  background: var(--c-surface);
+  border-color: var(--c-border);
+  box-shadow: 0 0 0 2px rgba(6, 27, 49, 0.06);
+}
+
+.search-form--compact .search-form__btn {
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  padding: 0 var(--s-3);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   RESULTS SCREEN
+   ───────────────────────────────────────────────────────────────────────── */
+
+.results-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--c-bg);
+}
+
+/* Sticky topbar */
+.results-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  height: var(--h-topbar);
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--c-border);
+  display: flex;
+  align-items: center;
+  gap: var(--s-6);
+  padding: 0 var(--s-6);
+}
+
+.results-topbar__logo {
+  font-size: 1.375rem;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: var(--c-text);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: opacity 0.15s ease;
+}
+
+.results-topbar__logo:hover {
+  opacity: 0.7;
+}
+
+.results-topbar__logo:focus-visible {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 3px;
+  border-radius: var(--r-xs);
+}
+
+.results-topbar__search {
+  flex: 1;
+  max-width: 380px;
+}
+
+.results-topbar__actions {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* Results body */
+.results-body {
+  flex: 1;
+  max-width: 1120px;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--s-8) var(--s-6) var(--s-20);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-6);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   LEGACY — 헤더/메인 (이전 레이아웃과의 호환 보존)
+   ───────────────────────────────────────────────────────────────────────── */
 
 .app-header {
   max-width: 880px;
@@ -412,6 +650,8 @@ a:focus-visible {
 
 .entry {
   min-width: 0;
+  /* 카드 테두리 없음 — 깔끔한 여백만 */
+  padding: 0;
 }
 
 /* --- 키워드 히어로 — 표제어를 인용 부호로 감싸고 밑줄 하나로 본문과 나눈다 --- */
@@ -482,16 +722,17 @@ a:focus-visible {
   color: var(--c-text-subtle);
 }
 
-/* --- desktop layout --- */
+/* ─────────────────────────────────────────────────────────────────────────
+   DESKTOP LAYOUT
+   ───────────────────────────────────────────────────────────────────────── */
 
 @media (min-width: 960px) {
-  .app-header,
-  .app-main {
-    max-width: 1120px;
+  .results-topbar {
+    padding: 0 var(--s-10);
   }
 
-  .search-form {
-    max-width: 480px;
+  .results-body {
+    padding: var(--s-10) var(--s-10) var(--s-20);
   }
 
   .result-grid {
@@ -499,22 +740,32 @@ a:focus-visible {
     align-items: flex-start;
   }
 
+  /* Main content: wider left column */
   .result-grid > :first-child {
     flex: 1.6;
     min-width: 0;
   }
 
+  /* Sidebar: sticky right column — no card border, just left separator + padding */
   .result-grid > :last-child {
     flex: 1;
     min-width: 0;
     position: sticky;
-    top: var(--s-6);
+    top: calc(var(--h-topbar) + var(--s-6));
     border-left: 1px solid var(--c-border);
     padding-left: var(--s-8);
   }
 }
 
-/* --- markdown body --- */
+@media (min-width: 1200px) {
+  .results-topbar__search {
+    max-width: 440px;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   MARKDOWN BODY
+   ───────────────────────────────────────────────────────────────────────── */
 
 .markdown-body {
   line-height: var(--lh-body);
