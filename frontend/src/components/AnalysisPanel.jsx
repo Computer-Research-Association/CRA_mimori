@@ -1,19 +1,8 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { fetchTrend, analyzeKeyword } from '../api.js'
-import TrendGauge from './TrendGauge.jsx'
-
-function TrendBadge({ trend }) {
-  if (!trend) return null
-  if (trend.status === '데이터 부족') return <p className="badge badge--none">트렌드: 데이터 부족</p>
-  const z = trend.final_z ?? trend.z_score
-  return (
-    <p className="badge badge--hot">
-      트렌드: {trend.status}
-      {typeof z === 'number' && ` (z ${z >= 0 ? '+' : ''}${z.toFixed(2)})`}
-    </p>
-  )
-}
+import TrendChart from './TrendChart.jsx'
+import { pickPrimarySeries, computeChangeRate, trendDirectionLabel } from '../trendUtils.js'
 
 export default function AnalysisPanel({ keyword }) {
   const [loading, setLoading] = useState(true)
@@ -52,25 +41,38 @@ export default function AnalysisPanel({ keyword }) {
   }, [keyword, retryCount])
 
   if (loading) {
-    return (
-      <div className="card">
-        <p className="loading-line"><span className="spinner" aria-hidden="true" />분석 중...</p>
-      </div>
-    )
+    return <p className="loading-line"><span className="spinner" aria-hidden="true" />분석 중...</p>
   }
   if (error) {
     return (
-      <div className="card card--error">
+      <div>
         <p role="alert" className="alert">{error}</p>
         <button className="btn btn--ghost" onClick={() => setRetryCount((c) => c + 1)}>다시 시도</button>
       </div>
     )
   }
 
+  const z = trend?.final_z ?? trend?.z_score
+  const primarySeries = pickPrimarySeries(trend)
+  const changeRate = primarySeries ? computeChangeRate(primarySeries.points) : null
+  const changeSentence = typeof changeRate === 'number' && primarySeries
+    ? `최근 ${primarySeries.points.length}일간 ${primarySeries.label}가 평균보다 ${Math.abs(changeRate).toFixed(0)}% ${changeRate >= 0 ? '더 높다' : '더 낮다'}.`
+    : trendDirectionLabel({ z })
+      ? `${trendDirectionLabel({ z })}.`
+      : null
+  const zNote = typeof z === 'number' ? ` (z ${z >= 0 ? '+' : ''}${z.toFixed(2)})` : ''
+  const trendLine = trend ? `트렌드: ${trend.status}.` : null
+
   return (
-    <div className="card">
-      <TrendBadge trend={trend} />
-      <TrendGauge trend={trend} />
+    <div className="entry">
+      {trendLine && (
+        <p className="trend-line">
+          {trend.status === '핫함' ? <strong className="trend-line__hot">{trendLine}</strong> : trendLine}
+          {changeSentence && ` ${changeSentence}`}
+          {zNote}
+        </p>
+      )}
+      {primarySeries && <TrendChart points={primarySeries.points} label={primarySeries.label} />}
       <div className="markdown-body">
         <ReactMarkdown>{result}</ReactMarkdown>
       </div>

@@ -11,7 +11,7 @@ export default function SourceFilter({ selected, onChange }) {
 
   return (
     <fieldset className="chip-group">
-      <legend>출처 필터</legend>
+      <legend>출처 필터 — 체크된 곳의 문서만 답변에 쓰인다</legend>
       {AVAILABLE_SOURCES.map((source) => (
         <label key={source} className="chip">
           <input

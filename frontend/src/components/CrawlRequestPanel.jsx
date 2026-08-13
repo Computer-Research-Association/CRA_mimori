@@ -89,7 +89,7 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
 
   if (error) {
     return (
-      <div className="card card--error">
+      <div>
         <p role="alert" className="alert">'{keyword}' 수집에 실패했습니다: {error}</p>
         <button className="btn btn--ghost" onClick={handleRetry}>다시 시도</button>
       </div>
@@ -103,7 +103,7 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
   const sources = Object.entries(progress)
 
   return (
-    <div className="card">
+    <div>
       <p className="loading-line">
         <span className="spinner" aria-hidden="true" />
         '{keyword}' {headline}... (전체 수십 분 소요)
@@ -113,7 +113,7 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
           {sources.map(([source, result]) => (
             <li key={source}>
               <span className="progress-list__source">{SOURCE_LABELS[source] ?? source}</span>
-              <span className="progress-list__result">{sourceResult(result)}</span>
+              <span className="progress-list__result num-tabular">{sourceResult(result)}</span>
             </li>
           ))}
         </ul>

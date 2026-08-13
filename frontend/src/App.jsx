@@ -54,7 +54,8 @@ export default function App() {
   return (
     <div>
       <header className="app-header">
-        <h1>mimori — 밈/신조어 검색</h1>
+        <h1 className="app-title">mimori</h1>
+        <p className="app-subtitle">밈·신조어 검색</p>
       </header>
       <main className="app-main">
         {keywordsError && <p role="alert" className="alert">{keywordsError}</p>}
@@ -73,9 +74,14 @@ export default function App() {
         )}
         {pendingKeyword && <CrawlRequestPanel key={pendingKeyword} keyword={pendingKeyword} onDone={handleCrawlDone} />}
         {selectedKeyword && (
-          <div className="result-grid">
-            <AnalysisPanel key={`analysis-${selectedKeyword}`} keyword={selectedKeyword} />
-            <RagPanel key={`rag-${selectedKeyword}`} keyword={selectedKeyword} />
+          <div>
+            <div className="keyword-hero">
+              <h2 className="keyword-hero__title">「{selectedKeyword}」</h2>
+            </div>
+            <div className="result-grid">
+              <AnalysisPanel key={`analysis-${selectedKeyword}`} keyword={selectedKeyword} />
+              <RagPanel key={`rag-${selectedKeyword}`} keyword={selectedKeyword} />
+            </div>
           </div>
         )}
       </main>

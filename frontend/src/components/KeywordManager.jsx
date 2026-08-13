@@ -66,7 +66,7 @@ export default function KeywordManager({ keywords, onHidden, onUnhidden, onDelet
         {open ? '키워드 관리 닫기' : '키워드 관리'}
       </button>
       {open && (
-        <div className="card manager-body">
+        <div className="manager-body">
           {error && <p role="alert" className="alert">{error}</p>}
 
           <h3>검색 목록</h3>

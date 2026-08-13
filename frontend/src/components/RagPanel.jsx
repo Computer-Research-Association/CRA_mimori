@@ -29,7 +29,7 @@ export default function RagPanel({ keyword }) {
   }
 
   return (
-    <div className="card">
+    <div className="entry">
       <SourceFilter selected={selectedSources} onChange={setSelectedSources} />
       <form className="form-row" onSubmit={handleSubmit}>
         <label htmlFor="rag-question" className="sr-only">질문</label>
