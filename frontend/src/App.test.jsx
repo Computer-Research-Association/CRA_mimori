@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import App from './App.jsx'
 import * as api from './api.js'
+import { sourceMetaFor } from './sourceMeta.js'
 
 afterEach(() => {
   vi.restoreAllMocks()
@@ -22,12 +23,31 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '쌰갈' })).toBeInTheDocument()
   })
 
+  it('출처 선택 체크박스가 기본적으로 전부 켜진 상태로 뜬다', async () => {
+    vi.spyOn(api, 'fetchKeywords').mockResolvedValue(['야르'])
+    render(<App />)
+    for (const source of api.AVAILABLE_SOURCES) {
+      expect(await screen.findByLabelText(sourceMetaFor(source).label)).toBeChecked()
+    }
+  })
+
+  it('출처를 전부 해제하면 검색 버튼이 비활성화된다', async () => {
+    vi.spyOn(api, 'fetchKeywords').mockResolvedValue(['야르'])
+    render(<App />)
+    await screen.findByRole('combobox')
+    for (const source of api.AVAILABLE_SOURCES) {
+      await userEvent.click(screen.getByLabelText(sourceMetaFor(source).label))
+    }
+    expect(screen.getByRole('button', { name: '검색' })).toBeDisabled()
+    expect(screen.getByText('최소 하나의 출처를 선택하세요')).toBeInTheDocument()
+  })
+
   it('키워드를 선택하면 예시 키워드 칩이 사라진다', async () => {
     vi.spyOn(api, 'fetchKeywords').mockResolvedValue(['야르'])
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
-    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
-      keyword: '야르', status: 'done', result: '야르 분석 결과', sources: [], trend: null, error: null,
+      job_id: '잡아이디', status: 'done', result: '야르 분석 결과', sources: [], trend: null, error: null,
     })
 
     render(<App />)
@@ -37,12 +57,12 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: '야르' })).not.toBeInTheDocument()
   }, 6000)
 
-  it('기존 키워드를 검색하면 AnalysisPanel이 뜬다', async () => {
+  it('기존 키워드를 검색하면 선택된 출처와 함께 분석 요청을 보내고 결과를 보여준다', async () => {
     vi.spyOn(api, 'fetchKeywords').mockResolvedValue(['야르'])
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
-    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
+    const submitSpy = vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
-      keyword: '야르', status: 'done', result: '야르 분석 결과', sources: [], trend: null, error: null,
+      job_id: '잡아이디', status: 'done', result: '야르 분석 결과', sources: [], trend: null, error: null,
     })
 
     render(<App />)
@@ -51,6 +71,7 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
 
     expect(await screen.findByText('야르 분석 결과', {}, { timeout: 4000 })).toBeInTheDocument()
+    expect(submitSpy).toHaveBeenCalledWith('야르', api.AVAILABLE_SOURCES)
   }, 6000)
 
   it('없는 키워드를 검색하면 CrawlRequestPanel이 뜬다', async () => {
@@ -74,44 +95,30 @@ describe('App', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('네트워크 오류')
   })
 
-  it('키워드를 전환하면 이전 키워드의 RAG 답변이 더 이상 보이지 않는다', async () => {
+  it('키워드를 전환하면 이전 키워드의 분석 결과가 더 이상 보이지 않는다', async () => {
     vi.spyOn(api, 'fetchKeywords').mockResolvedValue(['야르', '쌰갈'])
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
     vi.spyOn(api, 'submitAnalyzeRequest').mockImplementation((keyword) =>
-      Promise.resolve({ keyword, status: 'queued' }),
-    )
-    vi.spyOn(api, 'fetchAnalyzeStatus').mockImplementation((keyword) =>
-      Promise.resolve({
-        keyword, status: 'done', result: `${keyword} 분석 결과`, sources: [], trend: null, error: null,
-      }),
-    )
-    vi.spyOn(api, 'submitRagRequest').mockImplementation((keyword) =>
       Promise.resolve({ job_id: `job-${keyword}`, status: 'queued' }),
     )
-    vi.spyOn(api, 'fetchRagStatus').mockImplementation((jobId) =>
+    vi.spyOn(api, 'fetchAnalyzeStatus').mockImplementation((jobId) =>
       Promise.resolve({
-        job_id: jobId, status: 'done', answer: `${jobId.replace('job-', '')} RAG 답변`, sources: [], trend: null, error: null,
+        job_id: jobId, status: 'done', result: `${jobId.replace('job-', '')} 분석 결과`, sources: [], trend: null, error: null,
       }),
     )
 
     render(<App />)
     const input = await screen.findByRole('combobox')
 
-    // 키워드 A(야르) 검색 후 질문
     await userEvent.type(input, '야르')
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
     expect(await screen.findByText('야르 분석 결과', {}, { timeout: 4000 })).toBeInTheDocument()
 
-    await userEvent.type(screen.getByRole('textbox', { name: '질문' }), '무슨 뜻이야?')
-    await userEvent.click(screen.getByRole('button', { name: '질문하기' }))
-    expect(await screen.findByText('야르 RAG 답변', {}, { timeout: 4000 })).toBeInTheDocument()
-
-    // 키워드 B(쌰갈)로 전환
     await userEvent.clear(input)
     await userEvent.type(input, '쌰갈')
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
 
     expect(await screen.findByText('쌰갈 분석 결과', {}, { timeout: 4000 })).toBeInTheDocument()
-    expect(screen.queryByText('야르 RAG 답변')).not.toBeInTheDocument()
-  }, 15000)
+    expect(screen.queryByText('야르 분석 결과')).not.toBeInTheDocument()
+  }, 10000)
 })

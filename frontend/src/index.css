@@ -388,13 +388,6 @@ body {
   border-top: 1px solid var(--c-border);
 }
 
-.result-grid {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s-5);
-  align-items: stretch;
-}
-
 /* --- trend gauge --- */
 
 .trend-gauge {
@@ -519,22 +512,6 @@ body {
     grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   }
 
-  .result-grid {
-    flex-direction: row;
-    align-items: flex-start;
-  }
-
-  .result-grid > :first-child {
-    flex: 1.6;
-    min-width: 0;
-  }
-
-  .result-grid > :last-child {
-    flex: 1;
-    min-width: 0;
-    position: sticky;
-    top: var(--s-6);
-  }
 }
 
 /* --- markdown body --- */

@@ -47,17 +47,9 @@ class _FakeCollection:
                 doc.update(update["$set"])
 
 
-def _analyze_doc(status="queued"):
+def _analyze_doc(status="queued", sources=None):
     return {
-        "_id": "야르", "kind": "analyze", "keyword": "야르", "question": None, "sources": None,
-        "status": status, "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
-        "started_at": None, "completed_at": None, "error": None, "result": None,
-    }
-
-
-def _rag_doc(status="queued"):
-    return {
-        "_id": "잡아이디123", "kind": "rag", "keyword": "야르", "question": "무슨 뜻이야?", "sources": ["tavily"],
+        "_id": "야르", "keyword": "야르", "sources": sources,
         "status": status, "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
         "started_at": None, "completed_at": None, "error": None, "result": None,
     }
@@ -88,7 +80,12 @@ def test_analyze_작업이_정상_처리되면_done으로_바뀐다():
     worker.default_facet_config = lambda keyword: {"의미": {"question": keyword}}
     worker.encode_facets = lambda facet_config: {"의미": {"dense": [], "sparse": {}}}
     fake_point = SimpleNamespace(payload={"text": "청크", "title": "제목", "url": "https://example.com"})
-    worker.facet_search = lambda keyword, facet_config, facet_vectors=None, is_relevant=None: ([fake_point], {})
+
+    def fake_facet_search(keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None):
+        calls["facet_search_sources"] = sources
+        return [fake_point], {}
+
+    worker.facet_search = fake_facet_search
     worker.get_cached_trend = lambda keyword: {"status": "유행 중"}
     worker.format_trend_context = lambda keyword, result=None: "트렌드요약"
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
@@ -103,6 +100,7 @@ def test_analyze_작업이_정상_처리되면_done으로_바뀐다():
         assert doc["result"]["sources"] == [{"title": "제목", "url": "https://example.com"}], doc
         assert calls["lock_acquired"] == "llm_request_worker", calls
         assert calls["lock_released"] == "llm_request_worker", calls
+        assert calls["facet_search_sources"] is None, "sources 생략 시 None이 그대로 전달돼야 함"
     finally:
         (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
          worker.default_facet_config, worker.encode_facets, worker.facet_search,
@@ -111,37 +109,37 @@ def test_analyze_작업이_정상_처리되면_done으로_바뀐다():
     print("[OK] analyze 작업 정상 처리 -> done + 락 획득/해제")
 
 
-def test_rag_작업이_정상_처리되면_done으로_바뀐다():
-    collection = _FakeCollection([_rag_doc()])
+def test_요청에_담긴_sources가_facet_search로_전달된다():
+    collection = _FakeCollection([_analyze_doc(sources=["tavily", "youtube"])])
+    calls = {}
     original = (
         worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
-        worker.build_search_query, worker.encode_batch, worker.search_relevant_chunks,
-        worker.get_cached_trend, worker.format_trend_context,
-        worker.build_rag_prompt, worker.analyze, worker.clean_source_url,
+        worker.default_facet_config, worker.encode_facets, worker.facet_search,
+        worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url,
     )
     worker.acquire_heavy_job_lock = lambda owner: True
     worker.release_heavy_job_lock = lambda owner: None
-    worker.build_search_query = lambda keyword, question: f"{keyword} {question}"
-    worker.encode_batch = lambda texts: ([[0.1, 0.2]], [{}])
+    worker.default_facet_config = lambda keyword: {"의미": {"question": keyword}}
+    worker.encode_facets = lambda facet_config: {"의미": {"dense": [], "sparse": {}}}
     fake_point = SimpleNamespace(payload={"text": "청크", "title": "제목", "url": "https://example.com"})
-    worker.search_relevant_chunks = lambda *a, **k: [fake_point]
+
+    def fake_facet_search(keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None):
+        calls["sources"] = sources
+        return [fake_point], {}
+
+    worker.facet_search = fake_facet_search
     worker.get_cached_trend = lambda keyword: None
-    worker.format_trend_context = lambda keyword, result=None: "이건호출안됨"
-    worker.build_rag_prompt = lambda keyword, question, points, trend_info=None: "프롬프트"
-    worker.analyze = lambda prompt: "RAG 답변"
+    worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
+    worker.analyze = lambda prompt: "결과"
     worker.clean_source_url = lambda url: url
     try:
         worker.run_once(collection=collection)
-        doc = collection._docs["잡아이디123"]
-        assert doc["status"] == "done", doc
-        assert doc["result"]["answer"] == "RAG 답변", doc
-        assert doc["result"]["trend"] is None, doc
+        assert calls["sources"] == ["tavily", "youtube"], calls
     finally:
         (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
-         worker.build_search_query, worker.encode_batch, worker.search_relevant_chunks,
-         worker.get_cached_trend, worker.format_trend_context,
-         worker.build_rag_prompt, worker.analyze, worker.clean_source_url) = original
-    print("[OK] rag 작업 정상 처리 -> done")
+         worker.default_facet_config, worker.encode_facets, worker.facet_search,
+         worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url) = original
+    print("[OK] 요청에 담긴 sources가 facet_search로 그대로 전달됨")
 
 
 def test_결과가_없으면_failed로_기록된다():
@@ -154,7 +152,7 @@ def test_결과가_없으면_failed로_기록된다():
     worker.release_heavy_job_lock = lambda owner: None
     worker.default_facet_config = lambda keyword: {}
     worker.encode_facets = lambda facet_config: {}
-    worker.facet_search = lambda keyword, facet_config, facet_vectors=None, is_relevant=None: ([], {})
+    worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: ([], {})
     try:
         worker.run_once(collection=collection)
         doc = collection._docs["야르"]
@@ -215,7 +213,7 @@ def test_오래된_running_요청은_requeue된다():
     worker.default_facet_config = lambda keyword: {"의미": {"question": keyword}}
     worker.encode_facets = lambda facet_config: {"의미": {"dense": [], "sparse": {}}}
     fake_point = SimpleNamespace(payload={"text": "청크", "title": "제목", "url": "https://example.com"})
-    worker.facet_search = lambda keyword, facet_config, facet_vectors=None, is_relevant=None: ([fake_point], {})
+    worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: ([fake_point], {})
     worker.get_cached_trend = lambda keyword: None
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
     worker.analyze = lambda prompt: "결과"
@@ -233,7 +231,7 @@ def test_오래된_running_요청은_requeue된다():
 if __name__ == "__main__":
     test_큐가_비어있으면_아무것도_안한다()
     test_analyze_작업이_정상_처리되면_done으로_바뀐다()
-    test_rag_작업이_정상_처리되면_done으로_바뀐다()
+    test_요청에_담긴_sources가_facet_search로_전달된다()
     test_결과가_없으면_failed로_기록된다()
     test_락을_못잡으면_다시_queued로_돌리고_반환한다()
     test_예외_발생시_failed와_에러메시지가_기록되고_락이_해제된다()

@@ -1,8 +1,8 @@
 """
 llm_request_worker.py
-llm_requests 큐에서 가장 오래된 queued 요청 하나를 집어서 analyze 또는 rag를
-처리한다. scheduler가 5초마다 이 스크립트를 서브프로세스로 실행한다(BGE-M3 등
-무거운 의존성을 프로세스 종료와 함께 OS가 회수하게 하려고 — crawl_request_worker와
+llm_requests 큐에서 가장 오래된 queued 요청 하나를 집어서 analyze를 처리한다.
+scheduler가 5초마다 이 스크립트를 서브프로세스로 실행한다(BGE-M3 등 무거운
+의존성을 프로세스 종료와 함께 OS가 회수하게 하려고 — crawl_request_worker와
 동일한 이유).
 
 크롤 워커와 BGE-M3를 동시에 메모리에 올리지 않도록 heavy_job_lock을 처리 구간
@@ -27,22 +27,19 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # 아래 임포트 순서는 우연이 아니다 — pymongo(DB.mongo_client/config.config_cilent)를
-# analysis.pipeline보다 먼저 최상위에서 임포트하면(둘 다 결국 같은 모듈을 로드하는데도)
-# 네이티브 라이브러리 초기화 순서가 꼬여 위와 같은 세그폴트가 재현된다. 반드시
-# analysis.pipeline/rag_pipeline/embedding.encoder를 먼저 임포트한 뒤에
-# DB.mongo_client/config.config_cilent를 임포트할 것.
+# analysis.pipeline/rag_pipeline보다 먼저 최상위에서 임포트하면(rag_pipeline이
+# encode_facets 안에서 지연 임포트하는 embedding.encoder가 결국 torch를 끌고 오는데,
+# 이게 pymongo보다 나중에 로드되면) 네이티브 라이브러리 초기화 순서가 꼬여 위와
+# 같은 세그폴트가 재현된다. 반드시 analysis.pipeline/rag_pipeline을 먼저 임포트한
+# 뒤에 DB.mongo_client/config.config_cilent를 임포트할 것.
 from analysis.pipeline import analyze
-from analysis.query import build_search_query
 from analysis.rag_pipeline import (
     build_facet_prompt,
-    build_rag_prompt,
     clean_source_url,
     default_facet_config,
     encode_facets,
     facet_search,
-    search_relevant_chunks,
 )
-from embedding.encoder import encode_batch
 from DB.mongo_client import get_collection
 from config.config_cilent import LLM_REQUESTS_COLLECTION
 from scripts.heavy_job_lock import acquire_heavy_job_lock, release_heavy_job_lock
@@ -89,9 +86,12 @@ def _trend_info(keyword: str) -> tuple[str, dict | None]:
 
 def _process_analyze(doc: dict) -> dict:
     keyword = doc["keyword"]
+    sources_filter = doc.get("sources")
     facet_config = default_facet_config(keyword)
     facet_vectors = encode_facets(facet_config)
-    points, _ = facet_search(keyword, facet_config, facet_vectors=facet_vectors, is_relevant=True)
+    points, _ = facet_search(
+        keyword, facet_config, facet_vectors=facet_vectors, sources=sources_filter, is_relevant=True
+    )
     if not points:
         raise ValueError(f"'{keyword}' 데이터를 찾을 수 없습니다")
 
@@ -104,30 +104,6 @@ def _process_analyze(doc: dict) -> dict:
         for p in points
     ]
     return {"result": result_text, "sources": sources, "trend": trend_response}
-
-
-def _process_rag(doc: dict) -> dict:
-    keyword = doc["keyword"]
-    question = doc["question"]
-    sources_filter = doc.get("sources")
-
-    search_query = build_search_query(keyword, question)
-    dense_vecs, lexical_weights = encode_batch([search_query])
-    points = search_relevant_chunks(
-        keyword, dense_vecs[0], lexical_weights[0], sources=sources_filter, is_relevant=True
-    )
-    if not points:
-        raise ValueError(f"'{keyword}'에 대한 검색 결과가 없습니다")
-
-    trend_info, trend_response = _trend_info(keyword)
-    prompt = build_rag_prompt(keyword, question, points, trend_info=trend_info)
-    answer = analyze(prompt)
-
-    sources = [
-        {"title": p.payload.get("title") or "제목 없음", "url": clean_source_url(p.payload.get("url"))}
-        for p in points
-    ]
-    return {"answer": answer, "sources": sources, "trend": trend_response}
 
 
 def run_once(collection=None) -> None:
@@ -151,10 +127,7 @@ def run_once(collection=None) -> None:
         return
 
     try:
-        if doc["kind"] == "analyze":
-            result = _process_analyze(doc)
-        else:
-            result = _process_rag(doc)
+        result = _process_analyze(doc)
         _mark_done(collection, job_id, result)
     except Exception as e:
         _mark_failed(collection, job_id, str(e))

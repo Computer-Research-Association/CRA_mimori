@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import api.app as app_module
 import api.routes as routes
 from api.app import create_app
+from api.routes import _analyze_job_id
 
 
 def _patch(target, name, value):
@@ -42,6 +43,17 @@ class _FakeCollection:
         self._docs[filter_["_id"]].update(update["$set"])
 
 
+def test_job_id는_keyword와_sources로_결정된다():
+    a = _analyze_job_id("야르", ["tavily", "youtube"])
+    b = _analyze_job_id("야르", ["youtube", "tavily"])  # 순서만 다름
+    c = _analyze_job_id("야르", ["tavily"])
+    d = _analyze_job_id("야르", None)
+    assert a == b, "sources 순서가 달라도 같은 job_id여야 함"
+    assert a != c, "출처 목록이 다르면 job_id도 달라야 함"
+    assert a != d, "출처 생략과 전체 지정은 다른 job_id여야 함"
+    print("[OK] job_id는 keyword+sources(순서 무관)로 결정됨")
+
+
 def test_keyword_없이_요청하면_400():
     app = create_app()
     client = app.test_client()
@@ -70,11 +82,14 @@ def test_신규_요청은_큐에_등록되고_202():
     try:
         app = create_app()
         client = app.test_client()
-        resp = client.post("/api/analyze-request", json={"keyword": "야르"})
+        resp = client.post("/api/analyze-request", json={"keyword": "야르", "sources": ["tavily", "youtube"]})
         assert resp.status_code == 202, resp.status_code
-        assert resp.get_json() == {"keyword": "야르", "status": "queued"}, resp.get_json()
-        doc = fake._docs["야르"]
-        assert doc["kind"] == "analyze", doc
+        body = resp.get_json()
+        assert body["status"] == "queued", body
+        job_id = body["job_id"]
+        doc = fake._docs[job_id]
+        assert doc["keyword"] == "야르", doc
+        assert doc["sources"] == ["tavily", "youtube"], doc
         assert doc["status"] == "queued", doc
         assert doc["result"] is None, doc
     finally:
@@ -83,9 +98,27 @@ def test_신규_요청은_큐에_등록되고_202():
     print("[OK] 신규 analyze 요청 -> 202 + 큐 등록")
 
 
+def test_출처가_다르면_다른_job으로_큐잉된다():
+    fake = _FakeCollection()
+    original_kw = _patch(routes, "list_analyzable_keywords", lambda: ["야르"])
+    original_get_collection = _patch(routes, "get_collection", lambda name: fake)
+    try:
+        app = create_app()
+        client = app.test_client()
+        resp_all = client.post("/api/analyze-request", json={"keyword": "야르"})
+        resp_narrow = client.post("/api/analyze-request", json={"keyword": "야르", "sources": ["tavily"]})
+        assert resp_all.get_json()["job_id"] != resp_narrow.get_json()["job_id"]
+        assert len(fake._docs) == 2, "출처가 다르면 별개 캐시 슬롯을 써야 함"
+    finally:
+        routes.list_analyzable_keywords = original_kw
+        routes.get_collection = original_get_collection
+    print("[OK] 출처가 다르면 캐시가 섞이지 않고 별도 job으로 처리됨")
+
+
 def test_이미_done이면_기존_상태를_그대로_반환한다():
+    job_id = _analyze_job_id("야르", None)
     fake = _FakeCollection([{
-        "_id": "야르", "kind": "analyze", "keyword": "야르", "question": None, "sources": None,
+        "_id": job_id, "keyword": "야르", "sources": None,
         "status": "done", "requested_at": datetime.now(timezone.utc),
         "started_at": datetime.now(timezone.utc), "completed_at": datetime.now(timezone.utc),
         "error": None, "result": {"result": "분석결과", "sources": [], "trend": None},
@@ -97,7 +130,7 @@ def test_이미_done이면_기존_상태를_그대로_반환한다():
         client = app.test_client()
         resp = client.post("/api/analyze-request", json={"keyword": "야르"})
         assert resp.status_code == 202, resp.status_code
-        assert resp.get_json() == {"keyword": "야르", "status": "done"}, resp.get_json()
+        assert resp.get_json() == {"job_id": job_id, "status": "done"}, resp.get_json()
         assert len(fake._docs) == 1, "새 문서를 또 만들면 안 됨(캐시 히트)"
     finally:
         routes.list_analyzable_keywords = original_kw
@@ -106,8 +139,9 @@ def test_이미_done이면_기존_상태를_그대로_반환한다():
 
 
 def test_failed_상태는_재요청시_queued로_리셋된다():
+    job_id = _analyze_job_id("야르", None)
     fake = _FakeCollection([{
-        "_id": "야르", "kind": "analyze", "keyword": "야르", "question": None, "sources": None,
+        "_id": job_id, "keyword": "야르", "sources": None,
         "status": "failed", "requested_at": datetime(2026, 8, 1, tzinfo=timezone.utc),
         "started_at": datetime(2026, 8, 1, tzinfo=timezone.utc), "completed_at": datetime(2026, 8, 1, tzinfo=timezone.utc),
         "error": "이전 실패", "result": None,
@@ -120,7 +154,7 @@ def test_failed_상태는_재요청시_queued로_리셋된다():
         resp = client.post("/api/analyze-request", json={"keyword": "야르"})
         assert resp.status_code == 202, resp.status_code
         assert resp.get_json()["status"] == "queued", resp.get_json()
-        assert fake._docs["야르"]["error"] is None, fake._docs["야르"]
+        assert fake._docs[job_id]["error"] is None, fake._docs[job_id]
     finally:
         routes.list_analyzable_keywords = original_kw
         routes.get_collection = original_get_collection
@@ -132,7 +166,7 @@ def test_GET_요청이력_없으면_404():
     try:
         app = create_app()
         client = app.test_client()
-        resp = client.get("/api/analyze-request/없는키워드")
+        resp = client.get("/api/analyze-request/없는job")
         assert resp.status_code == 404, resp.status_code
     finally:
         routes.get_collection = original_get_collection
@@ -140,8 +174,9 @@ def test_GET_요청이력_없으면_404():
 
 
 def test_GET_완료된_결과를_반환한다():
+    job_id = _analyze_job_id("야르", None)
     fake = _FakeCollection([{
-        "_id": "야르", "kind": "analyze", "keyword": "야르", "question": None, "sources": None,
+        "_id": job_id, "keyword": "야르", "sources": None,
         "status": "done", "requested_at": datetime.now(timezone.utc),
         "started_at": datetime.now(timezone.utc), "completed_at": datetime.now(timezone.utc),
         "error": None,
@@ -151,9 +186,11 @@ def test_GET_완료된_결과를_반환한다():
     try:
         app = create_app()
         client = app.test_client()
-        resp = client.get("/api/analyze-request/야르")
+        resp = client.get(f"/api/analyze-request/{job_id}")
         assert resp.status_code == 200, resp.status_code
         body = resp.get_json()
+        assert body["job_id"] == job_id, body
+        assert body["keyword"] == "야르", body
         assert body["status"] == "done", body
         assert body["result"] == "분석 결과 텍스트", body
         assert body["sources"] == [{"title": "제목", "url": "https://example.com"}], body
@@ -164,9 +201,11 @@ def test_GET_완료된_결과를_반환한다():
 
 
 if __name__ == "__main__":
+    test_job_id는_keyword와_sources로_결정된다()
     test_keyword_없이_요청하면_400()
     test_모르는_키워드는_404()
     test_신규_요청은_큐에_등록되고_202()
+    test_출처가_다르면_다른_job으로_큐잉된다()
     test_이미_done이면_기존_상태를_그대로_반환한다()
     test_failed_상태는_재요청시_queued로_리셋된다()
     test_GET_요청이력_없으면_404()

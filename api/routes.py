@@ -2,7 +2,7 @@
 routes.py
 웹사이트가 호출하는 HTTP API 엔드포인트.
 
-analyze/rag는 더 이상 여기서 직접 계산하지 않는다 — llm_requests 컬렉션에
+analyze는 더 이상 여기서 직접 계산하지 않는다 — llm_requests 컬렉션에
 큐잉/조회만 하고, 실제 임베딩+검색+LLM 호출은 scheduler의
 scripts/llm_request_worker.py가 처리한다(docs/superpowers/specs/2026-08-11-analyze-rag-async-perf-design.md).
 """
@@ -72,9 +72,11 @@ def trend(keyword):
     return jsonify(result)
 
 
-def _rag_job_id(keyword: str, question: str, sources: list[str] | None) -> str:
+def _analyze_job_id(keyword: str, sources: list[str] | None) -> str:
+    """분석 결과 캐시 키. sources가 다르면 다른 결과가 나오므로 키에 포함시켜서,
+    출처를 좁혀 재요청했을 때 예전(다른 출처) 캐시가 그대로 나오는 걸 막는다."""
     normalized_sources = ",".join(sorted(sources)) if sources else ""
-    raw = f"{keyword}|{question}|{normalized_sources}"
+    raw = f"{keyword}|{normalized_sources}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -87,57 +89,8 @@ def analyze_request_endpoint():
     if keyword not in list_analyzable_keywords():
         return jsonify({"error": f"'{keyword}' 데이터를 찾을 수 없습니다"}), 404
 
-    collection = get_collection(LLM_REQUESTS_COLLECTION)
-    existing = collection.find_one({"_id": keyword})
-    if existing and existing["status"] == "failed":
-        collection.update_one(
-            {"_id": keyword},
-            {"$set": {
-                "status": "queued", "requested_at": datetime.now(timezone.utc),
-                "started_at": None, "completed_at": None, "error": None, "result": None,
-            }},
-        )
-        return jsonify({"keyword": keyword, "status": "queued"}), 202
-    if existing:
-        return jsonify({"keyword": keyword, "status": existing["status"]}), 202
-
-    collection.insert_one({
-        "_id": keyword, "kind": "analyze", "keyword": keyword,
-        "question": None, "sources": None,
-        "status": "queued", "requested_at": datetime.now(timezone.utc),
-        "started_at": None, "completed_at": None, "error": None, "result": None,
-    })
-    return jsonify({"keyword": keyword, "status": "queued"}), 202
-
-
-@bp.route("/analyze-request/<keyword>")
-def analyze_request_status(keyword):
-    doc = get_collection(LLM_REQUESTS_COLLECTION).find_one({"_id": keyword, "kind": "analyze"})
-    if doc is None:
-        return jsonify({"error": "요청 이력이 없습니다"}), 404
-    result = doc.get("result") or {}
-    return jsonify({
-        "keyword": doc["keyword"],
-        "status": doc["status"],
-        "result": result.get("result"),
-        "sources": result.get("sources"),
-        "trend": result.get("trend"),
-        "error": doc["error"],
-    })
-
-
-@bp.route("/rag-request", methods=["POST"])
-def rag_request_endpoint():
-    data = request.get_json(silent=True) or {}
-    keyword = (data.get("keyword") or "").strip()
-    question = (data.get("question") or "").strip()
-    if not keyword or not question:
-        return jsonify({"error": "keyword와 question이 모두 필요합니다"}), 400
-    if keyword not in list_analyzable_keywords():
-        return jsonify({"error": f"'{keyword}' 데이터를 찾을 수 없습니다"}), 404
-
-    sources = data.get("sources")  # list[str] | None
-    job_id = _rag_job_id(keyword, question, sources)
+    sources = data.get("sources")  # list[str] | None. 생략하면 전체 소스 사용
+    job_id = _analyze_job_id(keyword, sources)
     collection = get_collection(LLM_REQUESTS_COLLECTION)
     existing = collection.find_one({"_id": job_id})
     if existing and existing["status"] == "failed":
@@ -153,24 +106,24 @@ def rag_request_endpoint():
         return jsonify({"job_id": job_id, "status": existing["status"]}), 202
 
     collection.insert_one({
-        "_id": job_id, "kind": "rag", "keyword": keyword,
-        "question": question, "sources": sources,
+        "_id": job_id, "keyword": keyword, "sources": sources,
         "status": "queued", "requested_at": datetime.now(timezone.utc),
         "started_at": None, "completed_at": None, "error": None, "result": None,
     })
     return jsonify({"job_id": job_id, "status": "queued"}), 202
 
 
-@bp.route("/rag-request/<job_id>")
-def rag_request_status(job_id):
-    doc = get_collection(LLM_REQUESTS_COLLECTION).find_one({"_id": job_id, "kind": "rag"})
+@bp.route("/analyze-request/<job_id>")
+def analyze_request_status(job_id):
+    doc = get_collection(LLM_REQUESTS_COLLECTION).find_one({"_id": job_id})
     if doc is None:
         return jsonify({"error": "요청 이력이 없습니다"}), 404
     result = doc.get("result") or {}
     return jsonify({
         "job_id": doc["_id"],
+        "keyword": doc["keyword"],
         "status": doc["status"],
-        "answer": result.get("answer"),
+        "result": result.get("result"),
         "sources": result.get("sources"),
         "trend": result.get("trend"),
         "error": doc["error"],

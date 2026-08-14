@@ -13,27 +13,27 @@ afterEach(() => {
 })
 
 describe('AnalysisPanel', () => {
-  it('마운트되면 submitAnalyzeRequest와 fetchTrend를 호출한다', async () => {
-    const submitSpy = vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
-    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({ keyword: '야르', status: 'queued' })
+  it('마운트되면 선택된 출처와 함께 submitAnalyzeRequest와 fetchTrend를 호출한다', async () => {
+    const submitSpy = vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
+    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
 
-    render(<AnalysisPanel keyword="야르" />)
+    render(<AnalysisPanel keyword="야르" selectedSources={['tavily', 'youtube']} />)
 
-    await waitFor(() => expect(submitSpy).toHaveBeenCalledWith('야르'))
+    await waitFor(() => expect(submitSpy).toHaveBeenCalledWith('야르', ['tavily', 'youtube']))
   })
 
   it('status가 done이 되면 결과와 출처를 렌더링하고 폴링을 멈춘다', async () => {
-    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue({ status: '유행 중', final_z: 1.2 })
     const fetchStatusSpy = vi.spyOn(api, 'fetchAnalyzeStatus')
-      .mockResolvedValueOnce({ keyword: '야르', status: 'running' })
+      .mockResolvedValueOnce({ job_id: '잡아이디', status: 'running' })
       .mockResolvedValueOnce({
-        keyword: '야르', status: 'done', result: '# 분석 결과',
+        job_id: '잡아이디', status: 'done', result: '# 분석 결과',
         sources: [{ title: '제목', url: 'https://example.com' }], trend: null, error: null,
       })
 
-    render(<AnalysisPanel keyword="야르" />)
+    render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
 
     await vi.advanceTimersByTimeAsync(3000)
     await vi.advanceTimersByTimeAsync(3000)
@@ -45,23 +45,23 @@ describe('AnalysisPanel', () => {
   })
 
   it('분석이 아직 done이 아니어도 트렌드는 먼저 보여준다', async () => {
-    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue({ status: '유행 중', final_z: 1.2 })
-    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({ keyword: '야르', status: 'running' })
+    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({ job_id: '잡아이디', status: 'running' })
 
-    render(<AnalysisPanel keyword="야르" />)
+    render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
 
     expect(await screen.findByText(/트렌드: 유행 중/)).toBeInTheDocument()
   })
 
   it('status가 failed면 에러와 재시도 버튼을 보여준다', async () => {
-    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
     vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
-      keyword: '야르', status: 'failed', error: '분석 실패했습니다', result: null, sources: null, trend: null,
+      job_id: '잡아이디', status: 'failed', error: '분석 실패했습니다', result: null, sources: null, trend: null,
     })
 
-    render(<AnalysisPanel keyword="야르" />)
+    render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
     await vi.advanceTimersByTimeAsync(3000)
 
     expect(await screen.findByText(/분석 실패했습니다/)).toBeInTheDocument()
@@ -69,13 +69,13 @@ describe('AnalysisPanel', () => {
   })
 
   it('재시도 버튼을 누르면 submitAnalyzeRequest를 다시 호출한다', async () => {
-    const submitSpy = vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ keyword: '야르', status: 'queued' })
+    const submitSpy = vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
     vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
-      keyword: '야르', status: 'failed', error: '분석 실패했습니다', result: null, sources: null, trend: null,
+      job_id: '잡아이디', status: 'failed', error: '분석 실패했습니다', result: null, sources: null, trend: null,
     })
 
-    render(<AnalysisPanel keyword="야르" />)
+    render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
     await vi.advanceTimersByTimeAsync(3000)
     await screen.findByText(/분석 실패했습니다/)
 

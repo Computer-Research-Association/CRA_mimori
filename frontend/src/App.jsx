@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
-import { fetchKeywords } from './api.js'
+import { fetchKeywords, AVAILABLE_SOURCES } from './api.js'
 import KeywordSelector from './components/KeywordSelector.jsx'
 import KeywordManager from './components/KeywordManager.jsx'
 import CrawlRequestPanel from './components/CrawlRequestPanel.jsx'
 import AnalysisPanel from './components/AnalysisPanel.jsx'
-import RagPanel from './components/RagPanel.jsx'
+import SourceFilter from './components/SourceFilter.jsx'
 
 export default function App() {
   const [keywords, setKeywords] = useState([])
@@ -12,6 +12,7 @@ export default function App() {
   const [keywordsError, setKeywordsError] = useState(null)
   const [selectedKeyword, setSelectedKeyword] = useState(null)
   const [pendingKeyword, setPendingKeyword] = useState(null)
+  const [selectedSources, setSelectedSources] = useState([...AVAILABLE_SOURCES])
 
   useEffect(() => {
     fetchKeywords()
@@ -61,7 +62,14 @@ export default function App() {
         {keywordsError && <p role="alert" className="alert">{keywordsError}</p>}
         {keywordsLoaded || keywordsError ? (
           <>
-            <KeywordSelector keywords={keywords} onSelect={handleSelect} onNewKeyword={handleNewKeyword} />
+            <KeywordSelector
+              keywords={keywords}
+              onSelect={handleSelect}
+              onNewKeyword={handleNewKeyword}
+              disabled={selectedSources.length === 0}
+            />
+            <SourceFilter selected={selectedSources} onChange={setSelectedSources} />
+            {selectedSources.length === 0 && <p className="loading-line">최소 하나의 출처를 선택하세요</p>}
             {keywords.length > 0 && !selectedKeyword && !pendingKeyword && (
               <div className="example-chips">
                 <span className="example-chips__label">예시:</span>
@@ -89,10 +97,11 @@ export default function App() {
         )}
         {pendingKeyword && <CrawlRequestPanel key={pendingKeyword} keyword={pendingKeyword} onDone={handleCrawlDone} />}
         {selectedKeyword && (
-          <div className="result-grid">
-            <AnalysisPanel key={`analysis-${selectedKeyword}`} keyword={selectedKeyword} />
-            <RagPanel key={`rag-${selectedKeyword}`} keyword={selectedKeyword} />
-          </div>
+          <AnalysisPanel
+            key={`analysis-${selectedKeyword}`}
+            keyword={selectedKeyword}
+            selectedSources={selectedSources}
+          />
         )}
       </main>
     </div>

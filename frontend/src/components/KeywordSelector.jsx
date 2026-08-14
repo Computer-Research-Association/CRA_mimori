@@ -1,10 +1,11 @@
 import { useState } from 'react'
 
-export default function KeywordSelector({ keywords, onSelect, onNewKeyword }) {
+export default function KeywordSelector({ keywords, onSelect, onNewKeyword, disabled = false }) {
   const [value, setValue] = useState('')
 
   function handleSubmit(e) {
     e.preventDefault()
+    if (disabled) return
     const trimmed = value.trim()
     if (!trimmed) return
     if (keywords.includes(trimmed)) {
@@ -29,7 +30,7 @@ export default function KeywordSelector({ keywords, onSelect, onNewKeyword }) {
           <option key={kw} value={kw} />
         ))}
       </datalist>
-      <button type="submit" className="btn btn--primary">검색</button>
+      <button type="submit" className="btn btn--primary" disabled={disabled}>검색</button>
     </form>
   )
 }

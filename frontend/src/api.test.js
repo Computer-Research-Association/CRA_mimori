@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   fetchKeywords, fetchTrend, requestCrawl, fetchCrawlStatus, AVAILABLE_SOURCES,
-  submitAnalyzeRequest, fetchAnalyzeStatus, submitRagRequest, fetchRagStatus,
+  submitAnalyzeRequest, fetchAnalyzeStatus,
 } from './api.js'
 
 beforeEach(() => {
@@ -49,56 +49,32 @@ describe('fetchTrend', () => {
 })
 
 describe('submitAnalyzeRequest', () => {
-  it('POST /api/analyze-request를 호출한다', async () => {
-    fetch.mockReturnValue(jsonResponse({ keyword: '야르', status: 'queued' }))
-    const result = await submitAnalyzeRequest('야르')
+  it('sources를 포함해서 POST /api/analyze-request를 호출한다', async () => {
+    fetch.mockReturnValue(jsonResponse({ job_id: '잡아이디', status: 'queued' }))
+    const result = await submitAnalyzeRequest('야르', ['tavily', 'youtube'])
     expect(fetch).toHaveBeenCalledWith('/api/analyze-request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyword: '야르' }),
+      body: JSON.stringify({ keyword: '야르', sources: ['tavily', 'youtube'] }),
     })
     expect(result.status).toBe('queued')
   })
 
   it('실패 응답이면 에러 메시지를 담은 Error를 던진다', async () => {
     fetch.mockReturnValue(jsonResponse({ error: '데이터를 찾을 수 없습니다' }, false, 404))
-    await expect(submitAnalyzeRequest('없는키워드')).rejects.toThrow('데이터를 찾을 수 없습니다')
+    await expect(submitAnalyzeRequest('없는키워드', ['tavily'])).rejects.toThrow('데이터를 찾을 수 없습니다')
   })
 })
 
 describe('fetchAnalyzeStatus', () => {
-  it('GET /api/analyze-request/<keyword>를 호출한다', async () => {
+  it('GET /api/analyze-request/<job_id>를 호출한다', async () => {
     fetch.mockReturnValue(jsonResponse({
-      keyword: '야르', status: 'done', result: '분석결과', sources: [], trend: null, error: null,
+      job_id: '잡아이디', keyword: '야르', status: 'done', result: '분석결과', sources: [], trend: null, error: null,
     }))
-    const result = await fetchAnalyzeStatus('야르')
-    expect(fetch).toHaveBeenCalledWith('/api/analyze-request/야르')
+    const result = await fetchAnalyzeStatus('잡아이디')
+    expect(fetch).toHaveBeenCalledWith('/api/analyze-request/잡아이디')
     expect(result.status).toBe('done')
     expect(result.result).toBe('분석결과')
-  })
-})
-
-describe('submitRagRequest', () => {
-  it('sources를 포함해서 POST /api/rag-request를 호출한다', async () => {
-    fetch.mockReturnValue(jsonResponse({ job_id: '잡아이디', status: 'queued' }))
-    const result = await submitRagRequest('야르', '무슨 뜻이야?', ['tavily'])
-    expect(fetch).toHaveBeenCalledWith('/api/rag-request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyword: '야르', question: '무슨 뜻이야?', sources: ['tavily'] }),
-    })
-    expect(result.job_id).toBe('잡아이디')
-  })
-})
-
-describe('fetchRagStatus', () => {
-  it('GET /api/rag-request/<job_id>를 호출한다', async () => {
-    fetch.mockReturnValue(jsonResponse({
-      job_id: '잡아이디', status: 'done', answer: '답변', sources: [], trend: null, error: null,
-    }))
-    const result = await fetchRagStatus('잡아이디')
-    expect(fetch).toHaveBeenCalledWith('/api/rag-request/잡아이디')
-    expect(result.answer).toBe('답변')
   })
 })
 

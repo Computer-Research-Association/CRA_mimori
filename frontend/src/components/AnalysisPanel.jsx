@@ -26,7 +26,7 @@ function TrendBadge({ trend }) {
   )
 }
 
-export default function AnalysisPanel({ keyword }) {
+export default function AnalysisPanel({ keyword, selectedSources }) {
   const [status, setStatus] = useState('queued')
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
@@ -36,10 +36,10 @@ export default function AnalysisPanel({ keyword }) {
   const timerRef = useRef(null)
   const cancelledRef = useRef(false)
 
-  function startPolling() {
+  function startPolling(jobId) {
     timerRef.current = setInterval(async () => {
       try {
-        const data = await fetchAnalyzeStatus(keyword)
+        const data = await fetchAnalyzeStatus(jobId)
         if (cancelledRef.current) return
         setStatus(data.status)
         if (data.status === 'done') {
@@ -70,9 +70,9 @@ export default function AnalysisPanel({ keyword }) {
       if (!cancelledRef.current) setTrend(data)
     })
 
-    submitAnalyzeRequest(keyword)
-      .then(() => {
-        if (!cancelledRef.current) startPolling()
+    submitAnalyzeRequest(keyword, selectedSources)
+      .then((data) => {
+        if (!cancelledRef.current) startPolling(data.job_id)
       })
       .catch((e) => {
         if (!cancelledRef.current) setError(e.message || '네트워크 오류가 발생했습니다')
@@ -83,7 +83,7 @@ export default function AnalysisPanel({ keyword }) {
       clearInterval(timerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyword, retryCount])
+  }, [keyword, selectedSources, retryCount])
 
   if (error) {
     return (
