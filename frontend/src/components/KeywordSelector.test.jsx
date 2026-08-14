@@ -32,8 +32,8 @@ describe('KeywordSelector', () => {
     render(<KeywordSelector keywords={['야르', '쌰갈']} onSelect={vi.fn()} onNewKeyword={vi.fn()} />)
 
     const input = screen.getByRole('combobox')
-    expect(input).toHaveAttribute('list', 'keyword-options')
-    const options = document.querySelectorAll('#keyword-options option')
+    expect(input).toHaveAttribute('list', 'keyword-options-hero')
+    const options = document.querySelectorAll('#keyword-options-hero option')
     expect(Array.from(options).map((o) => o.value)).toEqual(['야르', '쌰갈'])
   })
 })

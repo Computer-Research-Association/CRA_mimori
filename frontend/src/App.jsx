@@ -52,56 +52,126 @@ export default function App() {
     setSelectedKeyword((prev) => (prev === keyword ? null : prev))
   }
 
+  function handleLogoClick() {
+    setSelectedKeyword(null)
+    setPendingKeyword(null)
+  }
+
+  // Determine which screen to show
+  const isResultsScreen = !!(selectedKeyword || pendingKeyword)
+
+  // ── Home screen ───────────────────────────────────────────────────────────
+  if (!isResultsScreen) {
+    return (
+      <div className="home-screen">
+        <div className="home-hero">
+          <div className="home-hero__wordmark">mimori</div>
+          <p className="home-hero__subtitle">밈·신조어 검색</p>
+
+          {keywordsError && (
+            <p role="alert" className="alert home-hero__alert">{keywordsError}</p>
+          )}
+
+          {keywordsLoaded || keywordsError ? (
+            <>
+              <KeywordSelector
+                keywords={keywords}
+                onSelect={handleSelect}
+                onNewKeyword={handleNewKeyword}
+                variant="hero"
+                disabled={selectedSources.length === 0}
+              />
+              <SourceFilter selected={selectedSources} onChange={setSelectedSources} />
+              {selectedSources.length === 0 && (
+                <p className="loading-line">최소 하나의 출처를 선택하세요</p>
+              )}
+              {keywords.length > 0 && (
+                <div className="example-chips">
+                  <span className="example-chips__label">예시:</span>
+                  {keywords.slice(0, 5).map((kw) => (
+                    <button
+                      key={kw}
+                      type="button"
+                      className="chip chip--button"
+                      onClick={() => handleSelect(kw)}
+                    >
+                      {kw}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="home-hero__loading">
+              <span className="spinner" aria-hidden="true" />
+              <span>불러오는 중...</span>
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── Results screen ────────────────────────────────────────────────────────
   return (
-    <div>
-      <header className="app-header">
-        <h1>mimori — 밈/신조어 검색</h1>
-        <p className="app-intro">궁금한 유행어나 신조어를 검색하면 AI가 뜻과 유행 이유를 분석해드려요.</p>
-      </header>
-      <main className="app-main">
-        {keywordsError && <p role="alert" className="alert">{keywordsError}</p>}
-        {keywordsLoaded || keywordsError ? (
-          <>
+    <div className="results-screen">
+      {/* Sticky top bar */}
+      <header className="results-topbar">
+        <button
+          className="results-topbar__logo"
+          onClick={handleLogoClick}
+          aria-label="홈으로 돌아가기"
+        >
+          mimori
+        </button>
+
+        <div className="results-topbar__search">
+          {keywordsLoaded && (
             <KeywordSelector
               keywords={keywords}
               onSelect={handleSelect}
               onNewKeyword={handleNewKeyword}
-              disabled={selectedSources.length === 0}
+              variant="compact"
+              currentKeyword={selectedKeyword || pendingKeyword}
             />
-            <SourceFilter selected={selectedSources} onChange={setSelectedSources} />
-            {selectedSources.length === 0 && <p className="loading-line">최소 하나의 출처를 선택하세요</p>}
-            {keywords.length > 0 && !selectedKeyword && !pendingKeyword && (
-              <div className="example-chips">
-                <span className="example-chips__label">예시:</span>
-                {keywords.slice(0, 5).map((kw) => (
-                  <button
-                    key={kw}
-                    type="button"
-                    className="chip chip--button"
-                    onClick={() => handleSelect(kw)}
-                  >
-                    {kw}
-                  </button>
-                ))}
-              </div>
-            )}
-            <KeywordManager
-              keywords={keywords}
-              onHidden={handleKeywordHidden}
-              onUnhidden={handleKeywordUnhidden}
-              onDeleted={handleKeywordDeleted}
+          )}
+        </div>
+
+        <div className="results-topbar__actions">
+          <KeywordManager
+            keywords={keywords}
+            onHidden={handleKeywordHidden}
+            onUnhidden={handleKeywordUnhidden}
+            onDeleted={handleKeywordDeleted}
+          />
+        </div>
+      </header>
+
+      {/* Results body */}
+      <main className="results-body">
+        {keywordsError && (
+          <p role="alert" className="alert">{keywordsError}</p>
+        )}
+
+        {pendingKeyword && (
+          <CrawlRequestPanel
+            key={pendingKeyword}
+            keyword={pendingKeyword}
+            onDone={handleCrawlDone}
+          />
+        )}
+
+        {selectedKeyword && (
+          <>
+            <div className="keyword-hero">
+              <h1 className="keyword-hero__title">「{selectedKeyword}」</h1>
+            </div>
+            <AnalysisPanel
+              key={`analysis-${selectedKeyword}`}
+              keyword={selectedKeyword}
+              selectedSources={selectedSources}
             />
           </>
-        ) : (
-          <p className="loading-line"><span className="spinner" aria-hidden="true" />불러오는 중...</p>
-        )}
-        {pendingKeyword && <CrawlRequestPanel key={pendingKeyword} keyword={pendingKeyword} onDone={handleCrawlDone} />}
-        {selectedKeyword && (
-          <AnalysisPanel
-            key={`analysis-${selectedKeyword}`}
-            keyword={selectedKeyword}
-            selectedSources={selectedSources}
-          />
         )}
       </main>
     </div>

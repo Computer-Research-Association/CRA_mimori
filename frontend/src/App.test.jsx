@@ -84,7 +84,9 @@ describe('App', () => {
     await userEvent.type(input, '흘로망')
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
 
-    expect(await screen.findByText(/수집 중입니다/)).toBeInTheDocument()
+    // 큐에 들어갔지만 워커가 아직 안 집은 상태의 문구.
+    // (단계가 잡히면 '웹에서 자료 수집 중' 등으로 바뀐다 — CrawlRequestPanel.test.jsx 참고)
+    expect(await screen.findByText(/순서를 기다리는 중/)).toBeInTheDocument()
   })
 
   it('키워드 목록을 불러오지 못하면 에러 메시지를 보여준다', async () => {
@@ -114,8 +116,10 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
     expect(await screen.findByText('야르 분석 결과', {}, { timeout: 4000 })).toBeInTheDocument()
 
-    await userEvent.clear(input)
-    await userEvent.type(input, '쌰갈')
+    // 키워드 B(쌰갈)로 전환 — 홈 화면이 사라지고 결과 화면의 compact input으로 바뀜
+    const compactInput = screen.getByRole('combobox')
+    await userEvent.clear(compactInput)
+    await userEvent.type(compactInput, '쌰갈')
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
 
     expect(await screen.findByText('쌰갈 분석 결과', {}, { timeout: 4000 })).toBeInTheDocument()

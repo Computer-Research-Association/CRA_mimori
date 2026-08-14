@@ -35,7 +35,12 @@ services:
     image: mongo:8
     container_name: mimori-mongo
     ports:
-      - "27017:27017"
+      # 반드시 127.0.0.1로 묶어둘 것. "27017:27017"로 쓰면 0.0.0.0에 열려 인스턴스의
+      # 모든 인터페이스에서 접근 가능해진다 — 2026-08-04에 이 상태로 노출됐다가
+      # 랜섬 공격을 받았다. 방화벽/보안 그룹은 실수로 열리기 쉬우니 여기서도 막는다.
+      # 컨테이너끼리는 도커 네트워크(mongo:27017)로 통신하므로 영향 없고,
+      # 호스트에서 mongosh로 붙는 것과 SSH 터널(LocalForward)도 그대로 동작한다.
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo_data:/data/db
     restart: unless-stopped
@@ -44,7 +49,9 @@ services:
     image: qdrant/qdrant
     container_name: mimori-qdrant
     ports:
-      - "16333:6333"  # 호스트의 6333은 Windows가 예약한 포트 범위(6239-6338)라 16333으로 노출
+      # 호스트의 6333은 Windows가 예약한 포트 범위(6239-6338)라 16333으로 노출.
+      # mongo와 같은 이유로 127.0.0.1에 묶는다(외부 노출 금지).
+      - "127.0.0.1:16333:6333"
     volumes:
       - ./qdrant_storage:/qdrant/storage
     restart: unless-stopped
@@ -54,6 +61,20 @@ services:
     container_name: mimori-web
     ports:
       - "80:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # 미리보기 전용 — 별도 git worktree(../CRA_mimori-preview)에서 원하는 브랜치를
+  # 체크아웃해 빌드한다. web(80, 안정판)은 건드리지 않고 8080에서 신규 버전만 확인.
+  # 셋업: git worktree add ../CRA_mimori-preview dev  (레포 루트에서 최초 1회)
+  # 갱신: git -C ../CRA_mimori-preview pull && docker compose build web-preview && docker compose up -d web-preview
+  web-preview:
+    build:
+      context: ../CRA_mimori-preview/frontend
+    container_name: mimori-web-preview
+    ports:
+      - "8080:80"
     depends_on:
       - api
     restart: unless-stopped
