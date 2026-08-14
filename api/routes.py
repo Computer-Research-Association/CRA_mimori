@@ -21,7 +21,9 @@ from analysis.pipeline import (
 )
 from DB.mongo_client import get_collection
 from config.config_cilent import CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION
-from trend.trend_service import get_cached_trend
+from trend.trend_service import get_cached_trend, get_latest_trend_for_keywords
+from trend.zscore import STATUS_INSUFFICIENT
+from admin_stats import get_admin_stats
 
 bp = Blueprint("api", __name__, url_prefix="/api")
 
@@ -29,6 +31,35 @@ bp = Blueprint("api", __name__, url_prefix="/api")
 @bp.route("/health")
 def health():
     return jsonify({"status": "ok"})
+
+
+def _trend_rank_key(row: dict) -> tuple:
+    # status가 없거나(trend_scores 문서 자체가 없음) "데이터 부족"(문서는 있지만 신호 부족
+    # 판정)이면 점수가 0이든 아니든 순위를 매길 수 없는 상태다. 둘 다 맨 뒤로 보낸다.
+    if row["status"] is None or row["status"] == STATUS_INSUFFICIENT:
+        return (1, row["keyword"])
+    score = row["final_z"] if row["final_z"] is not None else row["z_score"]
+    return (0, -score) if score is not None else (1, row["keyword"])
+
+
+@bp.route("/trend")
+def trend_leaderboard():
+    """홈 화면 순위표용 — 보이는 키워드 전체의 최신 트렌드 판정을 한 번에 반환한다.
+    trend_scores가 아직 없는 키워드(막 등록된 신규 키워드 등)는 status를 null로 내려보내고,
+    프론트가 이를 "데이터 부족"으로 표시한다."""
+    kws = list_visible_keywords()
+    latest = get_latest_trend_for_keywords(kws)
+    rows = []
+    for kw in kws:
+        doc = latest.get(kw)
+        rows.append({
+            "keyword": kw,
+            "status": doc.get("status") if doc else None,
+            "z_score": doc.get("z_score") if doc else None,
+            "final_z": doc.get("final_z") if doc else None,
+        })
+    rows.sort(key=_trend_rank_key)
+    return jsonify({"keywords": rows})
 
 
 @bp.route("/keywords")
@@ -39,6 +70,11 @@ def keywords():
 @bp.route("/keywords/hidden")
 def hidden_keywords():
     return jsonify({"keywords": list_hidden_keywords()})
+
+
+@bp.route("/admin/stats")
+def admin_stats():
+    return jsonify(get_admin_stats())
 
 
 @bp.route("/keywords/<keyword>/hide", methods=["POST"])

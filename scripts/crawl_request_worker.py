@@ -16,7 +16,12 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from DB.mongo_client import get_collection
-from config.config_cilent import CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION, MIN_COMMUNITY_DOCS_FOR_TAVILY
+from config.config_cilent import (
+    CRAWL_REQUESTS_COLLECTION,
+    LLM_REQUESTS_COLLECTION,
+    MAX_BATCH_KEYWORDS,
+    MIN_COMMUNITY_DOCS_FOR_TAVILY,
+)
 from scripts.heavy_job_lock import acquire_heavy_job_lock_blocking, release_heavy_job_lock
 
 # main/preprocessing.pipeline/embedding.pipeline은 torch, FlagEmbedding, 크롤러 6개,
@@ -26,6 +31,7 @@ from scripts.heavy_job_lock import acquire_heavy_job_lock_blocking, release_heav
 # 있을 때만 _load_pipeline()에서 지연 로드한다 — None이 그 "아직 안 불렀다" 신호다.
 crawl_all = None
 add_keyword_if_missing = None
+load_keywords = None
 preprocess_documents = None
 embed_documents = None
 # perf_log도 같은 이유로 지연 로드한다 — logging_config를 거쳐 boto3/watchtower를 끌고 온다.
@@ -39,15 +45,20 @@ def _load_pipeline() -> None:
     다시 임포트하지 않는다 — tests/test_crawl_request_worker.py가 이 이름들을 monkeypatch로
     갈아끼우는 패턴을 그대로 지원하기 위함.
     """
-    global crawl_all, add_keyword_if_missing, preprocess_documents, embed_documents, report_totals
+    global crawl_all, add_keyword_if_missing, load_keywords, preprocess_documents, embed_documents, report_totals
     if crawl_all is not None:
         return
-    from main import crawl_all as _crawl_all, add_keyword_if_missing as _add_keyword_if_missing
+    from main import (
+        crawl_all as _crawl_all,
+        add_keyword_if_missing as _add_keyword_if_missing,
+        load_keywords as _load_keywords,
+    )
     from preprocessing.pipeline import preprocess_documents as _preprocess_documents
     from embedding.pipeline import embed_documents as _embed_documents
     from perf_log import report_totals as _report_totals
     crawl_all = _crawl_all
     add_keyword_if_missing = _add_keyword_if_missing
+    load_keywords = _load_keywords
     preprocess_documents = _preprocess_documents
     embed_documents = _embed_documents
     report_totals = _report_totals
@@ -155,7 +166,14 @@ def run_once(collection=None, llm_requests_collection=None) -> None:
             # 배치에서 커뮤니티 수집이 '충분하다'고 보는 기준(MIN_COMMUNITY_DOCS_FOR_TAVILY)을
             # 넘긴 키워드만 편입한다(issue #69 — rag_main.py의 온디맨드 CLI 경로와 동일 기준).
             if embed_result.get("documents", 0) >= MIN_COMMUNITY_DOCS_FOR_TAVILY:
-                add_keyword_if_missing(keyword)
+                if len(load_keywords()) < MAX_BATCH_KEYWORDS:
+                    add_keyword_if_missing(keyword)
+                else:
+                    # 상한 도달 — 이 요청 자체(수집·분석)는 정상 처리다, 사용자는 결과를
+                    # 이미 받는다. Keywords.md 편입만 거부하고 관리자 화면이 볼 플래그를
+                    # 남긴다. 관리자가 오래된/비인기 키워드를 정리하면 다음 신규 키워드부터
+                    # 다시 편입된다.
+                    collection.update_one({"_id": keyword}, {"$set": {"promotion_skipped": "cap"}})
             _mark(collection, keyword, "done")
             llm_requests_collection.delete_many({"keyword": keyword, "status": "done"})
     except Exception as e:

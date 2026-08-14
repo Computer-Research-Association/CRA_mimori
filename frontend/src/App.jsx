@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { fetchKeywords, AVAILABLE_SOURCES } from './api.js'
 import KeywordSelector from './components/KeywordSelector.jsx'
-import KeywordManager from './components/KeywordManager.jsx'
 import CrawlRequestPanel from './components/CrawlRequestPanel.jsx'
 import AnalysisPanel from './components/AnalysisPanel.jsx'
 import SourceFilter from './components/SourceFilter.jsx'
+import TierList from './components/TierList.jsx'
+import AdminLink from './components/AdminLink.jsx'
 
 export default function App() {
   const [keywords, setKeywords] = useState([])
@@ -39,19 +40,6 @@ export default function App() {
     setSelectedKeyword(keyword)
   }
 
-  function handleKeywordHidden(keyword) {
-    setKeywords((prev) => prev.filter((k) => k !== keyword))
-    setSelectedKeyword((prev) => (prev === keyword ? null : prev))
-  }
-
-  function handleKeywordUnhidden(keyword) {
-    setKeywords((prev) => (prev.includes(keyword) ? prev : [...prev, keyword].sort()))
-  }
-
-  function handleKeywordDeleted(keyword) {
-    setSelectedKeyword((prev) => (prev === keyword ? null : prev))
-  }
-
   function handleLogoClick() {
     setSelectedKeyword(null)
     setPendingKeyword(null)
@@ -64,6 +52,7 @@ export default function App() {
   if (!isResultsScreen) {
     return (
       <div className="home-screen">
+        <AdminLink className="home-screen__admin-link" />
         <div className="home-hero">
           <div className="home-hero__wordmark">mimori</div>
           <p className="home-hero__subtitle">밈·신조어 검색</p>
@@ -85,21 +74,7 @@ export default function App() {
               {selectedSources.length === 0 && (
                 <p className="loading-line">최소 하나의 출처를 선택하세요</p>
               )}
-              {keywords.length > 0 && (
-                <div className="example-chips">
-                  <span className="example-chips__label">예시:</span>
-                  {keywords.slice(0, 5).map((kw) => (
-                    <button
-                      key={kw}
-                      type="button"
-                      className="chip chip--button"
-                      onClick={() => handleSelect(kw)}
-                    >
-                      {kw}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <TierList onSelect={handleSelect} />
             </>
           ) : (
             <div className="home-hero__loading">
@@ -138,12 +113,7 @@ export default function App() {
         </div>
 
         <div className="results-topbar__actions">
-          <KeywordManager
-            keywords={keywords}
-            onHidden={handleKeywordHidden}
-            onUnhidden={handleKeywordUnhidden}
-            onDeleted={handleKeywordDeleted}
-          />
+          <AdminLink className="btn btn--ghost" />
         </div>
       </header>
 
@@ -164,7 +134,7 @@ export default function App() {
         {selectedKeyword && (
           <>
             <div className="keyword-hero">
-              <h1 className="keyword-hero__title">「{selectedKeyword}」</h1>
+              <h1 className="keyword-hero__title">{selectedKeyword}</h1>
             </div>
             <AnalysisPanel
               key={`analysis-${selectedKeyword}`}

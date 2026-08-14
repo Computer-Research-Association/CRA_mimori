@@ -138,6 +138,24 @@ def test_숨긴_키워드_완전삭제는_delete_keyword_permanently를_호출�
     print("[OK] DELETE /api/keywords/<keyword>")
 
 
+def test_admin_stats는_get_admin_stats_결과를_그대로_반환한다():
+    original = routes.get_admin_stats
+    routes.get_admin_stats = lambda: {
+        "keyword_count": 22, "keyword_cap": 60,
+        "collection_counts": {"memes": 100}, "per_keyword_doc_counts": [],
+        "capped_keywords": [],
+    }
+    try:
+        app = app_module.create_app()
+        client = app.test_client()
+        resp = client.get("/api/admin/stats")
+        assert resp.status_code == 200, resp.status_code
+        assert resp.get_json()["keyword_count"] == 22
+    finally:
+        routes.get_admin_stats = original
+    print("[OK] /api/admin/stats")
+
+
 if __name__ == "__main__":
     test_health는_ok를_반환한다()
     test_keywords는_숨김_제외한_목록을_JSON으로_반환한다()
@@ -147,4 +165,5 @@ if __name__ == "__main__":
     test_키워드_숨김_해제는_unhide_keyword를_호출한다()
     test_숨기지_않은_키워드_완전삭제는_400()
     test_숨긴_키워드_완전삭제는_delete_keyword_permanently를_호출한다()
+    test_admin_stats는_get_admin_stats_결과를_그대로_반환한다()
     print("\nALL PASS ✅")

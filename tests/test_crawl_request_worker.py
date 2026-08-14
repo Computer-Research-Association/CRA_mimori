@@ -322,6 +322,72 @@ def test_delete_many이_done_상태만_지우고_진행중인_요청은_보존�
     print("[OK] delete_many는 done 상태만 지우고 진행 중인 요청은 보존함")
 
 
+def test_상한_미만이면_평소대로_Keywords_md에_편입된다():
+    collection = _FakeCollection([
+        {"_id": "야르", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    fake_llm = _FakeLlmRequestsCollection()
+    calls = []
+    original = (
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents,
+        worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock,
+        worker.load_keywords, worker.add_keyword_if_missing, worker.MAX_BATCH_KEYWORDS,
+    )
+    worker.crawl_all = lambda kws, on_source_done=None: None
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 5, "chunks": 5}  # >= MIN_COMMUNITY_DOCS_FOR_TAVILY(3)
+    worker.acquire_heavy_job_lock_blocking = lambda owner: True
+    worker.release_heavy_job_lock = lambda owner: None
+    worker.load_keywords = lambda: ["기존키워드1", "기존키워드2"]  # 2개 < 상한
+    worker.MAX_BATCH_KEYWORDS = 3
+    worker.add_keyword_if_missing = lambda kw: calls.append(kw)
+    try:
+        worker.run_once(collection=collection, llm_requests_collection=fake_llm)
+        assert calls == ["야르"], "상한 미만인데 편입이 안 됨"
+        assert "promotion_skipped" not in collection._docs["야르"], collection._docs["야르"]
+        assert collection._docs["야르"]["status"] == "done", collection._docs["야르"]
+    finally:
+        (worker.crawl_all, worker.preprocess_documents, worker.embed_documents,
+         worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock,
+         worker.load_keywords, worker.add_keyword_if_missing, worker.MAX_BATCH_KEYWORDS) = original
+    print("[OK] 상한 미만이면 평소대로 Keywords.md에 편입")
+
+
+def test_상한_도달시_편입은_거부되지만_요청_자체는_done으로_처리된다():
+    collection = _FakeCollection([
+        {"_id": "새키워드", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    fake_llm = _FakeLlmRequestsCollection()
+    calls = []
+    original = (
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents,
+        worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock,
+        worker.load_keywords, worker.add_keyword_if_missing, worker.MAX_BATCH_KEYWORDS,
+    )
+    worker.crawl_all = lambda kws, on_source_done=None: None
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 5, "chunks": 5}
+    worker.acquire_heavy_job_lock_blocking = lambda owner: True
+    worker.release_heavy_job_lock = lambda owner: None
+    worker.load_keywords = lambda: ["기존키워드1", "기존키워드2", "기존키워드3"]  # 이미 상한 도달
+    worker.MAX_BATCH_KEYWORDS = 3
+    worker.add_keyword_if_missing = lambda kw: calls.append(kw)
+    try:
+        worker.run_once(collection=collection, llm_requests_collection=fake_llm)
+        assert calls == [], "상한 도달했는데 편입이 호출됨"
+        doc = collection._docs["새키워드"]
+        assert doc["promotion_skipped"] == "cap", doc
+        # 편입만 거부될 뿐, 이 요청(수집+분석) 자체는 사용자에게 정상 결과로 보여야 한다.
+        assert doc["status"] == "done", doc
+    finally:
+        (worker.crawl_all, worker.preprocess_documents, worker.embed_documents,
+         worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock,
+         worker.load_keywords, worker.add_keyword_if_missing, worker.MAX_BATCH_KEYWORDS) = original
+    print("[OK] 상한 도달 -> 편입 거부 + promotion_skipped 플래그, 요청 자체는 done")
+
+
 if __name__ == "__main__":
     test_큐가_비어있으면_아무것도_안한다()
     test_정상_처리시_done으로_바뀐다()
@@ -333,4 +399,6 @@ if __name__ == "__main__":
     test_임베딩_락을_못잡으면_failed로_기록되고_임베딩은_호출되지_않는다()
     test_예외_발생시_락_함수가_호출되지_않은_경우에도_안전하다()
     test_delete_many이_done_상태만_지우고_진행중인_요청은_보존한다()
+    test_상한_미만이면_평소대로_Keywords_md에_편입된다()
+    test_상한_도달시_편입은_거부되지만_요청_자체는_done으로_처리된다()
     print("\nALL PASS ✅")
