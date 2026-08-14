@@ -6,7 +6,6 @@ llm_request_worker.run_once() / run_loop() 단위 테스트.
 """
 import os
 import sys
-import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -232,47 +231,33 @@ def test_오래된_running_요청은_requeue된다():
     print("[OK] 20분 넘게 running이던 요청은 requeue되어 같은 실행에서 처리됨")
 
 
-def test_run_loop는_큐가_계속_비면_idle_timeout_후_스스로_종료한다():
-    """BGE-M3를 매 요청마다 새로 로드하지 않으려고 상주시키는 게 run_loop의
-    목적인데, 유휴 상태로 영원히 안 죽으면 메모리를 무한정 점유한다.
-    idle_timeout을 넘겨도 계속 빈 큐면 반드시 빠져나와야 한다."""
-    calls = {"n": 0}
-    original = (worker.run_once, worker.LLM_WORKER_POLL_INTERVAL_SECONDS, worker.get_collection)
-    worker.run_once = lambda collection=None: calls.__setitem__("n", calls["n"] + 1) or False
-    worker.LLM_WORKER_POLL_INTERVAL_SECONDS = 0.01
-    worker.get_collection = lambda name: None
-    try:
-        start = time.monotonic()
-        worker.run_loop(idle_timeout=0.05)
-        elapsed = time.monotonic() - start
-        assert elapsed < 1.0, f"idle_timeout(0.05s) 근처에서 끝나야 하는데 {elapsed:.2f}s 걸림"
-        assert calls["n"] >= 2, f"적어도 몇 번은 폴링해야 함: {calls}"
-    finally:
-        worker.run_once, worker.LLM_WORKER_POLL_INTERVAL_SECONDS, worker.get_collection = original
-    print(f"[OK] run_loop: 빈 큐가 idle_timeout 넘으면 스스로 종료 (elapsed={elapsed:.3f}s, polls={calls['n']})")
+class _StopLoop(Exception):
+    """run_loop는 종료하지 않는 게 정상 동작이라(컨테이너 수명 내내 상주),
+    테스트에서는 N번째 호출에서 이 예외를 던져 무한루프를 인위적으로 끊는다."""
 
 
-def test_run_loop는_처리할_일이_있으면_idle_타이머가_리셋된다():
-    """일하다가 큐가 비기 시작하면, 그 시점부터 다시 idle_timeout을 꽉 채워야
-    종료해야 한다 — 마지막 작업 직후 곧바로 끊기면 안 됨."""
-    results = iter([True, True, False, False, False, False, False, False])
+def test_run_loop는_종료하지_않고_run_once를_반복_호출한다():
     calls = {"n": 0}
 
     def fake_run_once(collection=None):
         calls["n"] += 1
-        return next(results, False)
+        if calls["n"] >= 3:
+            raise _StopLoop()
+        return False
 
     original = (worker.run_once, worker.LLM_WORKER_POLL_INTERVAL_SECONDS, worker.get_collection)
     worker.run_once = fake_run_once
     worker.LLM_WORKER_POLL_INTERVAL_SECONDS = 0.01
     worker.get_collection = lambda name: None
     try:
-        worker.run_loop(idle_timeout=0.03)
-        # True가 2번 나온 뒤부터 idle 카운트 시작 -> poll(0.01s) 몇 번은 더 돌아야 0.03s를 채움
-        assert calls["n"] >= 5, calls
+        try:
+            worker.run_loop()
+        except _StopLoop:
+            pass
+        assert calls["n"] == 3, calls
     finally:
         worker.run_once, worker.LLM_WORKER_POLL_INTERVAL_SECONDS, worker.get_collection = original
-    print(f"[OK] run_loop: 작업이 있으면 idle 타이머가 리셋됨 (polls={calls['n']})")
+    print(f"[OK] run_loop: 큐가 비어도 종료하지 않고 계속 폴링함 (polls={calls['n']})")
 
 
 if __name__ == "__main__":
@@ -283,6 +268,5 @@ if __name__ == "__main__":
     test_락을_못잡으면_다시_queued로_돌리고_반환한다()
     test_예외_발생시_failed와_에러메시지가_기록되고_락이_해제된다()
     test_오래된_running_요청은_requeue된다()
-    test_run_loop는_큐가_계속_비면_idle_timeout_후_스스로_종료한다()
-    test_run_loop는_처리할_일이_있으면_idle_타이머가_리셋된다()
+    test_run_loop는_종료하지_않고_run_once를_반복_호출한다()
     print("\nALL PASS ✅")

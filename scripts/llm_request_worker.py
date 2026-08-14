@@ -3,13 +3,14 @@ llm_request_worker.py
 llm_requests 큐에서 가장 오래된 queued 요청 하나를 집어서 analyze를 처리한다.
 
 단발 실행(run_once)과 상주 루프(run_loop) 두 진입점이 있다. scheduler.py는
-큐에 처리할 게 있는데 상주 워커가 안 떠 있을 때만 `--loop`로 이 스크립트를
-새 프로세스로 띄운다 — 매 요청마다 새로 띄우면 BGE-M3 로드(수십 초)를 매번
-반복해서 실제 처리 시간보다 콜드스타트가 훨씬 커지기 때문이다(2026-08-14,
+컨테이너가 뜰 때 이 스크립트를 `--loop`로 딱 한 번 서브프로세스로 띄워
+컨테이너 수명 내내 상주시킨다 — 매 요청마다 새로 띄우면 BGE-M3 로드(수십 초)를
+매번 반복해서 실제 처리 시간보다 콜드스타트가 훨씬 커지기 때문이다(2026-08-14,
 이미 크롤된 키워드도 매번 수십 초씩 걸린다는 리포트로 발견). run_loop는 큐가
-LLM_WORKER_IDLE_TIMEOUT_SECONDS만큼 비면 스스로 종료해 BGE-M3가 유휴 상태로
-메모리를 무한정 점유하지 않게 한다 — 다음 요청이 오면 scheduler.py가 새
-프로세스를 다시 띄우고, 그 첫 요청만 콜드스타트를 다시 겪는다.
+비어도 종료하지 않고 계속 폴링한다 — 유휴 시에도 BGE-M3가 RAM 2~3GB를 계속
+쓰지만, EC2 free -h로 확인한 가용 메모리(6.3GB)가 그 정도는 감당하길래 콜드
+스타트를 완전히 없애는 쪽을 택했다. scheduler.py는 이 프로세스가 죽으면(OOM
+등) watchdog으로 재기동만 한다.
 
 크롤 워커와 BGE-M3를 동시에 메모리에 올리지 않도록 heavy_job_lock을 처리 구간
 전체(임베딩~LLM 호출)에 건다. 락을 못 잡으면 이번 시도는 포기하고 문서를
@@ -18,7 +19,7 @@ sunk cost 없음). 락은 요청을 실제로 처리하는 구간에만 걸리�
 유휴 대기 중인 동안은 크롤 워커를 막지 않는다.
 
 동시 처리 1개 제한은 scheduler.py의 APScheduler max_instances(기본값 1) +
-"이미 상주 워커가 떠 있으면 새로 안 띄움" 체크가 함께 보장한다.
+상주 워커가 하나뿐이라는 사실이 함께 보장한다.
 """
 import os
 import sys
@@ -49,11 +50,7 @@ from analysis.rag_pipeline import (
     facet_search,
 )
 from DB.mongo_client import get_collection
-from config.config_cilent import (
-    LLM_REQUESTS_COLLECTION,
-    LLM_WORKER_IDLE_TIMEOUT_SECONDS,
-    LLM_WORKER_POLL_INTERVAL_SECONDS,
-)
+from config.config_cilent import LLM_REQUESTS_COLLECTION, LLM_WORKER_POLL_INTERVAL_SECONDS
 from scripts.heavy_job_lock import acquire_heavy_job_lock, release_heavy_job_lock
 from trend.trend_service import format_trend_context, get_cached_trend
 
@@ -119,13 +116,8 @@ def _process_analyze(doc: dict) -> dict:
 
 
 def run_once(collection=None) -> bool:
-    """대기 중인 요청 하나를 처리한다.
-
-    반환값은 run_loop의 idle-timeout 판단에 쓰인다 — 큐가 정말 비어 있었으면
-    False, 그 외(처리 완료·실패·락 경합으로 재시도 예약 등 뭔가 할 일이
-    있었으면)는 True. 락 경합도 True인 이유: 빈 큐가 아니라 크롤 워커와
-    부딪힌 것뿐이라 '유휴'로 치면 안 되기 때문이다.
-    """
+    """대기 중인 요청 하나를 처리한다. 처리할 게 있었으면(완료·실패·락 경합으로
+    재시도 예약 포함) True, 큐가 비어 있었으면 False."""
     if collection is None:
         collection = get_collection(LLM_REQUESTS_COLLECTION)
 
@@ -155,23 +147,18 @@ def run_once(collection=None) -> bool:
     return True
 
 
-def run_loop(idle_timeout: float = LLM_WORKER_IDLE_TIMEOUT_SECONDS) -> None:
-    """큐가 idle_timeout초 동안 계속 비어 있을 때까지 run_once를 반복한다.
+def run_loop() -> None:
+    """종료하지 않고 큐를 계속 폴링한다 — scheduler.py가 컨테이너 기동 시
+    한 번만 띄워 상주시킨다.
 
     BGE-M3(embedding/encoder.py의 모듈 전역 싱글턴)가 프로세스 생존 기간
     내내 재사용되므로, 이 루프 안에서 이어지는 요청들은 모델을 다시 로드하지
-    않는다. 프로세스가 죽지 않고 계속 대기하는 동안은 크롤 워커에게 넘길
-    heavy_job_lock을 붙잡지 않는다(run_once가 처리 구간에만 짧게 건다).
+    않는다. 큐가 비어 대기하는 동안은 heavy_job_lock을 붙잡지 않으므로
+    (run_once가 처리 구간에만 짧게 건다) 크롤 워커를 막지 않는다.
     """
     collection = get_collection(LLM_REQUESTS_COLLECTION)
-    idle_since = time.monotonic()
     while True:
-        did_work = run_once(collection=collection)
-        now = time.monotonic()
-        if did_work:
-            idle_since = now
-        elif now - idle_since >= idle_timeout:
-            break
+        run_once(collection=collection)
         time.sleep(LLM_WORKER_POLL_INTERVAL_SECONDS)
 
 
