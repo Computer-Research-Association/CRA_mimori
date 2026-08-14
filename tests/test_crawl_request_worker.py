@@ -146,7 +146,7 @@ def test_가장_오래된_큐_항목부터_처리한다():
     calls = []
     original_crawl, original_pre, original_embed = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
     original_lock, original_release = worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock
-    worker.crawl_all = lambda kws: calls.append(kws[0])
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws[0])
     worker.preprocess_documents = lambda kw: None
     worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
     worker.acquire_heavy_job_lock_blocking = lambda owner: True
@@ -170,7 +170,7 @@ def test_임베딩_결과가_0건이면_failed로_기록된다():
     fake_llm = _FakeLlmRequestsCollection()
     original_crawl, original_pre, original_embed = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
     original_lock, original_release = worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock
-    worker.crawl_all = lambda kws: None
+    worker.crawl_all = lambda kws, on_source_done=None: None
     worker.preprocess_documents = lambda kw: None
     worker.embed_documents = lambda kw: {"documents": 0, "chunks": 0, "failed": 0, "near_dup_skipped": 0}
     worker.acquire_heavy_job_lock_blocking = lambda owner: True
@@ -203,7 +203,7 @@ def test_오래된_running_요청은_requeue되어_같은_실행에서_처리된
     calls = []
     original_crawl, original_pre, original_embed = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
     original_lock, original_release = worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock
-    worker.crawl_all = lambda kws: calls.append(kws[0])
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws[0])
     worker.preprocess_documents = lambda kw: None
     worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
     worker.acquire_heavy_job_lock_blocking = lambda owner: True
@@ -251,7 +251,7 @@ def test_임베딩_락을_못잡으면_failed로_기록되고_임베딩은_호�
     calls = {}
     original_crawl, original_pre, original_embed = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
     original_lock = worker.acquire_heavy_job_lock_blocking
-    worker.crawl_all = lambda kws: calls.setdefault("crawl", kws)
+    worker.crawl_all = lambda kws, on_source_done=None: calls.setdefault("crawl", kws)
     worker.preprocess_documents = lambda kw: calls.setdefault("preprocess", kw)
     worker.embed_documents = lambda kw: calls.setdefault("embed_called", True)
     worker.acquire_heavy_job_lock_blocking = lambda owner: False
@@ -277,7 +277,7 @@ def test_예외_발생시_락_함수가_호출되지_않은_경우에도_안전�
     fake_llm = _FakeLlmRequestsCollection()
     original_crawl = worker.crawl_all
     original_lock = worker.acquire_heavy_job_lock_blocking
-    worker.crawl_all = lambda kws: (_ for _ in ()).throw(RuntimeError("크롤 실패 테스트"))
+    worker.crawl_all = lambda kws, on_source_done=None: (_ for _ in ()).throw(RuntimeError("크롤 실패 테스트"))
     worker.acquire_heavy_job_lock_blocking = lambda owner: (_ for _ in ()).throw(AssertionError("호출되면 안 됨"))
     try:
         worker.run_once(collection=collection, llm_requests_collection=fake_llm)
@@ -307,7 +307,7 @@ def test_delete_many이_done_상태만_지우고_진행중인_요청은_보존�
     ])
     original_crawl, original_pre, original_embed = worker.crawl_all, worker.preprocess_documents, worker.embed_documents
     original_lock, original_release = worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock
-    worker.crawl_all = lambda kws: None
+    worker.crawl_all = lambda kws, on_source_done=None: None
     worker.preprocess_documents = lambda kw: None
     worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
     worker.acquire_heavy_job_lock_blocking = lambda owner: True

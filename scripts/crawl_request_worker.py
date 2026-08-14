@@ -16,11 +16,41 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from DB.mongo_client import get_collection
-from config.config_cilent import CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION
-from main import crawl_all
-from preprocessing.pipeline import preprocess_documents
-from embedding.pipeline import embed_documents
+from config.config_cilent import CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION, MIN_COMMUNITY_DOCS_FOR_TAVILY
 from scripts.heavy_job_lock import acquire_heavy_job_lock_blocking, release_heavy_job_lock
+
+# main/preprocessing.pipeline/embedding.pipeline은 torch, FlagEmbedding, 크롤러 6개,
+# boto3(CloudWatch 로그스트림 3개)를 끌고 와 임포트만으로 몇 초가 든다. 이 스크립트는
+# 큐가 비어있어도(흔한 경우) 1분마다 서브프로세스로 뜨므로, 최상단에서 바로 임포트하면
+# 그 비용을 매 틱 문다(실측: 하루 1440회 × 약 8초). 그래서 처리할 큐 항목이 실제로
+# 있을 때만 _load_pipeline()에서 지연 로드한다 — None이 그 "아직 안 불렀다" 신호다.
+crawl_all = None
+add_keyword_if_missing = None
+preprocess_documents = None
+embed_documents = None
+# perf_log도 같은 이유로 지연 로드한다 — logging_config를 거쳐 boto3/watchtower를 끌고 온다.
+report_totals = None
+
+
+def _load_pipeline() -> None:
+    """crawl_all/preprocess_documents/embed_documents를 지연 임포트해 모듈 전역에 바인딩한다.
+
+    이미 로드됐거나(None이 아님) 테스트가 worker.crawl_all 등을 직접 패치해둔 경우엔
+    다시 임포트하지 않는다 — tests/test_crawl_request_worker.py가 이 이름들을 monkeypatch로
+    갈아끼우는 패턴을 그대로 지원하기 위함.
+    """
+    global crawl_all, add_keyword_if_missing, preprocess_documents, embed_documents, report_totals
+    if crawl_all is not None:
+        return
+    from main import crawl_all as _crawl_all, add_keyword_if_missing as _add_keyword_if_missing
+    from preprocessing.pipeline import preprocess_documents as _preprocess_documents
+    from embedding.pipeline import embed_documents as _embed_documents
+    from perf_log import report_totals as _report_totals
+    crawl_all = _crawl_all
+    add_keyword_if_missing = _add_keyword_if_missing
+    preprocess_documents = _preprocess_documents
+    embed_documents = _embed_documents
+    report_totals = _report_totals
 
 
 def _mark(collection, keyword: str, status: str, error: str | None = None) -> None:
