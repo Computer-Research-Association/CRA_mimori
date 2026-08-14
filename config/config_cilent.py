@@ -21,6 +21,14 @@ HIDDEN_KEYWORDS_COLLECTION = "hidden_keywords"   # 검색 목록에서 숨긴 �
 LOCKS_COLLECTION = "locks"                        # heavy_job_lock 등 프로세스 간 락
 LLM_REQUESTS_COLLECTION = "llm_requests"          # analyze/rag 비동기 큐 겸 결과 캐시
 
+# llm_request_worker.py 상주 루프 설정. 매 요청마다 새 프로세스를 띄우면 BGE-M3
+# 로드(수십 초)를 반복해서 실제 처리 시간보다 콜드스타트가 훨씬 커진다. 그렇다고
+# 무한정 상주시키면 유휴 상태에도 수GB를 계속 점유하므로, 빈 큐가 이 시간만큼
+# 지속되면 워커가 스스로 종료해 scheduler.py가 다음 요청 때 새로 띄우게 한다
+# (2026-08-14, EC2 free -h로 가용 6.3GB 확인 후 결정 — RAM 여유 없는 환경이면 낮출 것).
+LLM_WORKER_IDLE_TIMEOUT_SECONDS = 300
+LLM_WORKER_POLL_INTERVAL_SECONDS = 2
+
 # 검색 설정
 TAVILY_MAX_RESULTS = 20
 TAVILY_SEARCH_DEPTH = "advanced"  # "basic" or "advanced"
