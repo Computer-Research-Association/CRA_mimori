@@ -93,30 +93,34 @@ def crawl_request_run():
         logger.error("온디맨드 수집 워커 실패 (code=%d)", result.returncode)
 
 
-def llm_request_run():
-    """analyze/rag 큐를 1회 확인해서, 있으면 하나 처리한다.
-    큐가 비어있으면 llm_request_worker.py 자체가 조용히 종료하므로 여기서
-    성공 로그를 남기지 않는다(5초마다 빈 로그가 쌓이는 걸 피하려고) — 실패했을 때만 기록.
+_llm_worker_proc: subprocess.Popen | None = None
 
-    서브프로세스를 띄우기 전에 가벼운 Mongo 조회로 처리할 게 있는지부터 확인한다 —
-    llm_request_worker.py는 analysis.pipeline(ollama, langchain_nvidia_ai_endpoints)과
-    embedding.encoder/analysis.rag_pipeline(torch, FlagEmbedding)을 모듈 최상단에서
-    임포트해 임포트만 수십 초가 걸린다. 5초 간격에 빈 틱마다 매번 띄우면
-    max_instances=1 특성상 워커가 백투백으로 돌며 CPU 코어 하나를 영구 점유하게 된다.
-    import는 함수 안에서 해서 scheduler.py 자체를 무겁게 만들지 않는다.
-    running까지 포함하는 이유: _requeue_stale_running은 워커 프로세스 '안'에서
-    도는데, 워커가 죽으면 running 문서만 남고 queued는 없을 수 있어 queued만 보면
-    그 요청이 영원히 회수되지 않는다."""
-    from DB.mongo_client import get_collection
-    from config.config_cilent import LLM_REQUESTS_COLLECTION
-    has_work = get_collection(LLM_REQUESTS_COLLECTION).find_one(
-        {"status": {"$in": ["queued", "running"]}}
-    )
-    if has_work is None:
-        return
-    result = subprocess.run([sys.executable, LLM_REQUEST_WORKER_PY])
-    if result.returncode != 0:
-        logger.error("analyze/rag 워커 실패 (code=%d)", result.returncode)
+
+def llm_worker_watchdog():
+    """상주 analyze 워커(llm_request_worker.py --loop)가 살아있는지 확인하고,
+    죽어있으면(최초 기동 포함) 새로 띄운다.
+
+    예전엔 5초 틱마다 매번 새 서브프로세스를 띄웠는데, llm_request_worker.py가
+    BGE-M3를 모듈 최상단에서 로드해(수십 초) 요청마다 콜드스타트를 반복하는
+    게 체감 지연의 원인이었다(2026-08-14). 이제 워커는 --loop로 뜨면 컨테이너
+    수명 내내 종료하지 않고 큐를 폴링하며 로드된 모델을 재사용한다. 그래서 이
+    함수는 정상 상황에서는 "이미 떠 있으니 아무것도 안 함"만 반복하는 감시자
+    역할이고, 워커가 죽어 있을 때만(최초 기동 또는 OOM 등 크래시 후 복구) 새로
+    띄운다(Popen이라 블로킹 X — 다음 5초 틱이 곧바로 다시 돌아 생존 여부를
+    재확인할 수 있어야 한다).
+
+    큐에 일이 있는지는 확인하지 않는다 — 상주 워커는 컨테이너가 떠 있는 한
+    항상 살아있어야 하므로, 이 감시자의 역할은 "필요할 때 띄우기"가 아니라
+    "죽었으면 되살리기"뿐이다."""
+    global _llm_worker_proc
+
+    if _llm_worker_proc is not None and _llm_worker_proc.poll() is None:
+        return  # 상주 워커가 살아있음 — 정상 경로
+
+    if _llm_worker_proc is not None:
+        logger.error("analyze 워커가 죽어있어 재기동합니다 (code=%d)", _llm_worker_proc.returncode)
+
+    _llm_worker_proc = subprocess.Popen([sys.executable, LLM_REQUEST_WORKER_PY, "--loop"])
 
 
 CRAWL_HOUR = 2   # KST 02:00 — 크론(hour=2, minute=0)과 반드시 같은 값을 유지해야 함
@@ -210,8 +214,12 @@ scheduler.add_job(
     replace_existing=True,
 )
 
+# 상주 analyze 워커가 살아있는지 감시하는 용도로 바뀌었다(2026-08-14) — 정상
+# 상황에선 워커가 컨테이너 수명 내내 떠 있어서 이 틱은 poll() 한 번으로 끝난다.
+# 죽어있을 때만(최초 기동/크래시 복구) 새로 띄우므로 간격이 사용자 체감 지연에
+# 더 이상 얹히지 않는다 — 5초는 크래시 복구를 빠르게 하려고 유지한다.
 scheduler.add_job(
-    llm_request_run,
+    llm_worker_watchdog,
     'interval',
     seconds=5,
     id='llm_request_job',
