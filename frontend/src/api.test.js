@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
-  fetchKeywords, fetchTrend, requestCrawl, fetchCrawlStatus, AVAILABLE_SOURCES,
-  submitAnalyzeRequest, fetchAnalyzeStatus,
+  fetchKeywords, fetchTrend, fetchTrendLeaderboard, fetchAdminStats, requestCrawl, fetchCrawlStatus,
+  AVAILABLE_SOURCES, submitAnalyzeRequest, fetchAnalyzeStatus,
 } from './api.js'
 
 beforeEach(() => {
@@ -45,6 +45,26 @@ describe('fetchTrend', () => {
     const result = await fetchTrend('야르')
     expect(fetch).toHaveBeenCalledWith('/api/trend/야르')
     expect(result.status).toBe('유행 중')
+  })
+})
+
+describe('fetchAdminStats', () => {
+  it('/api/admin/stats를 호출하고 결과를 그대로 반환한다', async () => {
+    fetch.mockReturnValue(jsonResponse({ keyword_count: 22, keyword_cap: 60 }))
+    const result = await fetchAdminStats()
+    expect(fetch).toHaveBeenCalledWith('/api/admin/stats')
+    expect(result).toEqual({ keyword_count: 22, keyword_cap: 60 })
+  })
+})
+
+describe('fetchTrendLeaderboard', () => {
+  it('/api/trend를 호출하고 키워드 배열을 반환한다', async () => {
+    fetch.mockReturnValue(jsonResponse({
+      keywords: [{ keyword: '야르', status: '핫함', z_score: 2.1, final_z: 2.1 }],
+    }))
+    const result = await fetchTrendLeaderboard()
+    expect(fetch).toHaveBeenCalledWith('/api/trend')
+    expect(result).toEqual([{ keyword: '야르', status: '핫함', z_score: 2.1, final_z: 2.1 }])
   })
 })
 

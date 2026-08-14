@@ -17,6 +17,52 @@ export function statusEmoji(status) {
   return STATUS_EMOJI[status] ?? '🔍'
 }
 
+// trend/zscore.py classify_trend()의 5개 실제 상태를 색상 키로 매핑.
+// "데이터 부족"은 순위 밖(집계 전) 별도 그룹이라 여기 포함하지 않는다.
+// 티어 칩(tier-pill--*)과 트렌드 차트 선(trend-chart__svg--*) 둘 다 같은 키를
+// 써서 "이 색 = 이 상태"가 화면 어디서든 같은 뜻이 되도록 한다.
+const TIER_COLOR_KEY = {
+  핫함: 'hot',
+  '유행 중': 'up',
+  평상: 'flat',
+  감소: 'down',
+  소멸: 'extinct',
+}
+
+export function tierColorKey(status) {
+  return TIER_COLOR_KEY[status] ?? 'flat'
+}
+
+export function tierPillClass(status) {
+  return `tier-pill--${tierColorKey(status)}`
+}
+
+// "Electric fusion" 4색 그라디언트 — 시안(감소/최저값) → 그린 → 오렌지 → 레드(증가/
+// 최고값). 티어 칩의 5단계 색과 같은 스펙트럼을 그대로 쓰되, 여기서는 차트 한 장 안의
+// 실제 값 범위(min~max)를 0~1로 정규화해 연속적으로 칠한다 — "언급량이 변하는 만큼
+// 색도 단계 없이 부드럽게 변한다"는 요청이라 5단계로 끊지 않고 원본 그라디언트를 그대로 샘플링.
+const VALUE_GRADIENT_STOPS = [
+  { t: 0, rgb: [0, 240, 255] },   // #00F0FF 시안
+  { t: 1 / 3, rgb: [0, 255, 129] },   // #00FF81 그린
+  { t: 2 / 3, rgb: [255, 169, 0] },   // #FFA900 오렌지
+  { t: 1, rgb: [255, 104, 0] },   // #FF6800 레드
+]
+
+export function valueGradientColor(t) {
+  const clamped = Math.min(1, Math.max(0, Number.isFinite(t) ? t : 0.5))
+  for (let i = 0; i < VALUE_GRADIENT_STOPS.length - 1; i++) {
+    const a = VALUE_GRADIENT_STOPS[i]
+    const b = VALUE_GRADIENT_STOPS[i + 1]
+    if (clamped >= a.t && clamped <= b.t) {
+      const localT = (clamped - a.t) / (b.t - a.t)
+      const [r, g, b2] = a.rgb.map((c, idx) => Math.round(c + (b.rgb[idx] - c) * localT))
+      return `rgb(${r}, ${g}, ${b2})`
+    }
+  }
+  const last = VALUE_GRADIENT_STOPS[VALUE_GRADIENT_STOPS.length - 1].rgb
+  return `rgb(${last[0]}, ${last[1]}, ${last[2]})`
+}
+
 export function sourceLabel(source) {
   return SOURCE_LABELS[source] ?? source
 }

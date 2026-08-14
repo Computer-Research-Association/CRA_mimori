@@ -70,6 +70,14 @@ CRAWL_WORKERS = 8          # (키워드 × 소스) 평평한 풀의 워커 수
 # 보완한다(폴백의 폴백). 전체 실패는 합계가 자연히 0이 되어 같은 조건에 포함된다.
 MIN_COMMUNITY_DOCS_FOR_TAVILY = 3
 
+# Keywords.md(배치 크롤 대상) 상한. 이 파일이 커질수록 매일 새벽 배치 크롤 시간과
+# Tavily/YouTube API 쿼터 소모가 함께 늘어난다. 상한을 넘으면 새 키워드는 (이미
+# 수집·분석은 끝난 채로) Keywords.md 편입만 거부되고, crawl_requests 문서에
+# promotion_skipped="cap"이 남아 관리자 화면에서 알림으로 보인다 — 관리자가 오래되거나
+# 인기 없는 키워드를 정리하면 다음 신규 키워드부터 다시 편입된다.
+# 2026-08-14 기준 실제 등록 22개 — 여유를 넉넉히 둔 값이라 필요하면 조정할 것.
+MAX_BATCH_KEYWORDS = 60
+
 # DuckDuckGo 폴백 검색 설정 — Tavily 크롤이 예외로 실패했을 때만 호출된다.
 DUCKDUCKGO_MAX_RESULTS = 10   # 페이지네이션 없이 첫 페이지만 사용(폴백이라 비용 대비 실효 우선)
 DUCKDUCKGO_RECRAWL_DAYS = 3   # Tavily가 며칠째 계속 실패해도 이 폴백을 매일 다시 두드리지 않음

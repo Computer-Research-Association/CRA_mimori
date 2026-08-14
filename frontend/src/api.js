@@ -39,6 +39,12 @@ export async function fetchTrend(keyword) {
   return handleResponse(res)
 }
 
+export async function fetchTrendLeaderboard() {
+  const res = await safeFetch(`${BASE}/trend`)
+  const data = await handleResponse(res)
+  return data.keywords
+}
+
 export async function submitAnalyzeRequest(keyword, sources) {
   const res = await safeFetch(`${BASE}/analyze-request`, {
     method: 'POST',
@@ -64,6 +70,11 @@ export async function requestCrawl(keyword) {
 
 export async function fetchCrawlStatus(keyword) {
   const res = await safeFetch(`${BASE}/crawl-request/${keyword}`)
+  return handleResponse(res)
+}
+
+export async function fetchAdminStats() {
+  const res = await safeFetch(`${BASE}/admin/stats`)
   return handleResponse(res)
 }
 

@@ -434,6 +434,34 @@ def get_cached_trend(keyword: str, collection=None) -> dict | None:
     return docs[0] if docs else None
 
 
+def get_latest_trend_for_keywords(keywords: list[str], collection=None) -> dict[str, dict]:
+    """여러 키워드의 최신 trend_scores 문서를 한 번의 집계로 가져온다(순위표용).
+
+    반환값은 {keyword: 문서} 딕셔너리이고, trend_scores에 문서가 아예 없는 키워드는
+    이 딕셔너리에 키 자체가 없다 — 아직 배치 판정을 못 받은 신규 키워드가 여기 해당하며,
+    호출부가 목록(keywords)을 기준으로 순회하며 없는 경우를 "데이터 부족"으로 처리해야 한다.
+    """
+    if not keywords:
+        return {}
+    if collection is None:
+        from DB.mongo_client import get_collection
+        from config.config_cilent import TREND_COLLECTION
+
+        collection = get_collection(TREND_COLLECTION)
+
+    pipeline = [
+        {"$match": {"keyword": {"$in": keywords}}},
+        {"$sort": {"date": -1}},
+        {"$group": {"_id": "$keyword", "doc": {"$first": "$$ROOT"}}},
+    ]
+    result = {}
+    for row in collection.aggregate(pipeline):
+        doc = row["doc"]
+        doc.pop("_id", None)
+        result[row["_id"]] = doc
+    return result
+
+
 if __name__ == "__main__":
     _keyword = input("키워드 입력: ").strip()
     result = get_meme_trend(_keyword)

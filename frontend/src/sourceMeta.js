@@ -8,6 +8,7 @@ export const SOURCE_META = {
   natepann: { label: '네이트판', domain: 'pann.nate.com', emoji: '💬' },
   dcinside: { label: '디시인사이드', domain: 'dcinside.com', emoji: '💬' },
   todayhumor: { label: '오늘의유머', domain: 'todayhumor.co.kr', emoji: '😂' },
+  duckduckgo: { label: 'DuckDuckGo 검색', domain: null, emoji: '🦆' },
 }
 
 const DEFAULT_META = { label: '기타 출처', domain: null, emoji: '🔗' }
