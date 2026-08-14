@@ -86,9 +86,10 @@ describe('App', () => {
     await userEvent.click(screen.getByRole('button', { name: '질문하기' }))
     expect(await screen.findByText('야르 RAG 답변', {}, { timeout: 4000 })).toBeInTheDocument()
 
-    // 키워드 B(쌰갈)로 전환
-    await userEvent.clear(input)
-    await userEvent.type(input, '쌰갈')
+    // 키워드 B(쌰갈)로 전환 — 홈 화면이 사라지고 결과 화면의 compact input으로 바뀜
+    const compactInput = screen.getByRole('combobox')
+    await userEvent.clear(compactInput)
+    await userEvent.type(compactInput, '쌰갈')
     await userEvent.click(screen.getByRole('button', { name: '검색' }))
 
     expect(await screen.findByText('쌰갈 분석 결과', {}, { timeout: 4000 })).toBeInTheDocument()
