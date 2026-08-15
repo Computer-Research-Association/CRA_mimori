@@ -82,7 +82,7 @@ def test_큐가_비어있으면_아무것도_안한다():
     original = worker.crawl_all
     worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws)
     try:
-        worker.run_once(collection=collection)
+        worker.run_once(collection=collection, llm_requests_collection=_FakeLlmRequestsCollection())
         assert calls == [], "큐가 비었는데 크롤링이 호출됨"
     finally:
         worker.crawl_all = original
@@ -126,7 +126,7 @@ def test_예외_발생시_failed와_에러메시지가_기록된다():
     original = worker.crawl_all
     worker.crawl_all = lambda kws, on_source_done=None: (_ for _ in ()).throw(RuntimeError("크롤 실패 테스트"))
     try:
-        worker.run_once(collection=collection)
+        worker.run_once(collection=collection, llm_requests_collection=_FakeLlmRequestsCollection())
         doc = collection._docs["쌰갈"]
         assert doc["status"] == "failed", doc
         assert "크롤 실패 테스트" in doc["error"], doc
@@ -233,7 +233,7 @@ def test_최근_running_요청은_requeue되지_않는다():
     original_crawl = worker.crawl_all
     worker.crawl_all = lambda kws, on_source_done=None: calls.append(kws[0])
     try:
-        worker.run_once(collection=collection)
+        worker.run_once(collection=collection, llm_requests_collection=_FakeLlmRequestsCollection())
         doc = collection._docs["진행중인요청"]
         assert calls == [], f"진행 중인 작업인데 크롤링이 다시 호출됨: {calls}"
         assert doc["status"] == "running", doc
