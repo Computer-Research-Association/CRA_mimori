@@ -29,6 +29,7 @@ import sys
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from concurrent.futures import ThreadPoolExecutor
 from itertools import combinations
 
 from analysis.pipeline import list_analyzable_keywords
@@ -41,6 +42,10 @@ from eval.retrievers import METHODS, retrieve
 
 # 지표를 계산할 k 값들 (RAG_TOP_K 이하)
 K_VALUES = sorted({3, RAG_TOP_K})
+
+# judge_eval.py와 동일한 패턴: 청크 채점을 병렬화(순차 호출은 NIM 왕복지연이 그대로 누적됨).
+# _LIMITER/캐시는 스레드 안전(judge.py에 lock 있음).
+_JUDGE_WORKERS = 8
 
 _RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 
@@ -72,7 +77,7 @@ def main() -> None:
     dense_vecs, sparse_weights = encode_batch([q.question for q in queries])
     unload_model()
 
-    judge = Judge()
+    judge = Judge(model="deepseek-ai/deepseek-v4-flash")  # NIM 백엔드 (Gemini 쿼터 소진)
 
     # latency 왜곡 방지: 첫 검색이 Qdrant 연결 셋업 비용을 뒤집어쓰지 않도록
     # 측정 밖에서 워밍업 1회 (결과는 버림)
@@ -101,10 +106,13 @@ def main() -> None:
         for res in results.values():
             for c in res.chunks:
                 pool.setdefault(c.chunk_id, c.text)
-        pool_rels = [
-            judge.score(query.id, query.question, cid, text) for cid, text in pool.items()
-        ]
-        rel_by_chunk = dict(zip(pool.keys(), pool_rels))
+        pool_items = list(pool.items())
+        with ThreadPoolExecutor(max_workers=_JUDGE_WORKERS) as ex:
+            pool_rels = list(ex.map(
+                lambda kv: judge.score(query.id, query.question, kv[0], kv[1]), pool_items
+            ))
+        rel_by_chunk = dict(zip((cid for cid, _ in pool_items), pool_rels))
+        judge.flush()
         pool_map[query.id] = pool_rels
 
         # 6) 방식별 원자료 저장 + 대표 지표(기본 임계값 T, linear gain) 한 줄

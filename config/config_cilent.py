@@ -149,7 +149,6 @@ USER_AGENTS = [
 ]
 
 # LLM 분석 설정
-
 ANALYSIS_MODEL = "openai/gpt-oss-120b"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
@@ -171,6 +170,9 @@ RAG_FACET_NEAR_DUP_THRESHOLD = 0.8   # 이 이상 유사하면 재게시(미러�
 #nvidia_api
 NIM_KEY = os.getenv("NIM_KEY", "")
 
+# Gemini API (eval/judge용)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+
 # ── 품질 계측 (quality_test) ────────────────────────────────────────────────
 # 산출물 경로. cwd가 아니라 프로젝트 루트 기준으로 고정한다 —
 # 다른 폴더에서 실행해도 같은 곳에 쌓이게 하기 위함.
@@ -187,5 +189,4 @@ DEFAULT_FIXTURE_NAME = "raw_sample.jsonl"
 # 탐지 기준과 실제 필터링 기준이 어긋난다).
 MIN_HANGUL_RATIO = 0.3      # 국내 소스인데 이 미만이면 본문 추출 실패 의심
 DOMESTIC_SOURCES = ("natepann", "dcinside", "namuwiki", "todayhumor")  # 한글 비율 규칙을 적용할 소스
-
 
