@@ -18,7 +18,6 @@ from DB.mongo_client import get_collection
 from perf_log import accumulate
 from preprocessing.cleaner import clean_text
 from preprocessing.chunker import chunk_document
-from preprocessing.relevance import judge_doc
 from quality_test.matching import find_keyword
 
 
@@ -88,15 +87,17 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
 
         clean_content, chunks = process_one(doc)
 
-        with accumulate("전처리:judge_doc"):
-            relevance = judge_doc({
-                "keyword": doc.get("keyword"),
-                "title": doc.get("title"),
-                "chunks": chunks,
-            })
-        for chunk in chunks:
-            chunk["is_relevant"] = relevance.is_relevant
-            chunk["relevance_position"] = relevance.position
+        # process_one()이 이미 find_keyword(clean_content 기준)로 모든 청크에 동일한
+        # is_relevant/relevance_position/relevance_match_count를 붙였다. 문서 단위
+        # 최상위 필드는 그 결과를 그대로 재사용한다 — 별도 판정기로 다시 계산하면
+        # (예전 judge_doc처럼 청크 재조합 텍스트를 보는 다른 알고리즘) is_relevant와
+        # relevance_match_count가 서로 다른 근거로 계산되어 어긋날 수 있다.
+        if chunks:
+            is_relevant = chunks[0]["is_relevant"]
+            relevance_position = chunks[0]["relevance_position"]
+        else:
+            match = find_keyword(doc.get("keyword") or "", doc.get("title") or "", clean_content)
+            is_relevant, relevance_position = match.matched, match.position
 
         output_doc = {
             "_id": doc["_id"],
@@ -111,8 +112,8 @@ def preprocess_documents(keyword: str | None = None) -> list[dict]:
             # 축약하지 않고 전부 저장한다.
             "chunks": chunks,
             "chunk_count": len(chunks),
-            "is_relevant": relevance.is_relevant,
-            "relevance_position": relevance.position,
+            "is_relevant": is_relevant,
+            "relevance_position": relevance_position,
             "processed_at": datetime.now(timezone.utc),
         }
         with accumulate("전처리:Mongo쓰기(replace_one)"):

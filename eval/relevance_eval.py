@@ -1,6 +1,6 @@
 """
 relevance_eval.py
-preprocessing.relevance 판정기를 검증·측정하는 하네스.
+quality_test.matching(find_keyword) 판정기를 검증·측정하는 하네스.
 
 서브커맨드:
   df     : corpus 전체 대비 각 키워드의 문서빈도(DF) 계산.
@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.config_cilent import CLEANED_COLLECTION, QDRANT_COLLECTION
 from DB.mongo_client import get_collection
 from eval.questions import load_keywords
-from preprocessing.relevance import judge_relevance, normalize, doc_body
+from quality_test.matching import find_keyword, normalize
 
 # 오염이 의심되는 소스(피드백 기준). 라벨셋에서 이 소스들을 가중 샘플한다.
 _SUSPECT_SOURCES = ("tavily", "youtube", "natepann")
@@ -49,6 +49,11 @@ def _load_docs() -> list[dict]:
     return list(cleaned.find({}, _PROJECTION))
 
 
+def _doc_body(doc: dict) -> str:
+    """cleaned_memes 문서의 전체 청크 텍스트를 이어붙인다."""
+    return "\n".join(c.get("text", "") for c in doc.get("chunks", []))
+
+
 # ---------------------------------------------------------------- df
 def cmd_df(_args) -> None:
     """전체 corpus 대비 각 키워드의 문서빈도. 높을수록 흔한 토큰(강등 후보)."""
@@ -61,7 +66,7 @@ def cmd_df(_args) -> None:
 
     # doc마다 정규화 전체 텍스트(제목+본문)를 한 번만 만든다.
     norm_by_id = {
-        str(d["_id"]): normalize(d.get("title", "") + "\n" + doc_body(d)) for d in docs
+        str(d["_id"]): normalize(d.get("title", "") + "\n" + _doc_body(d)) for d in docs
     }
 
     # cross_df: "다른 keyword로 크롤된 doc 중 이 키워드가 등장한 비율"
@@ -98,7 +103,7 @@ def cmd_build(args) -> None:
     buckets: dict[tuple[str, str], list[dict]] = defaultdict(list)
     judged: dict[str, object] = {}
     for d in docs:
-        r = judge_relevance(d.get("keyword", ""), d.get("title", ""), doc_body(d))
+        r = find_keyword(d.get("keyword", ""), d.get("title", ""), _doc_body(d))
         judged[str(d["_id"])] = r
         src = d.get("source") or "unknown"
         buckets[(src, r.position)].append(d)
@@ -137,7 +142,7 @@ def cmd_build(args) -> None:
                     "judge_position", "human_label", "title", "snippet"])
         for d in picked:
             r = judged[str(d["_id"])]
-            snippet = doc_body(d)[:300].replace("\n", " ")
+            snippet = _doc_body(d)[:300].replace("\n", " ")
             w.writerow([str(d["_id"]), d.get("keyword", ""), d.get("source") or "",
                         int(r.matched), r.position, "",  # human_label 비움
                         (d.get("title") or "")[:120], snippet])
@@ -165,17 +170,16 @@ def cmd_backfill(args) -> None:
         print("[중단] cleaned_memes에 문서가 없습니다.")
         return
 
-    from preprocessing.relevance import judge_doc
     from collections import Counter
     ops = []
     dist: Counter = Counter()
 
     for doc in docs:
-        r = judge_doc(doc)
-        dist[(r.is_relevant, r.position)] += 1
+        r = find_keyword(doc.get("keyword") or "", doc.get("title") or "", _doc_body(doc))
+        dist[(r.matched, r.position)] += 1
         ops.append(UpdateOne(
             {"_id": doc["_id"]},
-            {"$set": {"is_relevant": r.is_relevant, "relevance_position": r.position}},
+            {"$set": {"is_relevant": r.matched, "relevance_position": r.position}},
         ))
 
     rel = sum(v for (rel, _), v in dist.items() if rel)
@@ -223,7 +227,6 @@ def cmd_qdrant_backfill(args) -> None:
 
         ensure_collection()
 
-    from preprocessing.relevance import judge_doc
     mongo_ops = []
     updated_docs = 0
     updated_points = 0
@@ -231,8 +234,8 @@ def cmd_qdrant_backfill(args) -> None:
 
     for doc in docs:
         if "is_relevant" not in doc or "relevance_position" not in doc:
-            r = judge_doc(doc)
-            is_relevant = r.is_relevant
+            r = find_keyword(doc.get("keyword") or "", doc.get("title") or "", _doc_body(doc))
+            is_relevant = r.matched
             relevance_position = r.position
             mongo_ops.append(UpdateOne(
                 {"_id": doc["_id"]},

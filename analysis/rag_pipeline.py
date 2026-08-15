@@ -286,6 +286,17 @@ def search_sparse_only(
 
 _CONTEXT_SEPARATOR = "\n\n---\n\n"
 
+# 크롤링 원문(디시/네이트판 등 비모더레이션 커뮤니티 포함)을 프롬프트에 이어붙이므로,
+# 모델이 그 안의 문장을 지시로 착각하지 않도록 명시적 경계로 감싼다. 프롬프트
+# 템플릿(rag_prompt_template.md / rag_facet_prompt_template.md) 쪽에도 이 태그 안은
+# 데이터일 뿐이라는 지시문이 짝을 이뤄 존재해야 한다.
+_UNTRUSTED_OPEN = "<수집자료>"
+_UNTRUSTED_CLOSE = "</수집자료>"
+
+
+def _wrap_untrusted(context: str) -> str:
+    return f"{_UNTRUSTED_OPEN}\n{context}\n{_UNTRUSTED_CLOSE}"
+
 
 def build_rag_prompt(
     keyword: str,
@@ -295,7 +306,8 @@ def build_rag_prompt(
 ) -> str:
     """
     rag_prompt_template.md를 읽어 {keyword}/{context}/{question}/{trend_info}를 채운 문자열 반환.
-    {context}는 각 포인트를 '[출처: {title} / {url}]\n{text}' 형태로 만들어 이어붙인 것.
+    {context}는 각 포인트를 '[출처: {title} / {url}]\n{text}' 형태로 만들어 이어붙인 뒤,
+    프롬프트 인젝션 방지를 위해 <수집자료>...</수집자료>로 감싼 것(_wrap_untrusted).
     """
     with open(RAG_PROMPT_PATH, "r", encoding="utf-8") as f:
         template = f.read()
@@ -307,7 +319,7 @@ def build_rag_prompt(
         text = point.payload.get("text", "")
         context_parts.append(f"[출처: {title} / {url}]\n{text}")
 
-    context = _CONTEXT_SEPARATOR.join(context_parts)
+    context = _wrap_untrusted(_CONTEXT_SEPARATOR.join(context_parts))
     # trend_info=None이면 여기서 조회. 이미 계산해둔 값(빈 문자열 포함)을 넘기면
     # 그대로 써서 중복 조회를 막는다(rag_main.py가 콘솔 출력과 공유할 때 사용).
     if trend_info is None:
@@ -511,7 +523,7 @@ def build_facet_prompt(
         text = point.payload.get("text", "")
         context_parts.append(f"[출처: {title} / {url} / 소스유형: {source}]\n{text}")
 
-    context = _CONTEXT_SEPARATOR.join(context_parts)
+    context = _wrap_untrusted(_CONTEXT_SEPARATOR.join(context_parts))
     if trend_info is None:
         trend_info = format_trend_context(keyword)
     return template.format(keyword=keyword, context=context, trend_info=trend_info)

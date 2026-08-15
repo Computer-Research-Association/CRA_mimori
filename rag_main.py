@@ -78,7 +78,7 @@ def ensure_keyword_ready(keyword: str) -> bool:
     stats = embed_documents(keyword)
 
     # 크롤이 0건이 아니어도 검색 가능한 청크가 0개로 끝날 수 있다 — 전처리의 관련성
-    # 판정(judge_doc)이 전부 걸러내거나, 임베딩 단계의 근접중복 스킵에 다 걸리는 경우.
+    # 판정(find_keyword)이 전부 걸러내거나, 임베딩 단계의 근접중복 스킵에 다 걸리는 경우.
     # 여기서 True를 돌려주면 사용자는 몇 분 기다린 뒤 "검색 결과가 없습니다"만 반복해서
     # 보고 이유는 알 수 없으므로, 사유를 밝히고 끊는다.
     if stats.get("chunks", 0) == 0:

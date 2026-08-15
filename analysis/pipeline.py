@@ -113,6 +113,12 @@ def fetch_keyword_chunks(keyword: str) -> list[str]:
 
 _CHUNK_SEPARATOR = "\n\n---\n\n"
 
+# 크롤링 원문(디시/네이트판 등 비모더레이션 커뮤니티 포함)을 프롬프트에 이어붙이므로,
+# 모델이 그 안의 문장을 지시로 착각하지 않도록 명시적 경계로 감싼다. prompt_template.md
+# 쪽에도 이 태그 안은 데이터일 뿐이라는 지시문이 짝을 이뤄 존재해야 한다.
+_UNTRUSTED_OPEN = "<수집자료>"
+_UNTRUSTED_CLOSE = "</수집자료>"
+
 
 def build_prompt(keyword: str, chunks: list[str], trend_info: str | None = None) -> str:
     """prompt_template.md를 읽어 {keyword}, {content}, {trend_info}를 채운 문자열 반환.
@@ -120,10 +126,13 @@ def build_prompt(keyword: str, chunks: list[str], trend_info: str | None = None)
     trend_info를 명시적으로 주면 그대로 쓰고 format_trend_context(실시간 조회)를
     호출하지 않는다. 생략(None)하면 기존과 동일하게 내부에서 조회한다 — API 서버처럼
     캐시된 값을 미리 갖고 있는 호출부는 반드시 trend_info를 넘겨야 실시간 호출이 새지 않는다.
+
+    {content}는 청크 원문을 이어붙인 뒤 프롬프트 인젝션 방지를 위해
+    <수집자료>...</수집자료>로 감싼 것.
     """
     with open(ANALYSIS_PROMPT_PATH, "r", encoding="utf-8") as f:
         template = f.read()
-    content = _CHUNK_SEPARATOR.join(chunks)
+    content = f"{_UNTRUSTED_OPEN}\n{_CHUNK_SEPARATOR.join(chunks)}\n{_UNTRUSTED_CLOSE}"
     if trend_info is None:
         trend_info = format_trend_context(keyword)
     return template.format(keyword=keyword, content=content, trend_info=trend_info)
