@@ -24,8 +24,36 @@ from config.config_cilent import CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECT
 from trend.trend_service import get_cached_trend, get_latest_trend_for_keywords
 from trend.zscore import STATUS_INSUFFICIENT
 from admin_stats import get_admin_stats
+from api.rate_limit import allow as _rate_limit_allow
 
 bp = Blueprint("api", __name__, url_prefix="/api")
+
+# crawl-request는 실제 크롤(Tavily/YouTube 쿼터 소비)+임베딩까지 이어지고,
+# analyze-request는 LLM 호출까지 이어진다 — 둘 다 무인증 공개 엔드포인트라
+# IP당 시간창 제한을 건다(무제한 낯선 키워드 반복 요청으로 쿼터를 태우는 것 방지).
+_CRAWL_RATE_LIMIT = (5, 60)      # 1분에 5회
+_ANALYZE_RATE_LIMIT = (20, 60)   # 1분에 20회 (LLM 호출이라 크롤보다는 덜 비싸서 더 넉넉히)
+
+# 기존 Keywords.md의 키워드는 전부 20자 이내다. 여유를 넉넉히 둔 상한.
+_MAX_KEYWORD_LENGTH = 50
+
+
+def _rate_limited() -> tuple:
+    return jsonify({"error": "요청이 너무 잦습니다. 잠시 후 다시 시도해주세요."}), 429
+
+
+def _keyword_error(keyword: str) -> str | None:
+    """keyword가 유효하지 않으면 에러 메시지를, 유효하면 None을 반환.
+
+    개행/탭 등 제어 문자를 막는 이유: main.py의 Keywords.md는 줄 단위로 키워드를
+    파싱한다(load_keywords). keyword에 '\\n'이 섞여 들어가면 한 번의 등록으로
+    여러 줄이 추가돼 의도치 않은 키워드가 배치 크롤 대상에 몰래 편입된다.
+    """
+    if len(keyword) > _MAX_KEYWORD_LENGTH:
+        return f"키워드는 {_MAX_KEYWORD_LENGTH}자를 넘을 수 없습니다"
+    if any(ord(c) < 0x20 for c in keyword):
+        return "키워드에 줄바꿈이나 제어 문자를 포함할 수 없습니다"
+    return None
 
 
 @bp.route("/health")
@@ -118,10 +146,16 @@ def _analyze_job_id(keyword: str, sources: list[str] | None) -> str:
 
 @bp.route("/analyze-request", methods=["POST"])
 def analyze_request_endpoint():
+    if not _rate_limit_allow("analyze-request", request.remote_addr or "unknown", *_ANALYZE_RATE_LIMIT):
+        return _rate_limited()
+
     data = request.get_json(silent=True) or {}
     keyword = (data.get("keyword") or "").strip()
     if not keyword:
         return jsonify({"error": "keyword가 필요합니다"}), 400
+    keyword_error = _keyword_error(keyword)
+    if keyword_error:
+        return jsonify({"error": keyword_error}), 400
     if keyword not in list_analyzable_keywords():
         return jsonify({"error": f"'{keyword}' 데이터를 찾을 수 없습니다"}), 404
 
@@ -168,10 +202,16 @@ def analyze_request_status(job_id):
 
 @bp.route("/crawl-request", methods=["POST"])
 def crawl_request_endpoint():
+    if not _rate_limit_allow("crawl-request", request.remote_addr or "unknown", *_CRAWL_RATE_LIMIT):
+        return _rate_limited()
+
     data = request.get_json(silent=True) or {}
     keyword = (data.get("keyword") or "").strip()
     if not keyword:
         return jsonify({"error": "keyword가 필요합니다"}), 400
+    keyword_error = _keyword_error(keyword)
+    if keyword_error:
+        return jsonify({"error": keyword_error}), 400
     if keyword in list_analyzable_keywords():
         return jsonify({"error": "이미 존재하는 키워드입니다"}), 400
 
