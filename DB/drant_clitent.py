@@ -1,5 +1,5 @@
-import os
-from dotenv import load_dotenv
+import threading
+
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
@@ -12,13 +12,20 @@ from config.config_cilent import (
     QDRANT_PORT,
 )
 
+# mongo_client.py와 동일한 lazy 초기화 + 이중 검사 락 패턴(스레드 안전). import
+# 시점에 즉시 연결을 만들지 않는다 — Qdrant를 안 쓰는 코드 경로에서 이 모듈을
+# import만 해도 연결을 시도하던 이전 방식은 mongo_client.py와도 불일치했다.
+_client = None
+_client_lock = threading.Lock()
 
-load_dotenv()
 
-client = QdrantClient(
-    host=QDRANT_HOST,
-    port=QDRANT_PORT
-)
+def get_client() -> QdrantClient:
+    global _client
+    if _client is None:
+        with _client_lock:
+            if _client is None:
+                _client = QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
+    return _client
 
 
 def ensure_collection(name: str = QDRANT_COLLECTION) -> None:
@@ -31,6 +38,7 @@ def ensure_collection(name: str = QDRANT_COLLECTION) -> None:
     무관하게 매번 확인한다 (create_payload_index는 이미 있어도 안전하게
     재호출 가능).
     """
+    client = get_client()
     if not client.collection_exists(name):
         client.create_collection(
             collection_name=name,

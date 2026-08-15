@@ -30,7 +30,7 @@ from config.config_cilent import (
     QDRANT_SPARSE_VECTOR_NAME,
 )
 from DB.mongo_client import get_collection
-from DB.drant_clitent import client, ensure_collection
+from DB.drant_clitent import ensure_collection, get_client
 from embedding.encoder import encode_batch
 from perf_log import accumulate
 
@@ -100,7 +100,7 @@ def _delete_existing_points(parent_id: str) -> None:
     '재처리할 때만'이 아니라 '항상' 지운다. 조건부로 만들면 언젠가 조건이 틀린다.
     항상 지우고 넣으면 몇 번을 돌려도 상태가 같아진다(멱등). 비용은 문서당 delete 1회다.
     """
-    client.delete(
+    get_client().delete(
         collection_name=QDRANT_COLLECTION,
         points_selector=models.FilterSelector(filter=_build_delete_filter(parent_id)),
     )
@@ -170,6 +170,7 @@ def embed_documents(keyword: str | None = None) -> dict:
     임베딩 + Qdrant 적재 수행. keyword가 주어지면 해당 키워드 문서만 처리.
     """
     ensure_collection()
+    client = get_client()
 
     memes = get_collection()
     cleaned = get_collection(CLEANED_COLLECTION)

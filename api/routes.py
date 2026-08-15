@@ -6,6 +6,7 @@ analyze는 더 이상 여기서 직접 계산하지 않는다 — llm_requests �
 큐잉/조회만 하고, 실제 임베딩+검색+LLM 호출은 scheduler의
 scripts/llm_request_worker.py가 처리한다(docs/superpowers/specs/2026-08-11-analyze-rag-async-perf-design.md).
 """
+import functools
 import hashlib
 from datetime import datetime, timezone
 
@@ -20,12 +21,27 @@ from analysis.pipeline import (
     unhide_keyword,
 )
 from DB.mongo_client import get_collection
-from config.config_cilent import CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION
+from config.config_cilent import ADMIN_API_KEY, CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION
 from trend.trend_service import get_cached_trend, get_latest_trend_for_keywords
 from trend.zscore import STATUS_INSUFFICIENT
 from admin_stats import get_admin_stats
 
 bp = Blueprint("api", __name__, url_prefix="/api")
+
+
+def require_admin(fn):
+    """관리자 전용 엔드포인트(숨김/복구/완전삭제/admin stats)에 붙인다.
+
+    X-Admin-Key 헤더가 ADMIN_API_KEY와 일치해야 통과. ADMIN_API_KEY가
+    비어있으면(미설정) fail-closed로 전부 막는다 — 설정을 깜빡한 배포가
+    "인증 없음"과 같은 뜻이 되면 안 되므로.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not ADMIN_API_KEY or request.headers.get("X-Admin-Key") != ADMIN_API_KEY:
+            return jsonify({"error": "관리자 인증이 필요합니다"}), 401
+        return fn(*args, **kwargs)
+    return wrapper
 
 
 @bp.route("/health")
@@ -68,16 +84,19 @@ def keywords():
 
 
 @bp.route("/keywords/hidden")
+@require_admin
 def hidden_keywords():
     return jsonify({"keywords": list_hidden_keywords()})
 
 
 @bp.route("/admin/stats")
+@require_admin
 def admin_stats():
     return jsonify(get_admin_stats())
 
 
 @bp.route("/keywords/<keyword>/hide", methods=["POST"])
+@require_admin
 def hide_keyword_endpoint(keyword):
     if keyword not in list_analyzable_keywords():
         return jsonify({"error": f"'{keyword}' 데이터를 찾을 수 없습니다"}), 404
@@ -86,12 +105,14 @@ def hide_keyword_endpoint(keyword):
 
 
 @bp.route("/keywords/<keyword>/unhide", methods=["POST"])
+@require_admin
 def unhide_keyword_endpoint(keyword):
     unhide_keyword(keyword)
     return jsonify({"keyword": keyword, "hidden": False})
 
 
 @bp.route("/keywords/<keyword>", methods=["DELETE"])
+@require_admin
 def delete_keyword_endpoint(keyword):
     if keyword not in list_hidden_keywords():
         return jsonify({"error": "숨긴 키워드만 완전삭제할 수 있습니다. 먼저 숨겨주세요."}), 400

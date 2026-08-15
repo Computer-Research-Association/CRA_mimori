@@ -222,10 +222,11 @@ def cmd_qdrant_backfill(args) -> None:
         return
 
     if not args.dry_run:
-        from DB.drant_clitent import client, ensure_collection
+        from DB.drant_clitent import ensure_collection, get_client
         from qdrant_client.http import models
 
         ensure_collection()
+        client = get_client()
 
     mongo_ops = []
     updated_docs = 0

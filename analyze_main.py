@@ -1,9 +1,9 @@
 """
 analyze_main.py
 이미 임베딩된 밈 키워드 중 하나를 선택하면, Qdrant에 저장된 해당 키워드의
-전체 청크를 로컬 LLM(Ollama)에게 보여주고 분석 결과를 받아 출력한다.
+전체 청크를 NVIDIA NIM LLM에게 보여주고 분석 결과를 받아 출력한다.
 
-기초적인 분석 ㅍ개선 여지 엄청 많음
+기초적인 분석, 개선 여지 엄청 많음
 
 main.py / preprocess_main.py / embed_main.py와 동일하게 루트에서 바로 실행 가능:
     python analyze_main.py

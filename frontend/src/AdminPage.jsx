@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import {
   fetchKeywords, fetchHiddenKeywords, hideKeyword, unhideKeyword,
-  deleteKeywordPermanently, fetchAdminStats,
+  deleteKeywordPermanently, fetchAdminStats, getAdminKey, setAdminKey,
 } from './api.js'
 import { sourceMetaFor } from './sourceMeta.js'
 
@@ -23,12 +23,24 @@ export default function AdminPage() {
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [confirmText, setConfirmText] = useState('')
   const [expandedKeyword, setExpandedKeyword] = useState(null)
+  const [adminKeyInput, setAdminKeyInput] = useState(getAdminKey())
+
+  function loadAdminData() {
+    fetchHiddenKeywords().then(setHiddenKeywords).catch((e) => setError(e.message))
+    fetchAdminStats().then(setStats).catch((e) => setError(e.message))
+  }
 
   useEffect(() => {
     fetchKeywords().then(setKeywords).catch((e) => setError(e.message))
-    fetchHiddenKeywords().then(setHiddenKeywords).catch((e) => setError(e.message))
-    fetchAdminStats().then(setStats).catch((e) => setError(e.message))
+    loadAdminData()
   }, [])
+
+  function handleApplyAdminKey(e) {
+    e.preventDefault()
+    setError(null)
+    setAdminKey(adminKeyInput)
+    loadAdminData()
+  }
 
   async function handleHide(keyword) {
     setError(null)
@@ -79,6 +91,17 @@ export default function AdminPage() {
       <header className="admin-page__header">
         <a href="/" className="admin-page__logo">mimori</a>
         <h1 className="admin-page__title">관리자 화면</h1>
+        <form className="admin-key-form" onSubmit={handleApplyAdminKey}>
+          <input
+            type="password"
+            className="input"
+            aria-label="관리자 키"
+            placeholder="관리자 키"
+            value={adminKeyInput}
+            onChange={(e) => setAdminKeyInput(e.target.value)}
+          />
+          <button type="submit" className="btn btn--sm">적용</button>
+        </form>
       </header>
 
       <main className="admin-page__body">
