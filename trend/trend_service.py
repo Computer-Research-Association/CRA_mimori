@@ -76,6 +76,16 @@ GOOGLE_MIN_BASELINE_AVG = 10
 # 발산 플래그를 남긴다. 초기값이며 실측 후 조정.
 DIVERGENCE_THRESHOLD = 10
 
+# 최종 앙상블 z(final_z)의 대칭 상한.
+# robust_zscore 의 min_iqr 바닥값(zscore.py)은 저빈도+돌발 스파이크 baseline에서
+# 분모를 상수로 고정해 불안정성을 억제하지만, 분자(오늘값-중앙값)가 크면 그래도
+# z가 크게 튈 수 있다(예: 실측 사례 내또출 final_z=+22.73). 프론트엔드 리더보드가
+# final_z로 순위를 매기므로(api/routes.py _trend_rank_key) 이 값이 그대로 노출되면
+# 진짜 '핫함'인 키워드들(보통 z=1~5)을 밀어내고 1위를 차지하는 왜곡이 생긴다.
+# 상태 분류 임계값(|z|=2, zscore.classify_trend)보다 훨씬 위에서 클리핑하므로
+# 상태 라벨(핫함/유행 중 등)은 전혀 바뀌지 않고, 노출/순위용 크기만 보호한다.
+FINAL_Z_CLIP = 8.0
+
 
 def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     """
@@ -105,13 +115,19 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
             "google_ratios": list[dict] | None,  # None = 요청 실패
         }
     """
+    # 밈 이름의 물결표(~)는 스타일적 장식이라 실제 검색어에는 안 붙는다
+    # (예: "거제 야호~"/"좋~다~"는 데이터랩에서 신호가 안 잡히지만 물결표를
+    # 뺀 원형은 정상 조회됨). 소스 API 조회에만 정규화된 키워드를 쓰고,
+    # 반환값의 "keyword"/DB 식별자는 원본을 그대로 유지한다.
+    query_keyword = keyword.replace("~", "").strip()
+
     if related_keywords is None:
-        related_keywords = [f"{keyword} 뜻", f"{keyword}가 뭐야"]
+        related_keywords = [f"{query_keyword} 뜻", f"{query_keyword}가 뭐야"]
 
     note_parts: list[str] = []
 
     # ── 네이버 데이터랩 (주 지표) ──────────────────────────────────────────
-    naver_ratios = _safe_naver_ratios(keyword, related_keywords)
+    naver_ratios = _safe_naver_ratios(query_keyword, related_keywords)
     # 미완성 당일은 판정에서 제외(완성된 최근일을 today_value로)
     naver_scored = drop_incomplete_today(naver_ratios)
     naver_z = zscore_from_series(naver_scored, min_iqr=NAVER_MIN_IQR)
@@ -122,7 +138,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         note_parts.append("naver_excluded_no_signal")
 
     # ── 카카오 블로그/카페 (보조 지표, 채널 분리) ─────────────────────────
-    channels = _safe_kakao_channels(keyword)
+    channels = _safe_kakao_channels(query_keyword)
     blog_counts, cafe_counts = channels["blog"], channels["cafe"]
     # 합산 시계열은 기록·시각화(kakao_counts 필드)용으로만 쓴다 — merge_daily_series는
     # 두 채널의 '공통(교집합) 날짜'만 합산하는데, 신호 유무/z 판단까지 이 교집합
@@ -184,7 +200,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         note_parts.append("kakao_excluded_low_baseline")
 
     # ── 구글 트렌드 (보조 지표) ───────────────────────────────────────────
-    google_ratios = _safe_google_ratios(keyword)
+    google_ratios = _safe_google_ratios(query_keyword)
     google_z = 0.0
     google_usable = False
     if google_ratios is None:
@@ -228,6 +244,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
             weights = dict(FALLBACK_NAVER_KAKAO)  # 스펙 명시 폴백(0.6/0.4)
         total_w = sum(weights.values())
         final_z = sum(weights[s] * zs[s] for s in weights) / total_w
+        final_z = max(-FINAL_Z_CLIP, min(FINAL_Z_CLIP, final_z))
         status = classify_trend(final_z)
         sources = [s for s in ("naver", "kakao", "google") if s in weights]
 
