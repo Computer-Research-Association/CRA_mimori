@@ -85,4 +85,3 @@ docker-compose up --build
 | `config/config_cilent.py` | 모든 설정값(DB명, 크롤링 한도, 청크 크기, 모델명 등)의 단일 소스 |
 | `scheduler/` | 크론 데몬 (Docker 컨테이너의 기본 실행 명령) |
 
-더 자세한 아키텍처/컨벤션은 [`CLAUDE.md`](./CLAUDE.md)를 참고하세요.
