@@ -1,5 +1,5 @@
 """
-llm_request_worker.run_once() 단위 테스트.
+llm_request_worker.run_once() / run_loop() 단위 테스트.
 실제 Mongo/Qdrant/임베딩/LLM 없이 fake collection + monkeypatch로 오케스트레이션만 검증.
 
 실행: uv run python tests/test_llm_request_worker.py
@@ -60,10 +60,11 @@ def test_큐가_비어있으면_아무것도_안한다():
     original_lock = worker.acquire_heavy_job_lock
     worker.acquire_heavy_job_lock = lambda owner: (_ for _ in ()).throw(AssertionError("호출되면 안 됨"))
     try:
-        worker.run_once(collection=collection)
+        did_work = worker.run_once(collection=collection)
+        assert did_work is False, "빈 큐는 False를 돌려줘야 run_loop가 idle로 판단함"
     finally:
         worker.acquire_heavy_job_lock = original_lock
-    print("[OK] 빈 큐는 조용히 반환(락도 안 건드림)")
+    print("[OK] 빈 큐는 조용히 반환(락도 안 건드림) + False 반환")
 
 
 def test_analyze_작업이_정상_처리되면_done으로_바뀐다():
@@ -92,7 +93,8 @@ def test_analyze_작업이_정상_처리되면_done으로_바뀐다():
     worker.analyze = lambda prompt: calls.setdefault("analyze_prompt", prompt) and "분석 결과"
     worker.clean_source_url = lambda url: url
     try:
-        worker.run_once(collection=collection)
+        did_work = worker.run_once(collection=collection)
+        assert did_work is True, "요청을 처리했으면 True를 돌려줘야 함"
         doc = collection._docs["야르"]
         assert doc["status"] == "done", doc
         assert doc["result"]["result"] == "분석 결과", doc
@@ -169,13 +171,14 @@ def test_락을_못잡으면_다시_queued로_돌리고_반환한다():
     original_lock = worker.acquire_heavy_job_lock
     worker.acquire_heavy_job_lock = lambda owner: False
     try:
-        worker.run_once(collection=collection)
+        did_work = worker.run_once(collection=collection)
+        assert did_work is True, "락 경합은 빈 큐가 아니므로 True(=유휴 아님)를 돌려줘야 함"
         doc = collection._docs["야르"]
         assert doc["status"] == "queued", doc
         assert doc["started_at"] is None, doc
     finally:
         worker.acquire_heavy_job_lock = original_lock
-    print("[OK] 락 획득 실패 -> queued로 되돌리고 이번 틱은 skip")
+    print("[OK] 락 획득 실패 -> queued로 되돌리고 이번 틱은 skip (True 반환)")
 
 
 def test_예외_발생시_failed와_에러메시지가_기록되고_락이_해제된다():
@@ -228,6 +231,35 @@ def test_오래된_running_요청은_requeue된다():
     print("[OK] 20분 넘게 running이던 요청은 requeue되어 같은 실행에서 처리됨")
 
 
+class _StopLoop(Exception):
+    """run_loop는 종료하지 않는 게 정상 동작이라(컨테이너 수명 내내 상주),
+    테스트에서는 N번째 호출에서 이 예외를 던져 무한루프를 인위적으로 끊는다."""
+
+
+def test_run_loop는_종료하지_않고_run_once를_반복_호출한다():
+    calls = {"n": 0}
+
+    def fake_run_once(collection=None):
+        calls["n"] += 1
+        if calls["n"] >= 3:
+            raise _StopLoop()
+        return False
+
+    original = (worker.run_once, worker.LLM_WORKER_POLL_INTERVAL_SECONDS, worker.get_collection)
+    worker.run_once = fake_run_once
+    worker.LLM_WORKER_POLL_INTERVAL_SECONDS = 0.01
+    worker.get_collection = lambda name: None
+    try:
+        try:
+            worker.run_loop()
+        except _StopLoop:
+            pass
+        assert calls["n"] == 3, calls
+    finally:
+        worker.run_once, worker.LLM_WORKER_POLL_INTERVAL_SECONDS, worker.get_collection = original
+    print(f"[OK] run_loop: 큐가 비어도 종료하지 않고 계속 폴링함 (polls={calls['n']})")
+
+
 if __name__ == "__main__":
     test_큐가_비어있으면_아무것도_안한다()
     test_analyze_작업이_정상_처리되면_done으로_바뀐다()
@@ -236,4 +268,5 @@ if __name__ == "__main__":
     test_락을_못잡으면_다시_queued로_돌리고_반환한다()
     test_예외_발생시_failed와_에러메시지가_기록되고_락이_해제된다()
     test_오래된_running_요청은_requeue된다()
+    test_run_loop는_종료하지_않고_run_once를_반복_호출한다()
     print("\nALL PASS ✅")

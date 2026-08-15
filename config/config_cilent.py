@@ -21,6 +21,14 @@ HIDDEN_KEYWORDS_COLLECTION = "hidden_keywords"   # 검색 목록에서 숨긴 �
 LOCKS_COLLECTION = "locks"                        # heavy_job_lock 등 프로세스 간 락
 LLM_REQUESTS_COLLECTION = "llm_requests"          # analyze/rag 비동기 큐 겸 결과 캐시
 
+# llm_request_worker.py는 컨테이너 기동 시 --loop로 한 번만 떠서 계속 상주한다
+# (매 요청마다 새 프로세스를 띄우면 BGE-M3 로드에 수십 초가 반복돼 실제 처리
+# 시간보다 콜드스타트가 훨씬 커지기 때문). 이 폴링 간격만큼마다 큐를 확인한다.
+# 상시 상주는 유휴 시에도 BGE-M3(RAM 2~3GB)를 계속 점유한다는 뜻이지만, EC2
+# free -h로 확인한 가용 메모리(6.3GB)가 감당 가능해 콜드스타트 완전 제거를
+# 택했다(2026-08-14). RAM 여유가 없는 환경으로 옮기면 이 상주 방식부터 재검토할 것.
+LLM_WORKER_POLL_INTERVAL_SECONDS = 2
+
 # 검색 설정
 TAVILY_MAX_RESULTS = 20
 TAVILY_SEARCH_DEPTH = "advanced"  # "basic" or "advanced"
