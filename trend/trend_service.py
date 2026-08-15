@@ -124,56 +124,58 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
     # ── 카카오 블로그/카페 (보조 지표, 채널 분리) ─────────────────────────
     channels = _safe_kakao_channels(keyword)
     blog_counts, cafe_counts = channels["blog"], channels["cafe"]
-    # 합산 시계열: baseline 게이트 / 신호 유무는 '합산 기준'으로 판단.
-    # merge_daily_series 는 두 채널의 '공통(교집합) 날짜'만 합산한다(한 채널만
-    # 500건 포화로 최근 구간만 남는 경우 대비). 채널별 z 도 반드시 이 공통 구간에서
-    # 계산해야 합산 z 와 같은 창(window)을 보게 되고, 공통 밖 과거로 채널이 '활성'
-    # 처럼 보이거나 발산 플래그가 어긋나는 일이 없다. → 채널 시계열도 공통일로 제한.
+    # 합산 시계열은 기록·시각화(kakao_counts 필드)용으로만 쓴다 — merge_daily_series는
+    # 두 채널의 '공통(교집합) 날짜'만 합산하는데, 신호 유무/z 판단까지 이 교집합
+    # 기준으로 하면 한쪽 채널이 원래 조용해서(또는 포화로 최근 구간만 남아서) 커버
+    # 범위가 짧을 때 다른 채널의 멀쩡한 과거 데이터까지 통째로 버려진다(실측: 카페는
+    # 19일치 정상 데이터가 있는데 블로그가 1일치뿐이라 교집합이 1일이 되고, 그러면
+    # MIN_SERIES_POINTS=7 미달로 카카오 전체가 매번 "무신호" 처리됨 — 사실상 카카오
+    # 소스가 항상 죽어 있던 원인). 그래서 신호 유무/z/baseline은 채널별로 완전히
+    # 독립적으로 계산한다 — 이렇게 하면 한쪽이 짧아도 다른 쪽의 신호를 그대로 쓴다.
     kakao_counts = merge_daily_series(blog_counts, cafe_counts)
-    common_dates = {row["date"] for row in kakao_counts}
-    # 스코어링용 공통 구간 시계열(원본 blog_counts/cafe_counts 는 기록·시각화용으로 보존).
-    blog_common = [row for row in blog_counts if row["date"] in common_dates]
-    cafe_common = [row for row in cafe_counts if row["date"] in common_dates]
 
-    kakao_scored = drop_incomplete_today(kakao_counts)
-    kakao_active = _has_signal(kakao_scored)
-    kakao_baseline_avg = _baseline_avg(kakao_scored) if kakao_active else 0.0
+    blog_scored = drop_incomplete_today(blog_counts)
+    cafe_scored = drop_incomplete_today(cafe_counts)
+    blog_ch_active = _has_signal(blog_scored)
+    cafe_ch_active = _has_signal(cafe_scored)
 
-    # 채널별 z (합산이 활성일 때만 계산; 아니면 0.0).
+    blog_z = (
+        zscore_from_series(blog_scored, min_iqr=KAKAO_MIN_IQR) if blog_ch_active else 0.0
+    )
+    cafe_z = (
+        zscore_from_series(cafe_scored, min_iqr=KAKAO_MIN_IQR) if cafe_ch_active else 0.0
+    )
+
     # 가중치는 '실제로 신호가 있는' 채널들의 합으로 정규화한다. 이렇게 안 하면
     # blog 에만 언급이 몰리고 cafe 는 전부 0인 밈에서 cafe_z=0 이 절반 가중으로
     # 섞여 kakao_z 가 blog_z 의 절반으로 눌린다(무신호 채널에 의한 희석).
     # → 한 채널만 활성이면 그 채널이 kakao_z 를 그대로 대표한다.
+    ch_weights: dict[str, float] = {}
+    if blog_ch_active:
+        ch_weights["blog"] = KAKAO_BLOG_WEIGHT
+    if cafe_ch_active:
+        ch_weights["cafe"] = KAKAO_CAFE_WEIGHT
+
+    kakao_active = bool(ch_weights)
     if kakao_active:
-        blog_scored = drop_incomplete_today(blog_common)
-        cafe_scored = drop_incomplete_today(cafe_common)
-        blog_ch_active = _has_signal(blog_scored)
-        cafe_ch_active = _has_signal(cafe_scored)
-
-        blog_z = (
-            zscore_from_series(blog_scored, min_iqr=KAKAO_MIN_IQR)
-            if blog_ch_active
-            else 0.0
-        )
-        cafe_z = (
-            zscore_from_series(cafe_scored, min_iqr=KAKAO_MIN_IQR)
-            if cafe_ch_active
-            else 0.0
-        )
-
-        ch_weights: dict[str, float] = {}
-        if blog_ch_active:
-            ch_weights["blog"] = KAKAO_BLOG_WEIGHT
-        if cafe_ch_active:
-            ch_weights["cafe"] = KAKAO_CAFE_WEIGHT
-        # kakao_active(합산 시계열에 신호 있음)면 최소 한 채널은 활성이라 분모>0 보장.
         total_ch_w = sum(ch_weights.values())
         kakao_z = (
             ch_weights.get("blog", 0.0) * blog_z
             + ch_weights.get("cafe", 0.0) * cafe_z
         ) / total_ch_w
+        # baseline 평균도 같은 가중치로 활성 채널만 반영해 합친다.
+        ch_baseline: dict[str, float] = {}
+        if blog_ch_active:
+            ch_baseline["blog"] = _baseline_avg(blog_scored)
+        if cafe_ch_active:
+            ch_baseline["cafe"] = _baseline_avg(cafe_scored)
+        kakao_baseline_avg = (
+            ch_weights.get("blog", 0.0) * ch_baseline.get("blog", 0.0)
+            + ch_weights.get("cafe", 0.0) * ch_baseline.get("cafe", 0.0)
+        ) / total_ch_w
     else:
-        blog_z = cafe_z = kakao_z = 0.0
+        kakao_z = 0.0
+        kakao_baseline_avg = 0.0
 
     kakao_usable = kakao_active and kakao_baseline_avg >= KAKAO_MIN_BASELINE_AVG
     if not kakao_active:
