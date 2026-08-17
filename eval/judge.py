@@ -24,7 +24,9 @@ from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from config.config_cilent import NIM_KEY
 
 # 판정용 모델. 분석 파이프라인과 동일 계열을 쓰되 필요하면 여기서 바꾼다.
-JUDGE_MODEL = "deepseek-ai/deepseek-v4-flash"
+# deepseek-ai/deepseek-v4-flash는 NIM 카탈로그에서 EOL 처리되어([410] Gone) 더 이상
+# 호출 불가 — openai/gpt-oss-120b(ANALYSIS_MODEL과 동일 계열)로 교체.
+JUDGE_MODEL = "openai/gpt-oss-120b"
 
 _RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 _CACHE_PATH = os.path.join(_RESULTS_DIR, "judge_cache.json")
@@ -104,7 +106,9 @@ class Judge:
             model=model,
             api_key=NIM_KEY,
             temperature=0,
-            max_completion_tokens=128,
+            # gpt-oss-120b는 추론 계열이라 보이지 않는 reasoning 토큰을 먼저 소비한다.
+            # 128로는 실제 "점수/인용/이유" 출력 전에 예산이 바닥나 파싱 실패가 남발됨.
+            max_completion_tokens=512,
             timeout=6000,
         )
 

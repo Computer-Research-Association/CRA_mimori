@@ -86,53 +86,74 @@ def main() -> None:
     latency_acc: dict[str, list[float]] = {m: [] for m in METHODS}
     T = metrics.RELEVANT_THRESHOLD                      # 대표 지표용 기본 임계값
 
+    # 회복 불가능한 오류(예: judge 모델이 카탈로그에서 내려감)로 루프가 중간에
+    # 죽어도, 이미 처리한 쿼리 결과는 버리지 않고 저장한다. 예전엔 예외가
+    # main()까지 전파되면 _write_outputs가 아예 실행되지 않아 이미 끝낸
+    # 수십 개 쿼리의 검색+판정 결과가 통째로 사라졌다(스택트레이스만 남고
+    # summary.json/per_query.csv는 직전 실행 결과 그대로 방치).
+    processed_queries: list = []
+    fatal_error: Exception | None = None
+
     for qi, query in enumerate(queries):
         dense_vec = dense_vecs[qi]
         sparse = sparse_weights[qi]
 
-        # 4) 세 방식 검색. latency 편향 방지: 고정 순서면 뒤 방식이 앞 방식이 데운
-        #    Qdrant 세그먼트/OS 캐시 이득을 보므로, 쿼리마다 방식 순서를 셔플한다.
-        order = list(METHODS)
-        random.Random(qi).shuffle(order)
-        results = {m: retrieve(m, query.keyword, dense_vec, sparse) for m in order}
+        try:
+            # 4) 세 방식 검색. latency 편향 방지: 고정 순서면 뒤 방식이 앞 방식이 데운
+            #    Qdrant 세그먼트/OS 캐시 이득을 보므로, 쿼리마다 방식 순서를 셔플한다.
+            order = list(METHODS)
+            random.Random(qi).shuffle(order)
+            results = {m: retrieve(m, query.keyword, dense_vec, sparse) for m in order}
 
-        # 5) union 청크 채점 (방식 무관, 청크당 1회)
-        pool: dict[str, str] = {}  # chunk_id -> text
-        for res in results.values():
-            for c in res.chunks:
-                pool.setdefault(c.chunk_id, c.text)
-        pool_rels = [
-            judge.score(query.id, query.question, cid, text) for cid, text in pool.items()
-        ]
-        rel_by_chunk = dict(zip(pool.keys(), pool_rels))
-        pool_map[query.id] = pool_rels
+            # 5) union 청크 채점 (방식 무관, 청크당 1회)
+            pool: dict[str, str] = {}  # chunk_id -> text
+            for res in results.values():
+                for c in res.chunks:
+                    pool.setdefault(c.chunk_id, c.text)
+            pool_rels = [
+                judge.score(query.id, query.question, cid, text) for cid, text in pool.items()
+            ]
+            rel_by_chunk = dict(zip(pool.keys(), pool_rels))
+            pool_map[query.id] = pool_rels
 
-        # 6) 방식별 원자료 저장 + 대표 지표(기본 임계값 T, linear gain) 한 줄
-        for m in METHODS:
-            res = results[m]
-            rels = [rel_by_chunk[c.chunk_id] for c in res.chunks]
-            rels_map[(query.id, m)] = rels
-            ids_map[(query.id, m)] = [c.chunk_id for c in res.chunks]
-            latency_acc[m].append(res.latency_ms)
+            # 6) 방식별 원자료 저장 + 대표 지표(기본 임계값 T, linear gain) 한 줄
+            for m in METHODS:
+                res = results[m]
+                rels = [rel_by_chunk[c.chunk_id] for c in res.chunks]
+                rels_map[(query.id, m)] = rels
+                ids_map[(query.id, m)] = [c.chunk_id for c in res.chunks]
+                latency_acc[m].append(res.latency_ms)
 
-            row = {
-                "keyword": query.keyword,
-                "query_id": query.id,
-                "question": query.question,
-                "method": m,
-                "latency_ms": round(res.latency_ms, 2),
-                "mrr": round(metrics.mrr(rels, T), 4),
-            }
-            for k in K_VALUES:
-                row[f"p@{k}"] = round(metrics.precision_at_k(rels, k, T), 4)
-                row[f"avgrel@{k}"] = round(metrics.mean_relevance_at_k(rels, k), 4)
-                row[f"ndcg@{k}"] = round(metrics.ndcg_at_k(rels, pool_rels, k), 4)
-            per_query_rows.append(row)
+                row = {
+                    "keyword": query.keyword,
+                    "query_id": query.id,
+                    "question": query.question,
+                    "method": m,
+                    "latency_ms": round(res.latency_ms, 2),
+                    "mrr": round(metrics.mrr(rels, T), 4),
+                }
+                for k in K_VALUES:
+                    row[f"p@{k}"] = round(metrics.precision_at_k(rels, k, T), 4)
+                    row[f"avgrel@{k}"] = round(metrics.mean_relevance_at_k(rels, k), 4)
+                    row[f"ndcg@{k}"] = round(metrics.ndcg_at_k(rels, pool_rels, k), 4)
+                per_query_rows.append(row)
 
-        print(f"  [{qi + 1}/{len(queries)}] {query.question}  (판정 청크 {len(pool)}개)")
+            processed_queries.append(query)
+            print(f"  [{qi + 1}/{len(queries)}] {query.question}  (판정 청크 {len(pool)}개)")
+        except Exception as e:
+            fatal_error = e
+            print(f"\n[중단] 쿼리 {qi + 1}/{len(queries)}({query.id})에서 회복 불가능한 오류 발생 — "
+                  f"이미 처리한 {len(processed_queries)}개 쿼리 결과는 저장하고 중단합니다: {e}")
+            break
 
-    # 7) 집계 + 저장 + 출력
-    summary = _summarize(rels_map, pool_map, ids_map, latency_acc, queries)
+    if not processed_queries:
+        if fatal_error is not None:
+            raise fatal_error
+        print("[중단] 처리된 쿼리가 없습니다.")
+        sys.exit(1)
+
+    # 7) 집계 + 저장 + 출력 (fatal_error로 중단됐어도 processed_queries만큼은 온전히 반영)
+    summary = _summarize(rels_map, pool_map, ids_map, latency_acc, processed_queries)
     summary["judge"] = {
         "parse_failures": judge.parse_failures,
         "api_failures": judge.api_failures,
