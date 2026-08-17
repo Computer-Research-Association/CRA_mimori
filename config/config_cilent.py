@@ -29,6 +29,12 @@ LLM_REQUESTS_COLLECTION = "llm_requests"          # analyze/rag 비동기 큐 �
 # 택했다(2026-08-14). RAM 여유가 없는 환경으로 옮기면 이 상주 방식부터 재검토할 것.
 LLM_WORKER_POLL_INTERVAL_SECONDS = 2
 
+# analyze 스트리밍 답변을 Mongo에 반영하는 최소 간격(초). 청크마다 쓰면 LLM이
+# 토큰을 뱉는 속도로 Mongo write가 발생해 부담이 크므로, 이 간격보다 짧게는
+# 건너뛴다. 마지막 청크가 스로틀에 걸려도 상관없다 — 완료 시 최종 전체 텍스트로
+# 덮어써진다(scripts/llm_request_worker.py).
+ANALYZE_STREAM_WRITE_INTERVAL_SECONDS = 0.75
+
 # 검색 설정
 TAVILY_MAX_RESULTS = 20
 TAVILY_SEARCH_DEPTH = "advanced"  # "basic" or "advanced"

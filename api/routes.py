@@ -162,6 +162,7 @@ def analyze_request_status(job_id):
         "result": result.get("result"),
         "sources": result.get("sources"),
         "trend": result.get("trend"),
+        "partial_result": result.get("partial_text"),
         "error": doc["error"],
     })
 

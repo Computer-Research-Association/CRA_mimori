@@ -19,6 +19,7 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
   const [status, setStatus] = useState('queued')
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
+  const [partialResult, setPartialResult] = useState(null)
   const [sources, setSources] = useState([])
   const [trend, setTrend] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
@@ -31,6 +32,8 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
         const data = await fetchAnalyzeStatus(jobId)
         if (cancelledRef.current) return
         setStatus(data.status)
+        if (data.sources && data.sources.length > 0) setSources(data.sources)
+        if (data.partial_result) setPartialResult(data.partial_result)
         if (data.status === 'done') {
           clearInterval(timerRef.current)
           setResult(data.result)
@@ -52,6 +55,7 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
     setStatus('queued')
     setError(null)
     setResult(null)
+    setPartialResult(null)
     setSources([])
     setTrend(null)
 
@@ -101,6 +105,7 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
   const zNote = typeof z === 'number' ? ` (z ${z >= 0 ? '+' : ''}${z.toFixed(2)})` : ''
   const trendLine = trend ? `트렌드: ${trend.status}.` : null
   const loading = status === 'queued' || status === 'running'
+  const displayText = result || partialResult
 
   return (
     <div className="entry">
@@ -112,12 +117,13 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
         </p>
       )}
       {primarySeries && <TrendChart points={primarySeries.points} label={primarySeries.label} />}
-      {loading && <LoadingStages messages={ANALYZE_LOADING_MESSAGES} />}
-      {result && (
+      {loading && !displayText && <LoadingStages messages={ANALYZE_LOADING_MESSAGES} />}
+      {displayText && (
         <>
           <div className="markdown-body">
-            <ReactMarkdown>{result}</ReactMarkdown>
+            <ReactMarkdown>{displayText}</ReactMarkdown>
           </div>
+          {loading && !result && <p className="loading-line">작성 중...</p>}
           {sources.length > 0 && (
             <ul className="source-list">
               {sources.map((s, i) => (

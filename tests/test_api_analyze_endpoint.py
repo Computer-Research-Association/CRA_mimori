@@ -195,9 +195,39 @@ def test_GET_완료된_결과를_반환한다():
         assert body["result"] == "분석 결과 텍스트", body
         assert body["sources"] == [{"title": "제목", "url": "https://example.com"}], body
         assert body["trend"] == {"status": "유행 중"}, body
+        assert body["partial_result"] is None, "완료된 결과엔 partial_text가 없으므로 None이어야 함"
     finally:
         routes.get_collection = original_get_collection
     print("[OK] GET 완료된 analyze 결과 반환")
+
+
+def test_GET_처리중이면_partial_result를_반환한다():
+    job_id = _analyze_job_id("야르", None)
+    fake = _FakeCollection([{
+        "_id": job_id, "keyword": "야르", "sources": None,
+        "status": "running", "requested_at": datetime.now(timezone.utc),
+        "started_at": datetime.now(timezone.utc), "completed_at": None,
+        "error": None,
+        "result": {
+            "sources": [{"title": "제목", "url": "https://example.com"}],
+            "trend": {"status": "유행 중"},
+            "partial_text": "지금까지 생성된 답변...",
+        },
+    }])
+    original_get_collection = _patch(routes, "get_collection", lambda name: fake)
+    try:
+        app = create_app()
+        client = app.test_client()
+        resp = client.get(f"/api/analyze-request/{job_id}")
+        assert resp.status_code == 200, resp.status_code
+        body = resp.get_json()
+        assert body["status"] == "running", body
+        assert body["result"] is None, "아직 완료 전이므로 최종 result는 None이어야 함"
+        assert body["sources"] == [{"title": "제목", "url": "https://example.com"}], body
+        assert body["partial_result"] == "지금까지 생성된 답변...", body
+    finally:
+        routes.get_collection = original_get_collection
+    print("[OK] GET 처리중(running) -> 조기 노출된 sources/partial_result 반환")
 
 
 if __name__ == "__main__":
@@ -210,4 +240,5 @@ if __name__ == "__main__":
     test_failed_상태는_재요청시_queued로_리셋된다()
     test_GET_요청이력_없으면_404()
     test_GET_완료된_결과를_반환한다()
+    test_GET_처리중이면_partial_result를_반환한다()
     print("\nALL PASS ✅")
