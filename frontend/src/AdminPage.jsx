@@ -89,7 +89,7 @@ export default function AdminPage() {
   return (
     <div className="admin-page">
       <header className="admin-page__header">
-        <a href="/" className="admin-page__logo">mimori</a>
+        <a href="/" className="admin-page__logo">MEMEMORY</a>
         <h1 className="admin-page__title">관리자 화면</h1>
         <form className="admin-key-form" onSubmit={handleApplyAdminKey}>
           <input

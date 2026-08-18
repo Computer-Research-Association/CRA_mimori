@@ -29,7 +29,7 @@ describe('AdminPage', () => {
   it('별도 페이지로 렌더링되며 홈으로 돌아가는 링크가 있다', async () => {
     setup()
     render(<AdminPage />)
-    const home = await screen.findByRole('link', { name: 'mimori' })
+    const home = await screen.findByRole('link', { name: 'MEMEMORY' })
     expect(home).toHaveAttribute('href', '/')
   })
 
