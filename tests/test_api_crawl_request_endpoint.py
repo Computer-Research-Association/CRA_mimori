@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import api.app as app_module
 import api.routes as routes
 from api.app import create_app
+from api.rate_limit import reset as reset_rate_limit
 
 
 def _patch(target, name, value):
@@ -116,6 +117,44 @@ def test_keyword_없이_요청하면_400():
     print("[OK] keyword 누락 -> 400")
 
 
+def test_keyword에_개행이_있으면_400():
+    reset_rate_limit()
+    app = create_app()
+    client = app.test_client()
+    resp = client.post("/api/crawl-request", json={"keyword": "야르\n쌰갈"})
+    assert resp.status_code == 400, resp.status_code
+    assert "제어 문자" in resp.get_json()["error"]
+    print("[OK] keyword에 개행 -> 400 (Keywords.md 줄 오염 방지)")
+
+
+def test_keyword가_너무_길면_400():
+    reset_rate_limit()
+    app = create_app()
+    client = app.test_client()
+    resp = client.post("/api/crawl-request", json={"keyword": "가" * 51})
+    assert resp.status_code == 400, resp.status_code
+    print("[OK] keyword 50자 초과 -> 400")
+
+
+def test_분당_상한을_넘으면_429():
+    reset_rate_limit()
+    original_kw = _patch(routes, "list_analyzable_keywords", lambda: [])
+    original_get_collection = _patch(routes, "get_collection", lambda name: _FakeCollection())
+    try:
+        app = create_app()
+        client = app.test_client()
+        for i in range(5):
+            resp = client.post("/api/crawl-request", json={"keyword": f"키워드{i}"})
+            assert resp.status_code == 202, (i, resp.status_code)
+        resp = client.post("/api/crawl-request", json={"keyword": "여섯번째"})
+        assert resp.status_code == 429, resp.status_code
+    finally:
+        routes.list_analyzable_keywords = original_kw
+        routes.get_collection = original_get_collection
+        reset_rate_limit()  # 이 테스트가 상한을 다 써버렸으니 뒤에 오는 테스트로 새지 않게 정리
+    print("[OK] 분당 5회 초과 -> 429")
+
+
 def test_GET_요청이력_없으면_404():
     original_get_collection = _patch(routes, "get_collection", lambda name: _FakeCollection())
     try:
@@ -155,6 +194,9 @@ if __name__ == "__main__":
     test_이미_큐에_있으면_기존_상태를_반환한다()
     test_failed_상태는_재요청시_queued로_리셋된다()
     test_keyword_없이_요청하면_400()
+    test_keyword에_개행이_있으면_400()
+    test_keyword가_너무_길면_400()
+    test_분당_상한을_넘으면_429()
     test_GET_요청이력_없으면_404()
     test_GET_상태_조회()
     print("\nALL PASS ✅")
