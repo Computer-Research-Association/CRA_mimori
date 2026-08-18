@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   fetchKeywords, fetchTrend, fetchTrendLeaderboard, fetchAdminStats, requestCrawl, fetchCrawlStatus,
   AVAILABLE_SOURCES, submitAnalyzeRequest, fetchAnalyzeStatus,
+  fetchHiddenKeywords, hideKeyword, unhideKeyword, deleteKeywordPermanently, getAdminKey, setAdminKey,
 } from './api.js'
 
 beforeEach(() => {
@@ -49,10 +50,10 @@ describe('fetchTrend', () => {
 })
 
 describe('fetchAdminStats', () => {
-  it('/api/admin/stats를 호출하고 결과를 그대로 반환한다', async () => {
+  it('/api/admin/stats를 X-Admin-Key 헤더와 함께 호출하고 결과를 그대로 반환한다', async () => {
     fetch.mockReturnValue(jsonResponse({ keyword_count: 22, keyword_cap: 60 }))
     const result = await fetchAdminStats()
-    expect(fetch).toHaveBeenCalledWith('/api/admin/stats')
+    expect(fetch).toHaveBeenCalledWith('/api/admin/stats', { headers: { 'X-Admin-Key': expect.any(String) } })
     expect(result).toEqual({ keyword_count: 22, keyword_cap: 60 })
   })
 })
@@ -117,6 +118,35 @@ describe('fetchCrawlStatus', () => {
     const result = await fetchCrawlStatus('흘로망')
     expect(fetch).toHaveBeenCalledWith('/api/crawl-request/흘로망')
     expect(result.status).toBe('running')
+  })
+})
+
+describe('관리자 키', () => {
+  it('setAdminKey로 저장한 값이 admin 전용 요청 헤더에 실린다', async () => {
+    setAdminKey('내키')
+    expect(getAdminKey()).toBe('내키')
+
+    fetch.mockReturnValue(jsonResponse(['오운완']))
+    await fetchHiddenKeywords()
+    expect(fetch).toHaveBeenCalledWith('/api/keywords/hidden', { headers: { 'X-Admin-Key': '내키' } })
+
+    fetch.mockReturnValue(jsonResponse({ keyword: '야르', hidden: true }))
+    await hideKeyword('야르')
+    expect(fetch).toHaveBeenCalledWith('/api/keywords/야르/hide', {
+      method: 'POST', headers: { 'X-Admin-Key': '내키' },
+    })
+
+    fetch.mockReturnValue(jsonResponse({ keyword: '야르', hidden: false }))
+    await unhideKeyword('야르')
+    expect(fetch).toHaveBeenCalledWith('/api/keywords/야르/unhide', {
+      method: 'POST', headers: { 'X-Admin-Key': '내키' },
+    })
+
+    fetch.mockReturnValue(jsonResponse({ keyword: '야르', deleted: true }))
+    await deleteKeywordPermanently('야르')
+    expect(fetch).toHaveBeenCalledWith('/api/keywords/야르', {
+      method: 'DELETE', headers: { 'X-Admin-Key': '내키' },
+    })
   })
 })
 

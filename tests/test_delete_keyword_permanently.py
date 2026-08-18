@@ -41,16 +41,16 @@ def test_삭제시_llm_requests도_keyword_기준으로_지운다():
         return fake_collections[key]
 
     original_get_collection = pipeline.get_collection
-    original_client = pipeline.client
+    original_get_client = pipeline.get_client
     pipeline.get_collection = fake_get_collection
-    pipeline.client = _FakeQdrantClient()
+    pipeline.get_client = lambda: _FakeQdrantClient()
     try:
         pipeline.delete_keyword_permanently("야르")
         assert fake_collections["llm_requests"].deleted_many_filters == [{"keyword": "야르"}], \
             fake_collections["llm_requests"].deleted_many_filters
     finally:
         pipeline.get_collection = original_get_collection
-        pipeline.client = original_client
+        pipeline.get_client = original_get_client
     print("[OK] delete_keyword_permanently가 llm_requests도 keyword 기준으로 정리함")
 
 

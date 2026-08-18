@@ -2,6 +2,10 @@
 /api/health, /api/keywords 엔드포인트 테스트.
 list_analyzable_keywords는 Mongo를 건드리므로 monkeypatch로 대체한다.
 
+관리자 전용 엔드포인트(hide/unhide/완전삭제/admin stats)는 routes.ADMIN_API_KEY를
+monkeypatch해서 고정 키를 넣고 X-Admin-Key 헤더로 넘긴다 — 실제 .env 값과
+무관하게 항상 같은 방식으로 테스트한다.
+
 실행: uv run python tests/test_api_keywords_health.py
 """
 import os
@@ -11,6 +15,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import api.app as app_module
 import api.routes as routes
+
+_TEST_ADMIN_KEY = "테스트용-관리자-키"
+_ADMIN_HEADERS = {"X-Admin-Key": _TEST_ADMIN_KEY}
+
+
+def _with_admin_key(fn):
+    """테스트 동안만 routes.ADMIN_API_KEY를 고정값으로 바꾸고 끝나면 원복한다."""
+    def wrapper(*args, **kwargs):
+        original = routes.ADMIN_API_KEY
+        routes.ADMIN_API_KEY = _TEST_ADMIN_KEY
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            routes.ADMIN_API_KEY = original
+    return wrapper
 
 
 def test_health는_ok를_반환한다():
@@ -36,13 +55,14 @@ def test_keywords는_숨김_제외한_목록을_JSON으로_반환한다():
     print("[OK] /api/keywords (숨김 제외)")
 
 
+@_with_admin_key
 def test_hidden_keywords는_숨긴_목록을_반환한다():
     original = routes.list_hidden_keywords
     routes.list_hidden_keywords = lambda: ["오운완"]
     try:
         app = app_module.create_app()
         client = app.test_client()
-        resp = client.get("/api/keywords/hidden")
+        resp = client.get("/api/keywords/hidden", headers=_ADMIN_HEADERS)
         assert resp.status_code == 200, resp.status_code
         assert resp.get_json() == {"keywords": ["오운완"]}
     finally:
@@ -50,6 +70,7 @@ def test_hidden_keywords는_숨긴_목록을_반환한다():
     print("[OK] /api/keywords/hidden")
 
 
+@_with_admin_key
 def test_존재하지_않는_키워드_숨기기는_404():
     original_list = routes.list_analyzable_keywords
     original_hide = routes.hide_keyword
@@ -58,7 +79,7 @@ def test_존재하지_않는_키워드_숨기기는_404():
     try:
         app = app_module.create_app()
         client = app.test_client()
-        resp = client.post("/api/keywords/없는키워드/hide")
+        resp = client.post("/api/keywords/없는키워드/hide", headers=_ADMIN_HEADERS)
         assert resp.status_code == 404, resp.status_code
         assert "error" in resp.get_json()
     finally:
@@ -67,6 +88,7 @@ def test_존재하지_않는_키워드_숨기기는_404():
     print("[OK] 존재하지 않는 키워드 숨기기 -> 404")
 
 
+@_with_admin_key
 def test_존재하는_키워드_숨기기는_hide_keyword를_호출한다():
     calls = []
     original_list = routes.list_analyzable_keywords
@@ -76,7 +98,7 @@ def test_존재하는_키워드_숨기기는_hide_keyword를_호출한다():
     try:
         app = app_module.create_app()
         client = app.test_client()
-        resp = client.post("/api/keywords/야르/hide")
+        resp = client.post("/api/keywords/야르/hide", headers=_ADMIN_HEADERS)
         assert resp.status_code == 200, resp.status_code
         assert resp.get_json() == {"keyword": "야르", "hidden": True}
         assert calls == ["야르"], calls
@@ -86,6 +108,7 @@ def test_존재하는_키워드_숨기기는_hide_keyword를_호출한다():
     print("[OK] /api/keywords/<keyword>/hide")
 
 
+@_with_admin_key
 def test_키워드_숨김_해제는_unhide_keyword를_호출한다():
     calls = []
     original = routes.unhide_keyword
@@ -93,7 +116,7 @@ def test_키워드_숨김_해제는_unhide_keyword를_호출한다():
     try:
         app = app_module.create_app()
         client = app.test_client()
-        resp = client.post("/api/keywords/야르/unhide")
+        resp = client.post("/api/keywords/야르/unhide", headers=_ADMIN_HEADERS)
         assert resp.status_code == 200, resp.status_code
         assert resp.get_json() == {"keyword": "야르", "hidden": False}
         assert calls == ["야르"], calls
@@ -102,6 +125,7 @@ def test_키워드_숨김_해제는_unhide_keyword를_호출한다():
     print("[OK] /api/keywords/<keyword>/unhide")
 
 
+@_with_admin_key
 def test_숨기지_않은_키워드_완전삭제는_400():
     original_hidden = routes.list_hidden_keywords
     original_delete = routes.delete_keyword_permanently
@@ -110,7 +134,7 @@ def test_숨기지_않은_키워드_완전삭제는_400():
     try:
         app = app_module.create_app()
         client = app.test_client()
-        resp = client.delete("/api/keywords/야르")
+        resp = client.delete("/api/keywords/야르", headers=_ADMIN_HEADERS)
         assert resp.status_code == 400, resp.status_code
         assert "error" in resp.get_json()
     finally:
@@ -119,6 +143,7 @@ def test_숨기지_않은_키워드_완전삭제는_400():
     print("[OK] 숨기지 않은 키워드 완전삭제 -> 400")
 
 
+@_with_admin_key
 def test_숨긴_키워드_완전삭제는_delete_keyword_permanently를_호출한다():
     calls = []
     original_hidden = routes.list_hidden_keywords
@@ -128,7 +153,7 @@ def test_숨긴_키워드_완전삭제는_delete_keyword_permanently를_호출�
     try:
         app = app_module.create_app()
         client = app.test_client()
-        resp = client.delete("/api/keywords/야르")
+        resp = client.delete("/api/keywords/야르", headers=_ADMIN_HEADERS)
         assert resp.status_code == 200, resp.status_code
         assert resp.get_json() == {"keyword": "야르", "deleted": True}
         assert calls == ["야르"], calls
@@ -138,6 +163,7 @@ def test_숨긴_키워드_완전삭제는_delete_keyword_permanently를_호출�
     print("[OK] DELETE /api/keywords/<keyword>")
 
 
+@_with_admin_key
 def test_admin_stats는_get_admin_stats_결과를_그대로_반환한다():
     original = routes.get_admin_stats
     routes.get_admin_stats = lambda: {
@@ -148,12 +174,44 @@ def test_admin_stats는_get_admin_stats_결과를_그대로_반환한다():
     try:
         app = app_module.create_app()
         client = app.test_client()
-        resp = client.get("/api/admin/stats")
+        resp = client.get("/api/admin/stats", headers=_ADMIN_HEADERS)
         assert resp.status_code == 200, resp.status_code
         assert resp.get_json()["keyword_count"] == 22
     finally:
         routes.get_admin_stats = original
     print("[OK] /api/admin/stats")
+
+
+@_with_admin_key
+def test_관리자_키_없이_요청하면_401로_거부된다():
+    app = app_module.create_app()
+    client = app.test_client()
+    resp = client.get("/api/admin/stats")  # 헤더 없음
+    assert resp.status_code == 401, resp.status_code
+    assert "error" in resp.get_json()
+    print("[OK] 관리자 키 없이 요청 -> 401")
+
+
+@_with_admin_key
+def test_관리자_키가_틀리면_401로_거부된다():
+    app = app_module.create_app()
+    client = app.test_client()
+    resp = client.delete("/api/keywords/야르", headers={"X-Admin-Key": "틀린키"})
+    assert resp.status_code == 401, resp.status_code
+    print("[OK] 관리자 키 불일치 -> 401")
+
+
+def test_ADMIN_API_KEY_미설정이면_헤더를_줘도_401로_막는다():
+    original = routes.ADMIN_API_KEY
+    routes.ADMIN_API_KEY = ""
+    try:
+        app = app_module.create_app()
+        client = app.test_client()
+        resp = client.get("/api/admin/stats", headers={"X-Admin-Key": "아무거나"})
+        assert resp.status_code == 401, resp.status_code
+    finally:
+        routes.ADMIN_API_KEY = original
+    print("[OK] ADMIN_API_KEY 미설정 -> fail-closed로 401")
 
 
 if __name__ == "__main__":
@@ -166,4 +224,7 @@ if __name__ == "__main__":
     test_숨기지_않은_키워드_완전삭제는_400()
     test_숨긴_키워드_완전삭제는_delete_keyword_permanently를_호출한다()
     test_admin_stats는_get_admin_stats_결과를_그대로_반환한다()
+    test_관리자_키_없이_요청하면_401로_거부된다()
+    test_관리자_키가_틀리면_401로_거부된다()
+    test_ADMIN_API_KEY_미설정이면_헤더를_줘도_401로_막는다()
     print("\nALL PASS ✅")

@@ -3,9 +3,9 @@ analysis/pipeline.py
 이미 임베딩된 밈 키워드 목록 조회, Qdrant 청크 조회, 프롬프트 조립, LLM 분석 호출.
 """
 
+import re
 import time
 
-import ollama
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from qdrant_client.http import models
 
@@ -20,7 +20,7 @@ from config.config_cilent import (
     QDRANT_COLLECTION,
     TREND_COLLECTION,
 )
-from DB.drant_clitent import client, ensure_collection
+from DB.drant_clitent import ensure_collection, get_client
 from DB.mongo_client import get_collection
 from trend.trend_service import format_trend_context
 
@@ -75,7 +75,7 @@ def delete_keyword_permanently(keyword: str) -> None:
     get_collection(CRAWL_REQUESTS_COLLECTION).delete_one({"_id": keyword})
     get_collection(HIDDEN_KEYWORDS_COLLECTION).delete_one({"_id": keyword})
     get_collection(LLM_REQUESTS_COLLECTION).delete_many({"keyword": keyword})
-    client.delete(
+    get_client().delete(
         collection_name=QDRANT_COLLECTION,
         points_selector=models.Filter(
             must=[models.FieldCondition(key="keyword", match=models.MatchValue(value=keyword))]
@@ -95,6 +95,7 @@ def fetch_keyword_chunks(keyword: str) -> list[str]:
         must=[models.FieldCondition(key="keyword", match=models.MatchValue(value=keyword))]
     )
 
+    client = get_client()
     texts = []
     offset = None
     while True:
@@ -137,8 +138,6 @@ def build_prompt(keyword: str, chunks: list[str], trend_info: str | None = None)
         trend_info = format_trend_context(keyword)
     return template.format(keyword=keyword, content=content, trend_info=trend_info)
 
-
-import re
 
 # 상태 코드가 메시지에 "[529]"처럼 대괄호로 박혀 나오는 경우, 5xx 전부를 서버 쪽
 # 일시적 오류로 간주한다 (503 ResourceExhausted, 529 Overloaded 등 매번 새 코드가

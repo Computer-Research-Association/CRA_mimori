@@ -23,7 +23,7 @@ from config.config_cilent import (
     RAG_PROMPT_PATH,
     RAG_TOP_K,
 )
-from DB.drant_clitent import client
+from DB.drant_clitent import get_client
 from embedding.pipeline import _to_sparse_vector
 from quality_test.matching import normalize as _normalize_for_match
 from trend.trend_service import format_trend_context
@@ -70,7 +70,7 @@ def _query_points_with_retry(max_retries: int = 3, base_delay: float = 2.0, **kw
     ResponseHandlingException(예: WinError 10054)이면 지수 백오프로 재시도한다."""
     for attempt in range(1, max_retries + 1):
         try:
-            return client.query_points(**kwargs)
+            return get_client().query_points(**kwargs)
         except ResponseHandlingException as e:
             if attempt == max_retries:
                 raise

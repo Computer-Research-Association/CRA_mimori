@@ -5,6 +5,11 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 load_dotenv()
 
+# api/routes.py의 관리자 전용 엔드포인트(hide/unhide/완전삭제/admin stats)를 보호하는
+# 공유 시크릿. X-Admin-Key 헤더와 비교한다. 비어있으면(미설정) 해당 엔드포인트는
+# 전부 401로 막는다(fail-closed) — 값을 깜빡 안 넣었다고 인증이 풀리면 안 되므로.
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
+
 # Tavily
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 
