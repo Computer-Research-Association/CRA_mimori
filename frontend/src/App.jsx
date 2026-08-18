@@ -54,7 +54,7 @@ export default function App() {
       <div className="home-screen">
         <AdminLink className="home-screen__admin-link" />
         <div className="home-hero">
-          <div className="home-hero__wordmark">mimori</div>
+          <div className="home-hero__wordmark">MEMEMORY</div>
           <p className="home-hero__subtitle">밈·신조어 검색</p>
 
           {keywordsError && (
@@ -97,7 +97,7 @@ export default function App() {
           onClick={handleLogoClick}
           aria-label="홈으로 돌아가기"
         >
-          mimori
+          MEMEMORY
         </button>
 
         <div className="results-topbar__search">
