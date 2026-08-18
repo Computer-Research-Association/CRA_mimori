@@ -1,0 +1,152 @@
+{
+  "methods": {
+    "dense": {
+      "p@3": 0.5985,
+      "avgrel@3": 1.5644,
+      "ndcg@3": 0.8227,
+      "p@5": 0.6205,
+      "avgrel@5": 1.5795,
+      "ndcg@5": 0.8433,
+      "mrr": 0.6674,
+      "latency_median_ms": 780.0,
+      "latency_p95_ms": 965.7
+    },
+    "sparse": {
+      "p@3": 0.697,
+      "avgrel@3": 1.6667,
+      "ndcg@3": 0.8871,
+      "p@5": 0.6818,
+      "avgrel@5": 1.6432,
+      "ndcg@5": 0.8917,
+      "mrr": 0.8081,
+      "latency_median_ms": 765.9,
+      "latency_p95_ms": 890.7
+    },
+    "hybrid": {
+      "p@3": 0.7045,
+      "avgrel@3": 1.6856,
+      "ndcg@3": 0.9057,
+      "p@5": 0.6909,
+      "avgrel@5": 1.6591,
+      "ndcg@5": 0.9064,
+      "mrr": 0.8485,
+      "latency_median_ms": 803.9,
+      "latency_p95_ms": 1252.2
+    }
+  },
+  "overlap": {
+    "dense-sparse": 0.1913,
+    "dense-hybrid": 0.4589,
+    "sparse-hybrid": 0.5138
+  },
+  "significance": {
+    "hybrid_vs_dense": {
+      "ndcg@5": {
+        "mean_diff": 0.0631,
+        "ci_low": 0.0346,
+        "ci_high": 0.0916,
+        "significant": true,
+        "n": 88,
+        "wins": 46
+      },
+      "p@5": {
+        "mean_diff": 0.0705,
+        "ci_low": 0.0341,
+        "ci_high": 0.1091,
+        "significant": true,
+        "n": 88,
+        "wins": 32
+      },
+      "mrr": {
+        "mean_diff": 0.1811,
+        "ci_low": 0.1157,
+        "ci_high": 0.2481,
+        "significant": true,
+        "n": 88,
+        "wins": 32
+      }
+    },
+    "hybrid_vs_sparse": {
+      "ndcg@5": {
+        "mean_diff": 0.0147,
+        "ci_low": -0.003,
+        "ci_high": 0.0324,
+        "significant": false,
+        "n": 88,
+        "wins": 35
+      },
+      "p@5": {
+        "mean_diff": 0.0091,
+        "ci_low": -0.0205,
+        "ci_high": 0.0409,
+        "significant": false,
+        "n": 88,
+        "wins": 21
+      },
+      "mrr": {
+        "mean_diff": 0.0403,
+        "ci_low": 0.0015,
+        "ci_high": 0.0824,
+        "significant": true,
+        "n": 88,
+        "wins": 10
+      }
+    }
+  },
+  "sensitivity": {
+    "threshold": {
+      "t=1": {
+        "dense": {
+          "p@5": 0.9591,
+          "mrr": 0.9716
+        },
+        "sparse": {
+          "p@5": 0.9614,
+          "mrr": 0.9943
+        },
+        "hybrid": {
+          "p@5": 0.9682,
+          "mrr": 0.9943
+        }
+      },
+      "t=2": {
+        "dense": {
+          "p@5": 0.6205,
+          "mrr": 0.6674
+        },
+        "sparse": {
+          "p@5": 0.6818,
+          "mrr": 0.8081
+        },
+        "hybrid": {
+          "p@5": 0.6909,
+          "mrr": 0.8485
+        }
+      }
+    },
+    "ndcg_gain": {
+      "linear": {
+        "dense": 0.8433,
+        "sparse": 0.8917,
+        "hybrid": 0.9064
+      },
+      "exp": {
+        "dense": 0.8017,
+        "sparse": 0.8629,
+        "hybrid": 0.8809
+      }
+    }
+  },
+  "k_values": [
+    3,
+    5
+  ],
+  "top_k": 5,
+  "threshold": 2,
+  "n_queries": 88,
+  "judge": {
+    "parse_failures": 19,
+    "api_failures": 0,
+    "total_scored": 755
+  }
+}
