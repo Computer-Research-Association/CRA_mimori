@@ -50,7 +50,11 @@ from analysis.rag_pipeline import (
     facet_search,
 )
 from DB.mongo_client import get_collection
-from config.config_cilent import LLM_REQUESTS_COLLECTION, LLM_WORKER_POLL_INTERVAL_SECONDS
+from config.config_cilent import (
+    ANALYZE_STREAM_WRITE_INTERVAL_SECONDS,
+    LLM_REQUESTS_COLLECTION,
+    LLM_WORKER_POLL_INTERVAL_SECONDS,
+)
 from scripts.heavy_job_lock import acquire_heavy_job_lock, release_heavy_job_lock
 from trend.trend_service import format_trend_context, get_cached_trend
 
@@ -93,7 +97,37 @@ def _trend_info(keyword: str) -> tuple[str, dict | None]:
     return trend_info, trend_response
 
 
-def _process_analyze(doc: dict) -> dict:
+def _write_progress(collection, job_id: str, sources: list, trend: dict | None, partial_text: str | None) -> None:
+    """LLM이 아직 답변 중이어도 프론트가 볼 수 있게 result 필드를 미리 채워둔다.
+    _mark_done과 동일하게 dotted-path 대신 result 전체를 매번 덮어쓴다. 쓰기 실패는
+    (crawl_request_worker의 progress 콜백과 동일하게) 삼켜서 작업 자체를 막지 않는다
+    — 마지막 상태는 _mark_done이 최종 결과로 다시 덮어쓰므로 유실돼도 무해하다."""
+    try:
+        collection.update_one(
+            {"_id": job_id},
+            {"$set": {"result": {"sources": sources, "trend": trend, "partial_text": partial_text}}},
+        )
+    except Exception as e:
+        print(f"[llm_request_worker] 진행 상황 기록 실패(무시하고 계속): {e}")
+
+
+def _make_stream_progress_writer(collection, job_id: str, sources: list, trend: dict | None):
+    """analyze(on_chunk=...)에 넘길 콜백. ANALYZE_STREAM_WRITE_INTERVAL_SECONDS보다
+    짧은 간격의 청크는 건너뛰어 Mongo write가 토큰 속도로 발생하지 않게 한다."""
+    last_write = 0.0
+
+    def on_chunk(accumulated_text: str) -> None:
+        nonlocal last_write
+        now = time.monotonic()
+        if now - last_write < ANALYZE_STREAM_WRITE_INTERVAL_SECONDS:
+            return
+        last_write = now
+        _write_progress(collection, job_id, sources, trend, accumulated_text)
+
+    return on_chunk
+
+
+def _process_analyze(doc: dict, collection, job_id: str) -> dict:
     keyword = doc["keyword"]
     sources_filter = doc.get("sources")
     facet_config = default_facet_config(keyword)
@@ -106,12 +140,17 @@ def _process_analyze(doc: dict) -> dict:
 
     trend_info, trend_response = _trend_info(keyword)
     prompt = build_facet_prompt(keyword, points, trend_info=trend_info)
-    result_text = analyze(prompt)
 
     sources = [
         {"title": p.payload.get("title") or "제목 없음", "url": clean_source_url(p.payload.get("url"))}
         for p in points
     ]
+    # 출처/트렌드는 LLM 호출 전에 이미 다 계산됐다 — done을 기다리지 않고 먼저 노출한다.
+    _write_progress(collection, job_id, sources, trend_response, partial_text=None)
+
+    on_chunk = _make_stream_progress_writer(collection, job_id, sources, trend_response)
+    result_text = analyze(prompt, on_chunk=on_chunk)
+
     return {"result": result_text, "sources": sources, "trend": trend_response}
 
 
@@ -138,7 +177,7 @@ def run_once(collection=None) -> bool:
         return True
 
     try:
-        result = _process_analyze(doc)
+        result = _process_analyze(doc, collection, job_id)
         _mark_done(collection, job_id, result)
     except Exception as e:
         _mark_failed(collection, job_id, str(e))

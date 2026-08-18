@@ -5,6 +5,7 @@ analysis/pipeline.py
 
 import re
 import time
+from typing import Callable
 
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from qdrant_client.http import models
@@ -180,8 +181,45 @@ def invoke_with_retry(nvidia_client, messages, max_retries: int = 3, base_delay:
             time.sleep(wait)
 
 
-def analyze(prompt: str, model: str = ANALYSIS_MODEL) -> str:
-    """prompt를 model에 보내 분석 결과 텍스트를 반환. 503 등 일시적 오류는 자동 재시도."""
+def _stream_with_retry(
+    nvidia_client, messages, on_chunk: Callable[[str], None], max_retries: int = 3, base_delay: float = 5.0
+) -> str:
+    """invoke_with_retry의 스트리밍 버전. 청크가 도착할 때마다 지금까지 누적된
+    텍스트로 on_chunk를 호출한다. 재시도 시 그때까지 누적된 partial은 버리고
+    새 스트림부터 다시 쌓는다(Mongo에 이미 반영된 partial은 다음 청크가 덮어씀)."""
+    for attempt in range(1, max_retries + 1):
+        try:
+            print(f"[analyze] LLM 스트리밍 호출 시도 {attempt}/{max_retries}...")
+            accumulated = ""
+            for chunk in nvidia_client.stream(messages):
+                accumulated += chunk.content
+                on_chunk(accumulated)
+            if attempt > 1:
+                print(f"[analyze] 시도 {attempt}에서 성공")
+            return accumulated
+        except Exception as e:
+            retryable = _is_retryable(str(e))
+            print(f"[analyze] 스트리밍 시도 {attempt}/{max_retries} 실패: {e}")
+
+            if not retryable:
+                print("[analyze] 재시도로 해결될 오류가 아님 — 바로 예외를 던집니다.")
+                raise
+            if attempt == max_retries:
+                print("[analyze] 최대 재시도 횟수 초과 — 예외를 던집니다.")
+                raise
+
+            wait = base_delay * (2 ** (attempt - 1))
+            print(f"[analyze] 일시적 오류(서버 혼잡)로 판단 — {wait:.0f}초 후 재시도...")
+            time.sleep(wait)
+
+
+def analyze(prompt: str, model: str = ANALYSIS_MODEL, on_chunk: Callable[[str], None] | None = None) -> str:
+    """prompt를 model에 보내 분석 결과 텍스트를 반환. 503 등 일시적 오류는 자동 재시도.
+
+    on_chunk가 주어지면 .stream()으로 호출해 청크가 도착할 때마다 누적 텍스트로
+    on_chunk를 부른다(호출자가 진행 상황을 어딘가에 반영하고 싶을 때 사용, 예:
+    scripts/llm_request_worker.py가 Mongo에 partial_text를 스로틀 기록). 생략하면
+    기존과 동일하게 완료까지 블로킹하는 invoke_with_retry를 쓴다."""
     nvidia_client = ChatNVIDIA(
         model=model,
         api_key=NIM_KEY,
@@ -190,6 +228,10 @@ def analyze(prompt: str, model: str = ANALYSIS_MODEL) -> str:
         max_completion_tokens=4096,
         timeout=6000
     )
+    messages = [{"role": "user", "content": prompt}]
 
-    response = invoke_with_retry(nvidia_client, [{"role": "user", "content": prompt}])
-    return response.content
+    if on_chunk is None:
+        response = invoke_with_retry(nvidia_client, messages)
+        return response.content
+
+    return _stream_with_retry(nvidia_client, messages, on_chunk)

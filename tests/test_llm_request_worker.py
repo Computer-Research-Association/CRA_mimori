@@ -90,7 +90,7 @@ def test_analyze_작업이_정상_처리되면_done으로_바뀐다():
     worker.get_cached_trend = lambda keyword: {"status": "유행 중"}
     worker.format_trend_context = lambda keyword, result=None: "트렌드요약"
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
-    worker.analyze = lambda prompt: calls.setdefault("analyze_prompt", prompt) and "분석 결과"
+    worker.analyze = lambda prompt, on_chunk=None: calls.setdefault("analyze_prompt", prompt) and "분석 결과"
     worker.clean_source_url = lambda url: url
     try:
         did_work = worker.run_once(collection=collection)
@@ -132,7 +132,7 @@ def test_요청에_담긴_sources가_facet_search로_전달된다():
     worker.facet_search = fake_facet_search
     worker.get_cached_trend = lambda keyword: None
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
-    worker.analyze = lambda prompt: "결과"
+    worker.analyze = lambda prompt, on_chunk=None: "결과"
     worker.clean_source_url = lambda url: url
     try:
         worker.run_once(collection=collection)
@@ -142,6 +142,51 @@ def test_요청에_담긴_sources가_facet_search로_전달된다():
          worker.default_facet_config, worker.encode_facets, worker.facet_search,
          worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url) = original
     print("[OK] 요청에 담긴 sources가 facet_search로 그대로 전달됨")
+
+
+def test_LLM_호출_전에_출처와_트렌드를_미리_기록한다():
+    """facet_search 직후, analyze()가 호출되는 시점엔 이미 doc.result에 출처/트렌드가
+    채워져 있어야 한다 — LLM 응답을 기다리지 않고 프론트가 먼저 보여줄 수 있게 하는 게 목적.
+    또한 on_chunk 콜백이 partial_text를 즉시 반영하는지도 함께 확인한다."""
+    collection = _FakeCollection([_analyze_doc()])
+    calls = {}
+    original = (
+        worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+        worker.default_facet_config, worker.encode_facets, worker.facet_search,
+        worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url,
+    )
+    worker.acquire_heavy_job_lock = lambda owner: True
+    worker.release_heavy_job_lock = lambda owner: None
+    worker.default_facet_config = lambda keyword: {"의미": {"question": keyword}}
+    worker.encode_facets = lambda facet_config: {"의미": {"dense": [], "sparse": {}}}
+    fake_point = SimpleNamespace(payload={"text": "청크", "title": "제목", "url": "https://example.com"})
+    worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: ([fake_point], {})
+    worker.get_cached_trend = lambda keyword: {"status": "유행 중"}
+    worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
+
+    def fake_analyze(prompt, on_chunk=None):
+        calls["result_before_llm"] = dict(collection._docs["야르"]["result"])
+        on_chunk("스트리밍 중간 텍스트")
+        calls["partial_after_on_chunk"] = collection._docs["야르"]["result"]["partial_text"]
+        return "최종 결과"
+
+    worker.analyze = fake_analyze
+    worker.clean_source_url = lambda url: url
+    try:
+        worker.run_once(collection=collection)
+        before = calls["result_before_llm"]
+        assert before["sources"] == [{"title": "제목", "url": "https://example.com"}], before
+        assert before["trend"] == {"status": "유행 중"}, before
+        assert before["partial_text"] is None, before
+        assert calls["partial_after_on_chunk"] == "스트리밍 중간 텍스트", calls
+        doc = collection._docs["야르"]
+        assert doc["status"] == "done", doc
+        assert doc["result"]["result"] == "최종 결과", doc
+    finally:
+        (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+         worker.default_facet_config, worker.encode_facets, worker.facet_search,
+         worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url) = original
+    print("[OK] LLM 호출 전 출처/트렌드 조기 기록 + on_chunk로 partial_text 즉시 갱신")
 
 
 def test_결과가_없으면_failed로_기록된다():
@@ -219,7 +264,7 @@ def test_오래된_running_요청은_requeue된다():
     worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: ([fake_point], {})
     worker.get_cached_trend = lambda keyword: None
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
-    worker.analyze = lambda prompt: "결과"
+    worker.analyze = lambda prompt, on_chunk=None: "결과"
     worker.clean_source_url = lambda url: url
     try:
         worker.run_once(collection=collection)
@@ -264,6 +309,7 @@ if __name__ == "__main__":
     test_큐가_비어있으면_아무것도_안한다()
     test_analyze_작업이_정상_처리되면_done으로_바뀐다()
     test_요청에_담긴_sources가_facet_search로_전달된다()
+    test_LLM_호출_전에_출처와_트렌드를_미리_기록한다()
     test_결과가_없으면_failed로_기록된다()
     test_락을_못잡으면_다시_queued로_돌리고_반환한다()
     test_예외_발생시_failed와_에러메시지가_기록되고_락이_해제된다()

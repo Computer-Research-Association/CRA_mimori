@@ -44,6 +44,23 @@ describe('AnalysisPanel', () => {
     expect(fetchStatusSpy.mock.calls.length).toBe(callsAfterDone)
   })
 
+  it('running 상태에서 partial_result가 오면 로딩 문구 대신 진행 중인 답변을 렌더링한다', async () => {
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
+    vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
+      job_id: '잡아이디', status: 'running',
+      sources: [{ title: '제목', url: 'https://example.com' }],
+      partial_result: '지금까지 생성된 답변',
+    })
+
+    render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(await screen.findByText('지금까지 생성된 답변')).toBeInTheDocument()
+    expect(screen.getByText('작성 중...')).toBeInTheDocument()
+    expect(screen.queryByText(/관련 커뮤니티 자료를 찾는 중/)).not.toBeInTheDocument()
+  })
+
   it('분석이 아직 done이 아니어도 트렌드는 먼저 보여준다', async () => {
     vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue({ status: '유행 중', final_z: 1.2 })
