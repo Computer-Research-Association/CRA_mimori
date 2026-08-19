@@ -21,6 +21,10 @@ API_URL = "https://openapi.naver.com/v1/datalab/search"
 # 데이터랩이 허용하는 가장 이른 조회 시작일
 MIN_START_DATE = "2016-01-01"
 
+# 데이터랩 응답 발행 지연(일). 최근 이 기간 안의 날짜는 아직 반영이 안 됐을 수
+# 있어 0으로 채우지 않고 시계열에서 제외한다(가짜 today_value 방지).
+PUBLISH_LAG_DAYS = 2
+
 
 class DataLabClient:
     """네이버 데이터랩 검색어 트렌드 API 래퍼."""
@@ -97,10 +101,17 @@ class DataLabClient:
         # 빠진 날을 0.0 으로 채워 baseline 이 실제 분포(0 포함)를 반영하게 한다.
         #
         # 다만 데이터랩은 1~2일 발행 지연이 있어, '아직 안 나온' 최근일을 0 으로
-        # 채우면 today_value 가 가짜 0 이 될 수 있다. 그래서 채우는 범위를
-        # [요청 시작일, 응답에 존재하는 최신일] 로 제한한다(그 이후는 미발행으로 간주).
+        # 채우면 today_value 가 가짜 0 이 될 수 있다. 그렇다고 채우는 마지막 날을
+        # 응답에 남은 최신 날짜(max(ratio_by_date))로 잡으면 안 된다 — 그 날짜는
+        # '아직 미발행'이 아니라 '그 이후로 검색량이 계속 0이라 응답에서 생략된
+        # 날들'일 수도 있어서, 이 경우 몇 주 전의 옛날 값이 today_value 로 둔갑해
+        # z 가 폭발한다(실측 사례: 내또출 — 마지막 신호가 4일 전인데 그 값을
+        # 오늘 값으로 써서 naver_z=+22.73). 그래서 채우는 마지막 날은
+        # '요청 종료일 - 발행지연'과 '응답의 실제 최신 날짜' 중 더 늦은 쪽으로 잡는다:
+        # 발행지연 구간 밖은 항상 0으로 정직하게 채우고, 그보다 늦게도 응답에
+        # 데이터가 있으면(그 날 실제 검색량이 있었다는 뜻) 그 날짜까지 채운다.
         ratio_by_date = {p["period"]: float(p["ratio"]) for p in data}
-        last_date = date.fromisoformat(max(ratio_by_date))
+        last_date = max(end - timedelta(days=PUBLISH_LAG_DAYS), date.fromisoformat(max(ratio_by_date)))
         cursor = date.fromisoformat(start_str)
 
         series: list[dict] = []
