@@ -204,11 +204,110 @@ def test_결과가_없으면_failed로_기록된다():
         worker.run_once(collection=collection)
         doc = collection._docs["야르"]
         assert doc["status"] == "failed", doc
-        assert "데이터를 찾을 수 없습니다" in doc["error"], doc
+        assert "관련 자료를 찾을 수 없습니다" in doc["error"], doc
     finally:
         (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
          worker.default_facet_config, worker.encode_facets, worker.facet_search) = original
-    print("[OK] 검색 결과 없음 -> failed + 에러 메시지")
+    print("[OK] 검색 결과 없음(출처 제한 없음) -> failed + 일반 에러 메시지")
+
+
+def test_근거_출처가_승격_문턱_미만이면_low_confidence가_True다():
+    """실사례("ㅈㄱㄴ"): 자료가 적은 키워드가 좁은 샘플을 근거로 확신에 찬 답을
+    내놓은 적이 있었다. 근거 출처(distinct URL) 수가 MIN_COMMUNITY_DOCS_FOR_TAVILY
+    미만이면 low_confidence를 세워 화면에 경고를 붙일 수 있게 한다."""
+    from config.config_cilent import MIN_COMMUNITY_DOCS_FOR_TAVILY
+
+    collection = _FakeCollection([_analyze_doc()])
+    original = (
+        worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+        worker.default_facet_config, worker.encode_facets, worker.facet_search,
+        worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url,
+    )
+    worker.acquire_heavy_job_lock = lambda owner: True
+    worker.release_heavy_job_lock = lambda owner: None
+    worker.default_facet_config = lambda keyword: {"의미": {"question": keyword}}
+    worker.encode_facets = lambda facet_config: {"의미": {"dense": [], "sparse": {}}}
+    # 문턱(3)보다 하나 적은, 서로 다른 URL 2개짜리 청크만 근거로 잡힌 상황을 재현.
+    assert MIN_COMMUNITY_DOCS_FOR_TAVILY == 3, "이 테스트는 문턱=3을 전제로 함 — 값이 바뀌면 같이 조정"
+    points = [
+        SimpleNamespace(payload={"text": "청크1", "title": "글1", "url": "https://a.example.com"}),
+        SimpleNamespace(payload={"text": "청크2", "title": "글2", "url": "https://b.example.com"}),
+    ]
+    worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: (points, {})
+    worker.get_cached_trend = lambda keyword: None
+    worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
+    worker.analyze = lambda prompt, on_chunk=None: "결과"
+    worker.clean_source_url = lambda url: url
+    try:
+        worker.run_once(collection=collection)
+        doc = collection._docs["야르"]
+        assert doc["result"]["low_confidence"] is True, doc
+    finally:
+        (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+         worker.default_facet_config, worker.encode_facets, worker.facet_search,
+         worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url) = original
+    print("[OK] 출처 2건(<3) -> low_confidence=True")
+
+
+def test_같은_문서가_여러_facet에서_중복돼도_distinct_URL_기준으로_판단한다():
+    """같은 글이 의미/유행_이유 등 여러 facet에서 중복으로 뽑혀도, 실제 근거
+    문서 수는 URL 기준으로 세야 한다 — 청크 개수로 세면 과대평가된다."""
+    collection = _FakeCollection([_analyze_doc()])
+    original = (
+        worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+        worker.default_facet_config, worker.encode_facets, worker.facet_search,
+        worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url,
+    )
+    worker.acquire_heavy_job_lock = lambda owner: True
+    worker.release_heavy_job_lock = lambda owner: None
+    worker.default_facet_config = lambda keyword: {"의미": {"question": keyword}}
+    worker.encode_facets = lambda facet_config: {"의미": {"dense": [], "sparse": {}}}
+    # 청크는 5개지만 URL은 딱 1개뿐 — 같은 글에서 여러 facet이 각각 뽑힌 상황.
+    points = [
+        SimpleNamespace(payload={"text": f"청크{i}", "title": "글1", "url": "https://a.example.com"})
+        for i in range(5)
+    ]
+    worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: (points, {})
+    worker.get_cached_trend = lambda keyword: None
+    worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
+    worker.analyze = lambda prompt, on_chunk=None: "결과"
+    worker.clean_source_url = lambda url: url
+    try:
+        worker.run_once(collection=collection)
+        doc = collection._docs["야르"]
+        # 청크는 5개(문턱 3 이상)지만 distinct URL은 1개뿐이라 여전히 low_confidence=True.
+        assert doc["result"]["low_confidence"] is True, doc
+    finally:
+        (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+         worker.default_facet_config, worker.encode_facets, worker.facet_search,
+         worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url) = original
+    print("[OK] 청크 5개, 근거 문서(URL) 1개 -> 청크 수와 무관하게 low_confidence=True")
+
+
+def test_출처를_좁혀서_결과가_없으면_출처를_넓혀보라는_메시지가_뜬다():
+    """키워드 자체는 존재하는데(api/routes.py에서 이미 확인된 뒤라) 선택한 출처
+    조합에서만 자료가 없는 경우다. "이 밈은 아예 없다"로 오해하지 않게, 일반적인
+    '데이터 없음'과 다른 문구를 써야 한다."""
+    collection = _FakeCollection([_analyze_doc(sources=["tavily"])])
+    original = (
+        worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+        worker.default_facet_config, worker.encode_facets, worker.facet_search,
+    )
+    worker.acquire_heavy_job_lock = lambda owner: True
+    worker.release_heavy_job_lock = lambda owner: None
+    worker.default_facet_config = lambda keyword: {}
+    worker.encode_facets = lambda facet_config: {}
+    worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: ([], {})
+    try:
+        worker.run_once(collection=collection)
+        doc = collection._docs["야르"]
+        assert doc["status"] == "failed", doc
+        assert "선택하신 출처에는" in doc["error"], doc
+        assert "출처를 더 선택" in doc["error"], doc
+    finally:
+        (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+         worker.default_facet_config, worker.encode_facets, worker.facet_search) = original
+    print("[OK] 검색 결과 없음(출처 제한 있음) -> failed + 출처 확장 유도 메시지")
 
 
 def test_락을_못잡으면_다시_queued로_돌리고_반환한다():
@@ -311,6 +410,9 @@ if __name__ == "__main__":
     test_요청에_담긴_sources가_facet_search로_전달된다()
     test_LLM_호출_전에_출처와_트렌드를_미리_기록한다()
     test_결과가_없으면_failed로_기록된다()
+    test_근거_출처가_승격_문턱_미만이면_low_confidence가_True다()
+    test_같은_문서가_여러_facet에서_중복돼도_distinct_URL_기준으로_판단한다()
+    test_출처를_좁혀서_결과가_없으면_출처를_넓혀보라는_메시지가_뜬다()
     test_락을_못잡으면_다시_queued로_돌리고_반환한다()
     test_예외_발생시_failed와_에러메시지가_기록되고_락이_해제된다()
     test_오래된_running_요청은_requeue된다()

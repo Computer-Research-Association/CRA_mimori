@@ -54,6 +54,7 @@ from config.config_cilent import (
     ANALYZE_STREAM_WRITE_INTERVAL_SECONDS,
     LLM_REQUESTS_COLLECTION,
     LLM_WORKER_POLL_INTERVAL_SECONDS,
+    MIN_COMMUNITY_DOCS_FOR_TAVILY,
 )
 from scripts.heavy_job_lock import acquire_heavy_job_lock, release_heavy_job_lock
 from trend.trend_service import format_trend_context, get_cached_trend
@@ -97,7 +98,10 @@ def _trend_info(keyword: str) -> tuple[str, dict | None]:
     return trend_info, trend_response
 
 
-def _write_progress(collection, job_id: str, sources: list, trend: dict | None, partial_text: str | None) -> None:
+def _write_progress(
+    collection, job_id: str, sources: list, trend: dict | None, partial_text: str | None,
+    low_confidence: bool = False,
+) -> None:
     """LLM이 아직 답변 중이어도 프론트가 볼 수 있게 result 필드를 미리 채워둔다.
     _mark_done과 동일하게 dotted-path 대신 result 전체를 매번 덮어쓴다. 쓰기 실패는
     (crawl_request_worker의 progress 콜백과 동일하게) 삼켜서 작업 자체를 막지 않는다
@@ -105,13 +109,16 @@ def _write_progress(collection, job_id: str, sources: list, trend: dict | None, 
     try:
         collection.update_one(
             {"_id": job_id},
-            {"$set": {"result": {"sources": sources, "trend": trend, "partial_text": partial_text}}},
+            {"$set": {"result": {
+                "sources": sources, "trend": trend, "partial_text": partial_text,
+                "low_confidence": low_confidence,
+            }}},
         )
     except Exception as e:
         print(f"[llm_request_worker] 진행 상황 기록 실패(무시하고 계속): {e}")
 
 
-def _make_stream_progress_writer(collection, job_id: str, sources: list, trend: dict | None):
+def _make_stream_progress_writer(collection, job_id: str, sources: list, trend: dict | None, low_confidence: bool):
     """analyze(on_chunk=...)에 넘길 콜백. ANALYZE_STREAM_WRITE_INTERVAL_SECONDS보다
     짧은 간격의 청크는 건너뛰어 Mongo write가 토큰 속도로 발생하지 않게 한다."""
     last_write = 0.0
@@ -122,7 +129,7 @@ def _make_stream_progress_writer(collection, job_id: str, sources: list, trend: 
         if now - last_write < ANALYZE_STREAM_WRITE_INTERVAL_SECONDS:
             return
         last_write = now
-        _write_progress(collection, job_id, sources, trend, accumulated_text)
+        _write_progress(collection, job_id, sources, trend, accumulated_text, low_confidence)
 
     return on_chunk
 
@@ -136,7 +143,13 @@ def _process_analyze(doc: dict, collection, job_id: str) -> dict:
         keyword, facet_config, facet_vectors=facet_vectors, sources=sources_filter, is_relevant=True
     )
     if not points:
-        raise ValueError(f"'{keyword}' 데이터를 찾을 수 없습니다")
+        # 이 시점의 keyword는 이미 api/routes.py에서 list_analyzable_keywords()로
+        # 존재를 확인받은 뒤라, 여기서 못 찾는 건 "키워드 자체가 없음"이 아니라
+        # "선택한 출처 조합에서만 자료가 없음"이다. 메시지를 그렇게 구분해야
+        # 사용자가 "이 밈은 없구나"로 오해하지 않고 출처를 넓혀보게 된다.
+        if sources_filter:
+            raise ValueError(f"선택하신 출처에는 '{keyword}' 관련 자료가 없습니다. 출처를 더 선택해보세요.")
+        raise ValueError(f"'{keyword}' 관련 자료를 찾을 수 없습니다")
 
     trend_info, trend_response = _trend_info(keyword)
     prompt = build_facet_prompt(keyword, points, trend_info=trend_info)
@@ -145,13 +158,21 @@ def _process_analyze(doc: dict, collection, job_id: str) -> dict:
         {"title": p.payload.get("title") or "제목 없음", "url": clean_source_url(p.payload.get("url"))}
         for p in points
     ]
-    # 출처/트렌드는 LLM 호출 전에 이미 다 계산됐다 — done을 기다리지 않고 먼저 노출한다.
-    _write_progress(collection, job_id, sources, trend_response, partial_text=None)
+    # 근거로 쓴 서로 다른 출처(URL) 수가 Keywords.md 승격 문턱과 같은 기준(3건) 미만이면
+    # "확신도 낮음"으로 표시한다 — 청크 개수가 아니라 distinct URL 개수를 본다. 같은 글이
+    # facet(의미/유행_이유/...)마다 중복으로 뽑혀도 실제 근거 문서 수는 하나이기 때문이다.
+    # 실사례("ㅈㄱㄴ"): 자료가 몇 안 되는 특정 커뮤니티의 국지적 용법을, 훨씬 널리 쓰이는
+    # 뜻인 것처럼 확신에 차서 답한 적이 있었다 — 근거가 얕을 땐 그렇게 안 보이게 한다.
+    distinct_source_count = len({s["url"] for s in sources})
+    low_confidence = distinct_source_count < MIN_COMMUNITY_DOCS_FOR_TAVILY
 
-    on_chunk = _make_stream_progress_writer(collection, job_id, sources, trend_response)
+    # 출처/트렌드는 LLM 호출 전에 이미 다 계산됐다 — done을 기다리지 않고 먼저 노출한다.
+    _write_progress(collection, job_id, sources, trend_response, partial_text=None, low_confidence=low_confidence)
+
+    on_chunk = _make_stream_progress_writer(collection, job_id, sources, trend_response, low_confidence)
     result_text = analyze(prompt, on_chunk=on_chunk)
 
-    return {"result": result_text, "sources": sources, "trend": trend_response}
+    return {"result": result_text, "sources": sources, "trend": trend_response, "low_confidence": low_confidence}
 
 
 def run_once(collection=None) -> bool:

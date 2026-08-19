@@ -34,6 +34,23 @@ class _FakeCollection:
     def update_one(self, filter_, update):
         self._docs[filter_["_id"]].update(update["$set"])
 
+    def find_one_and_update(self, filter_, update, upsert=False, return_document=None):
+        """실제 Mongo의 upsert + $setOnInsert + return_document=AFTER를 흉내낸다.
+        문서가 없으면 $setOnInsert로 새로 만들고, 있으면 손대지 않은 채(둘 다
+        $setOnInsert만 쓰는 호출부 기준) 그대로 돌려준다 — find_one_and_update로
+        "확인+삽입"을 원자적으로 묶은 실제 동작을 검증하는 게 목적."""
+        doc_id = filter_["_id"]
+        existing = self._docs.get(doc_id)
+        if existing is not None:
+            if "$set" in update:
+                existing.update(update["$set"])
+            return existing
+        if not upsert:
+            return None
+        new_doc = {"_id": doc_id, **update.get("$setOnInsert", {}), **update.get("$set", {})}
+        self._docs[doc_id] = new_doc
+        return new_doc
+
 
 def test_이미_있는_키워드는_400():
     original_kw = _patch(routes, "list_analyzable_keywords", lambda: ["야르"])
@@ -117,6 +134,50 @@ def test_keyword_없이_요청하면_400():
     print("[OK] keyword 누락 -> 400")
 
 
+def test_문장형_키워드는_큐에_안_들어가고_400():
+    reset_rate_limit()
+    fake = _FakeCollection()
+    original_kw = _patch(routes, "list_analyzable_keywords", lambda: [])
+    original_get_collection = _patch(routes, "get_collection", lambda name: fake)
+    try:
+        app = create_app()
+        client = app.test_client()
+        resp = client.post("/api/crawl-request", json={"keyword": "언어 치료사 1급 합격 방법"})
+        assert resp.status_code == 400, resp.status_code
+        assert "error" in resp.get_json()
+        assert fake._docs == {}, "문장형 키워드가 큐에 등록되면 안 됨"
+    finally:
+        routes.list_analyzable_keywords = original_kw
+        routes.get_collection = original_get_collection
+    print("[OK] 문장형 질문 -> 큐에 안 들어가고 즉시 400")
+
+
+def test_같은_키워드로_거의_동시에_두_번_요청해도_에러_없이_같은_결과를_돌려준다():
+    """React StrictMode의 effect 이중 실행 등으로 같은 키워드가 짧은 시간 안에
+    두 번 요청될 수 있다. find_one 후 insert_one을 따로 하던 예전 방식은 둘 다
+    "없음"을 보고 둘 다 삽입을 시도해 DuplicateKeyError로 500이 났다.
+    find_one_and_update(upsert=True) 덕분에 두 번째 호출도 크래시 없이 첫
+    호출과 같은 결과(queued)를 받아야 한다."""
+    reset_rate_limit()
+    fake = _FakeCollection()
+    original_kw = _patch(routes, "list_analyzable_keywords", lambda: [])
+    original_get_collection = _patch(routes, "get_collection", lambda name: fake)
+    try:
+        app = create_app()
+        client = app.test_client()
+        resp1 = client.post("/api/crawl-request", json={"keyword": "흘로망"})
+        resp2 = client.post("/api/crawl-request", json={"keyword": "흘로망"})
+        assert resp1.status_code == 202, resp1.status_code
+        assert resp2.status_code == 202, resp2.status_code
+        assert resp1.get_json() == {"keyword": "흘로망", "status": "queued"}
+        assert resp2.get_json() == {"keyword": "흘로망", "status": "queued"}
+        assert len(fake._docs) == 1, "중복 삽입 없이 문서가 하나만 있어야 함"
+    finally:
+        routes.list_analyzable_keywords = original_kw
+        routes.get_collection = original_get_collection
+    print("[OK] 같은 키워드 연속 요청 -> 에러 없이 동일한 queued 응답, 문서는 하나")
+
+
 def test_keyword에_개행이_있으면_400():
     reset_rate_limit()
     app = create_app()
@@ -194,6 +255,8 @@ if __name__ == "__main__":
     test_이미_큐에_있으면_기존_상태를_반환한다()
     test_failed_상태는_재요청시_queued로_리셋된다()
     test_keyword_없이_요청하면_400()
+    test_문장형_키워드는_큐에_안_들어가고_400()
+    test_같은_키워드로_거의_동시에_두_번_요청해도_에러_없이_같은_결과를_돌려준다()
     test_keyword에_개행이_있으면_400()
     test_keyword가_너무_길면_400()
     test_분당_상한을_넘으면_429()

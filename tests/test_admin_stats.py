@@ -32,8 +32,10 @@ class _FakeCountableCollection:
         return [d for d in self._docs if all(d.get(k) == v for k, v in filter_.items())]
 
 
-# get_admin_stats가 컬렉션 7개를 전부 요구하므로(넘기지 않은 건 실제 Mongo로 채워서
-# 연결을 시도해버림), 매 테스트마다 채워야 하는 최소 기본 세트.
+# list_analyzable_keywords_fn을 안 넘기면 실제 analysis.pipeline을 import해 Mongo에
+# 연결을 시도한다 — 테스트에선 항상 fake로 채워야 한다. 기본은 load_keywords_fn과
+# 같은 목록(Keywords.md=분석가능 키워드가 일치하는 흔한 경우)으로 맞춰두고,
+# "Keywords.md엔 없지만 분석은 가능한" 케이스를 보는 테스트만 따로 다르게 넘긴다.
 def _base_collections(**overrides):
     base = {
         key: _FakeCountableCollection()
@@ -51,6 +53,7 @@ def test_컬렉션별_문서_수와_키워드_개수를_반환한다():
     ])
     stats = get_admin_stats(
         load_keywords_fn=lambda: ["야르", "쌰갈"],
+        list_analyzable_keywords_fn=lambda: ["야르", "쌰갈"],
         collections=_base_collections(memes=memes),
     )
     assert stats["keyword_count"] == 2, stats
@@ -70,24 +73,49 @@ def test_키워드별_문서_수는_많은_순으로_정렬되고_출처별로_�
     ])
     stats = get_admin_stats(
         load_keywords_fn=lambda: ["야르", "쌰갈"],
+        list_analyzable_keywords_fn=lambda: ["야르", "쌰갈"],
         collections=_base_collections(memes=memes),
     )
     assert stats["per_keyword_doc_counts"] == [
-        {"keyword": "야르", "total": 3, "by_source": {"dcinside": 2, "youtube": 1}},
-        {"keyword": "쌰갈", "total": 1, "by_source": {"dcinside": 1}},
+        {"keyword": "야르", "total": 3, "by_source": {"dcinside": 2, "youtube": 1}, "in_keywords_md": True},
+        {"keyword": "쌰갈", "total": 1, "by_source": {"dcinside": 1}, "in_keywords_md": True},
     ], stats["per_keyword_doc_counts"]
-    print("[OK] 키워드별 문서 수 내림차순 정렬 + 출처별 분해")
+    print("[OK] 키워드별 문서 수 내림차순 정렬 + 출처별 분해 + Keywords.md 편입 표시")
 
 
 def test_문서가_없는_키워드는_0건_빈_출처로_나온다():
     memes = _FakeCountableCollection([{"keyword": "야르", "source": "dcinside"}])
     stats = get_admin_stats(
         load_keywords_fn=lambda: ["야르", "문서없는키워드"],
+        list_analyzable_keywords_fn=lambda: ["야르", "문서없는키워드"],
         collections=_base_collections(memes=memes),
     )
     row = next(r for r in stats["per_keyword_doc_counts"] if r["keyword"] == "문서없는키워드")
-    assert row == {"keyword": "문서없는키워드", "total": 0, "by_source": {}}, row
+    assert row == {"keyword": "문서없는키워드", "total": 0, "by_source": {}, "in_keywords_md": True}, row
     print("[OK] 집계에 없는 키워드도 0건 빈 출처로 채워짐")
+
+
+def test_Keywords_md에_없어도_분석_가능한_키워드는_표에_보이고_편입여부가_False로_표시된다():
+    """실사례: "ㅈㄱㄴ"처럼 임베딩된 문서는 있어(검색·분석 가능) Keywords.md 승격
+    문턱(MIN_COMMUNITY_DOCS_FOR_TAVILY)은 못 넘은 키워드. 예전엔 이 표가
+    load_keywords_fn() 목록만 순회해서 이런 키워드가 관리자 눈에 아예 안 보였다."""
+    memes = _FakeCountableCollection([
+        {"keyword": "야르", "source": "dcinside"},
+        {"keyword": "ㅈㄱㄴ", "source": "dcinside"},
+    ])
+    stats = get_admin_stats(
+        load_keywords_fn=lambda: ["야르"],  # Keywords.md엔 "ㅈㄱㄴ"이 없음
+        list_analyzable_keywords_fn=lambda: ["야르", "ㅈㄱㄴ"],  # 하지만 분석은 가능
+        collections=_base_collections(memes=memes),
+    )
+    by_keyword = {r["keyword"]: r for r in stats["per_keyword_doc_counts"]}
+    assert "ㅈㄱㄴ" in by_keyword, stats["per_keyword_doc_counts"]
+    assert by_keyword["ㅈㄱㄴ"]["total"] == 1, by_keyword["ㅈㄱㄴ"]
+    assert by_keyword["ㅈㄱㄴ"]["in_keywords_md"] is False, by_keyword["ㅈㄱㄴ"]
+    assert by_keyword["야르"]["in_keywords_md"] is True, by_keyword["야르"]
+    # keyword_count(등록 키워드 수)는 Keywords.md 기준 그대로 — 배치 대상 개수를 뜻하므로.
+    assert stats["keyword_count"] == 1, stats["keyword_count"]
+    print("[OK] Keywords.md 미편입이어도 분석 가능한 키워드는 표에 보이고 편입 여부가 구분됨")
 
 
 def test_상한에_막힌_키워드_목록을_반환한다():
@@ -97,6 +125,7 @@ def test_상한에_막힌_키워드_목록을_반환한다():
     ])
     stats = get_admin_stats(
         load_keywords_fn=lambda: [],
+        list_analyzable_keywords_fn=lambda: [],
         collections=_base_collections(crawl_requests=crawl_requests),
     )
     assert stats["capped_keywords"] == ["막힌키워드"], stats["capped_keywords"]
@@ -105,7 +134,11 @@ def test_상한에_막힌_키워드_목록을_반환한다():
 
 def test_keyword_cap_설정값을_그대로_반환한다():
     from config.config_cilent import MAX_BATCH_KEYWORDS
-    stats = get_admin_stats(load_keywords_fn=lambda: [], collections=_base_collections())
+    stats = get_admin_stats(
+        load_keywords_fn=lambda: [],
+        list_analyzable_keywords_fn=lambda: [],
+        collections=_base_collections(),
+    )
     assert stats["keyword_cap"] == MAX_BATCH_KEYWORDS, stats["keyword_cap"]
     print("[OK] keyword_cap이 설정값과 일치")
 
@@ -119,6 +152,7 @@ def test_디스크_사용량이_GB_단위와_퍼센트로_변환된다():
     gb = 1024 ** 3
     stats = get_admin_stats(
         load_keywords_fn=lambda: [],
+        list_analyzable_keywords_fn=lambda: [],
         collections=_base_collections(),
         disk_usage_fn=_fake_disk_usage(total=100 * gb, used=25 * gb, free=75 * gb),
     )
@@ -134,6 +168,7 @@ def test_디스크_조회가_실패하면_None으로_그_섹션만_빠진다():
 
     stats = get_admin_stats(
         load_keywords_fn=lambda: [],
+        list_analyzable_keywords_fn=lambda: [],
         collections=_base_collections(),
         disk_usage_fn=_boom,
     )
@@ -145,6 +180,7 @@ if __name__ == "__main__":
     test_컬렉션별_문서_수와_키워드_개수를_반환한다()
     test_키워드별_문서_수는_많은_순으로_정렬되고_출처별로_나뉜다()
     test_문서가_없는_키워드는_0건_빈_출처로_나온다()
+    test_Keywords_md에_없어도_분석_가능한_키워드는_표에_보이고_편입여부가_False로_표시된다()
     test_상한에_막힌_키워드_목록을_반환한다()
     test_keyword_cap_설정값을_그대로_반환한다()
     test_디스크_사용량이_GB_단위와_퍼센트로_변환된다()
