@@ -2,15 +2,17 @@
 main.py의 Tavily 보완 크롤 우선순위 로직 검증 (네트워크/DB 불필요, 몇 초).
 
 배치 크롤 우선순위: 커뮤니티 크롤러(dcinside/namuwiki/youtube/natepann/todayhumor)를
-먼저 돌리고, 합계가 MIN_COMMUNITY_DOCS_FOR_TAVILY 미만인 키워드만 Tavily로 보완한다.
+먼저 돌리고, 다음 중 하나라도 해당하면 Tavily로 보완한다 — (1) 합계가
+MIN_COMMUNITY_DOCS_FOR_TAVILY 미만, (2) 나무위키가 0건(정의/설명 자료 부재).
 Tavily가 예외로 실패하면 DuckDuckGo로 한 번 더 보완한다.
 
-확인하는 것 4가지:
-  1. 커뮤니티 수집이 기준 이상이면 Tavily는 호출되지 않는다
+확인하는 것 5가지:
+  1. 커뮤니티 수집이 기준 이상이고 나무위키도 있으면 Tavily는 호출되지 않는다
   2. 기준 미만이면 Tavily가 호출되고, 성공하면 결과에 반영된다
-  3. Tavily가 정상적으로 0건을 반환(빈 리스트)한 건 '실패'가 아니므로 DuckDuckGo를
+  3. 합계는 기준 이상이어도 나무위키가 0건이면 Tavily가 호출된다
+  4. Tavily가 정상적으로 0건을 반환(빈 리스트)한 건 '실패'가 아니므로 DuckDuckGo를
      트리거하지 않는다
-  4. Tavily가 예외를 던지면 DuckDuckGo가 호출되고, 두 결과가 모두 남는다
+  5. Tavily가 예외를 던지면 DuckDuckGo가 호출되고, 두 결과가 모두 남는다
      (DuckDuckGo 성공이 Tavily 실패 이력을 덮어쓰지 않음)
 
 실행:  uv run python tests/test_crawl_tavily_fallback.py
@@ -54,16 +56,31 @@ def _no_call(keyword):
     raise AssertionError(f"'{keyword}': 호출되면 안 되는 크롤러가 호출됨")
 
 
-def test_커뮤니티_충분하면_Tavily_호출_안됨():
+def test_커뮤니티_충분하고_나무위키도_있으면_Tavily_호출_안됨():
     with _Patched(
-        COMMUNITY_CRAWLERS={"dcinside": _many},
+        COMMUNITY_CRAWLERS={"dcinside": _many, "namuwiki": _many},
         crawl=_no_call,
         crawl_duckduckgo=_no_call,
     ):
         results = main.crawl_all(["k1"])
     assert "tavily" not in results["k1"], results["k1"]
     assert "duckduckgo" not in results["k1"], results["k1"]
-    print(f"[OK] 커뮤니티 {MIN_COMMUNITY_DOCS_FOR_TAVILY}건 이상이면 Tavily 호출 안 됨")
+    print(f"[OK] 커뮤니티 {MIN_COMMUNITY_DOCS_FOR_TAVILY}건 이상 + 나무위키 있음 → Tavily 호출 안 됨")
+
+
+def test_합계는_충분해도_나무위키_0건이면_Tavily_호출됨():
+    """'알잘딱깔센'처럼 유튜브만으로 건수는 채워도 정의 자료(나무위키)가 없으면 보완한다."""
+    def tavily_ok(keyword):
+        return [9]
+
+    with _Patched(
+        COMMUNITY_CRAWLERS={"youtube": _many, "namuwiki": lambda kw: []},
+        crawl=tavily_ok,
+        crawl_duckduckgo=_no_call,
+    ):
+        results = main.crawl_all(["k1"])
+    assert results["k1"]["tavily"] == (1, "ok"), results["k1"]
+    print("[OK] 합계 충분 + 나무위키 0건 → Tavily로 정의 자료 보완")
 
 
 def test_커뮤니티_부족하면_Tavily_호출되고_성공하면_반영():
@@ -127,7 +144,7 @@ def test_키워드별로_독립적으로_판단됨():
         return [9]
 
     with _Patched(
-        COMMUNITY_CRAWLERS={"dcinside": community},
+        COMMUNITY_CRAWLERS={"dcinside": community, "namuwiki": community},
         crawl=tavily_ok,
         crawl_duckduckgo=_no_call,
     ):
@@ -139,7 +156,8 @@ def test_키워드별로_독립적으로_판단됨():
 
 
 if __name__ == "__main__":
-    test_커뮤니티_충분하면_Tavily_호출_안됨()
+    test_커뮤니티_충분하고_나무위키도_있으면_Tavily_호출_안됨()
+    test_합계는_충분해도_나무위키_0건이면_Tavily_호출됨()
     test_커뮤니티_부족하면_Tavily_호출되고_성공하면_반영()
     test_Tavily가_빈결과여도_실패가_아니므로_DDG_트리거_안됨()
     test_Tavily_실패하면_DDG_호출되고_둘다_결과에_남음()
