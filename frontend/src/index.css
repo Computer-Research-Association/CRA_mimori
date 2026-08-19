@@ -1158,6 +1158,24 @@ a:focus-visible {
   position: relative;
   flex: 1;
   min-width: 0;
+  /* 그래프가 왼쪽부터 드러나는 효과 — clip-path로 패널 전체(선+영역+점+라벨)를
+     한 번에 감싸서 드러낸다. stroke-dasharray+pathLength 조합으로 선만 따로
+     그려지게 했던 이전 방식은 vector-effect="non-scaling-stroke"·
+     preserveAspectRatio="none"와 겹치며 특정 구간에서 선이 그냥 안 그려지는
+     렌더링 버그가 있었다(실측: 배포된 사이트에서 재현 확인) — clip-path는
+     그런 SVG dash 정규화에 안 기대므로 더 견고하다. */
+  animation: trend-chart-reveal 0.9s ease-out;
+}
+
+@keyframes trend-chart-reveal {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trend-chart__svg-wrap {
+    animation-duration: 0.01ms;
+  }
 }
 
 .trend-chart__svg {
@@ -1211,48 +1229,6 @@ a:focus-visible {
   stroke-width: 2.25;
   stroke-linejoin: round;
   stroke-linecap: round;
-  /* pathLength="1"(JSX)로 실제 길이를 1로 정규화해뒀으니, 데이터 포인트 수와
-     무관하게 항상 같은 dasharray/dashoffset 값으로 "그려지는" 효과를 낸다.
-     리액트 state로 클래스를 토글하는 대신 순수 CSS 애니메이션을 쓴다 — 폴링 등
-     으로 부모가 리렌더될 때 클래스 토글이 진행 중인 transition을 끊어버려서
-     선이 절반만 그려진 채 멈추는 문제가 있었다. CSS 애니메이션은 요소가
-     마운트될 때 한 번 자동 재생되고, 그 뒤로는 부모 리렌더와 무관하게
-     끝까지 재생된다(요소 자체가 언마운트/재마운트되지 않는 한). */
-  stroke-dasharray: 1;
-  animation: trend-chart-draw 0.9s ease-out forwards;
-}
-
-@keyframes trend-chart-draw {
-  from { stroke-dashoffset: 1; }
-  to { stroke-dashoffset: 0; }
-}
-
-/* 선이 그려지는 동안 나머지 요소(칠해진 영역, 기준선, 점, 날짜 라벨)는 옅게
-   깔려 있다가 같이 살아난다 — 전부 즉시 나타나면 "그려지는" 느낌이 선에만
-   갇혀 어색하다. */
-.trend-chart__area,
-.trend-chart__mean,
-.trend-chart__tier-line,
-.trend-chart__point,
-.trend-chart__point-label {
-  animation: trend-chart-fade-in 0.6s ease-out 0.3s both;
-}
-
-@keyframes trend-chart-fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .trend-chart__line,
-  .trend-chart__area,
-  .trend-chart__mean,
-  .trend-chart__tier-line,
-  .trend-chart__point,
-  .trend-chart__point-label {
-    animation-duration: 0.01ms;
-    animation-delay: 0s;
-  }
 }
 
 /* 점 마커 — SVG 안에 그리면 preserveAspectRatio="none"의 비균등 확대 때문에
@@ -1313,6 +1289,17 @@ a:focus-visible {
   line-height: var(--lh-body);
   font-size: var(--fs-base);
   border-radius: var(--r-md);
+  /* 답변 영역이 처음 나타나는 순간(위에서 아래로 드러남) 한 번 재생된다 — 이
+     div는 displayText가 처음 생길 때 딱 한 번 마운트되므로(그 뒤 partial_result가
+     바뀌어도 리액트가 노드를 재사용해 재마운트하지 않음), 이미 캐시된 답변이
+     통째로 바로 뜰 때도, 실시간으로 스트리밍이 시작될 때도 똑같이 "펼쳐지는"
+     느낌을 준다 — 캐시 여부와 무관하게 항상 뭔가 "쓰여지는" 순간이 있게 하려는 것. */
+  animation: markdown-reveal 0.5s ease-out;
+}
+
+@keyframes markdown-reveal {
+  from { clip-path: inset(0 0 100% 0); opacity: 0.4; }
+  to { clip-path: inset(0 0 0 0); opacity: 1; }
 }
 
 /* 답변이 스트리밍으로 몇 초 간격씩 갱신될 때마다 짧게 켜졌다 꺼지는 표시 —
@@ -1331,6 +1318,7 @@ a:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .markdown-body,
   .markdown-body--updated {
     animation: none;
   }

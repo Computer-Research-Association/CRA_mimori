@@ -154,7 +154,6 @@ export default function TrendChart({ points, label }) {
               className="trend-chart__line"
               stroke={`url(#${GRADIENT_ID})`}
               vectorEffect="non-scaling-stroke"
-              pathLength="1"
             />
           </svg>
           {/* 점 마커와 날짜 라벨은 SVG 밖 HTML로 그린다 — viewBox를 preserveAspectRatio=

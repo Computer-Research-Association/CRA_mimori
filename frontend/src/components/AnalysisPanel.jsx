@@ -41,7 +41,7 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
   }
 
   function startPolling(jobId) {
-    timerRef.current = setInterval(async () => {
+    async function tick() {
       try {
         const data = await fetchAnalyzeStatus(jobId)
         if (cancelledRef.current) return
@@ -67,7 +67,11 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
         clearInterval(timerRef.current)
         setError(e.message || '네트워크 오류가 발생했습니다')
       }
-    }, POLL_INTERVAL_MS)
+    }
+    // 캐시 히트(요청 시점에 이미 done)면 굳이 첫 폴링 주기(3초)만큼 기다렸다가
+    // 보여줄 이유가 없다 — 바로 한 번 확인하고, 그 뒤로는 평소대로 주기적으로 본다.
+    tick()
+    timerRef.current = setInterval(tick, POLL_INTERVAL_MS)
   }
 
   useEffect(() => {

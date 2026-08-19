@@ -23,6 +23,20 @@ describe('AnalysisPanel', () => {
     await waitFor(() => expect(submitSpy).toHaveBeenCalledWith('야르', ['tavily', 'youtube']))
   })
 
+  it('캐시된(이미 done인) 결과는 첫 폴링 주기(3초)를 기다리지 않고 바로 보인다', async () => {
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'done' })
+    vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
+      job_id: '잡아이디', status: 'done', result: '# 캐시된 결과',
+      sources: [{ title: '캐시 출처', url: 'https://example.com' }], trend: null, error: null,
+    })
+
+    render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
+
+    // 타이머를 전혀 진행시키지 않아도(첫 폴링 주기 전에도) 바로 나와야 한다.
+    expect(await screen.findByText('캐시 출처')).toBeInTheDocument()
+  })
+
   it('status가 done이 되면 결과와 출처를 렌더링하고 폴링을 멈춘다', async () => {
     vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue({ status: '유행 중', final_z: 1.2 })
