@@ -53,16 +53,30 @@ describe('TierList', () => {
     expect(screen.getByText('+2.41')).toBeInTheDocument()
   })
 
-  it('상태가 "데이터 부족"인 키워드는 점수가 있어도 집계 전 그룹으로 분리된다', async () => {
+  it('상태가 "데이터 부족"인 키워드는 점수가 있어도 순위표에서 빠지고 "신호 부족" 그룹으로 분리된다', async () => {
     vi.spyOn(api, 'fetchTrendLeaderboard').mockResolvedValue([
       { keyword: '늙크크', status: '핫함', z_score: 2.41, final_z: 2.41 },
       { keyword: '신호부족어', status: '데이터 부족', z_score: 0, final_z: 0 },
     ])
     render(<TierList onSelect={() => {}} />)
-    expect(await screen.findByText('막 등록됨 · 순위 집계 전')).toBeInTheDocument()
+    expect(await screen.findByText('신호 부족')).toBeInTheDocument()
     expect(screen.getByText('신호부족어')).toBeInTheDocument()
+    // "막 등록됨" 문구는 배치가 아직 안 돈 null 상태 전용이라, 데이터 부족에는 안 붙어야 한다.
+    expect(screen.queryByText('막 등록됨 · 순위 집계 전')).not.toBeInTheDocument()
     // 순위표 본문(핫함 칩)에는 "데이터 부족" 라벨이 없어야 한다.
     expect(screen.queryByText('데이터 부족')).not.toBeInTheDocument()
+  })
+
+  it('null(집계 전)과 "데이터 부족"(신호 없음)이 섞여 있으면 각자 다른 그룹·문구로 분리된다', async () => {
+    vi.spyOn(api, 'fetchTrendLeaderboard').mockResolvedValue([
+      { keyword: '막등록됨', status: null, z_score: null, final_z: null },
+      { keyword: '신호부족어', status: '데이터 부족', z_score: 0, final_z: 0 },
+    ])
+    render(<TierList onSelect={() => {}} />)
+    expect(await screen.findByText('막 등록됨 · 순위 집계 전')).toBeInTheDocument()
+    expect(screen.getByText('신호 부족')).toBeInTheDocument()
+    expect(screen.getByText('막등록됨')).toBeInTheDocument()
+    expect(screen.getByText('신호부족어')).toBeInTheDocument()
   })
 
   it('빈 목록이면 아무것도 렌더링하지 않는다', async () => {

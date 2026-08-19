@@ -76,16 +76,24 @@ def _disk_usage_stats(disk_usage_fn, path: str = "/") -> dict:
     }
 
 
-def get_admin_stats(load_keywords_fn=None, collections: dict | None = None, disk_usage_fn=None) -> dict:
+def get_admin_stats(
+    load_keywords_fn=None,
+    list_analyzable_keywords_fn=None,
+    collections: dict | None = None,
+    disk_usage_fn=None,
+) -> dict:
     """관리 화면용 현황 스냅샷.
 
-    load_keywords_fn/collections/disk_usage_fn을 넘기면 그걸 쓴다(테스트용). collections는
-    {"memes": ..., "cleaned_memes": ..., "trend_scores": ..., "crawl_requests": ...,
-    "hidden_keywords": ..., "llm_requests": ..., "crawl_rejects": ...} 형태 — 일부만
-    넘기면 나머지는 실제 Mongo 컬렉션으로 채운다. 다 생략하면 전부 실제 값을 쓴다.
+    load_keywords_fn/list_analyzable_keywords_fn/collections/disk_usage_fn을 넘기면
+    그걸 쓴다(테스트용). collections는 {"memes": ..., "cleaned_memes": ...,
+    "trend_scores": ..., "crawl_requests": ..., "hidden_keywords": ..., "llm_requests": ...,
+    "crawl_rejects": ...} 형태 — 일부만 넘기면 나머지는 실제 Mongo 컬렉션으로 채운다.
+    다 생략하면 전부 실제 값을 쓴다.
     """
     if load_keywords_fn is None:
         from main import load_keywords as load_keywords_fn
+    if list_analyzable_keywords_fn is None:
+        from analysis.pipeline import list_analyzable_keywords as list_analyzable_keywords_fn
     if disk_usage_fn is None:
         disk_usage_fn = shutil.disk_usage
 
@@ -96,7 +104,16 @@ def get_admin_stats(load_keywords_fn=None, collections: dict | None = None, disk
         for key in missing:
             collections[key] = get_collection(_COLLECTION_NAMES[key])
 
-    keywords = load_keywords_fn()
+    keywords_md = load_keywords_fn()
+    keywords_md_set = set(keywords_md)
+
+    # 문서/디스크를 실제로 쓰는 키워드는 "임베딩된 문서가 있는가"로 정해진다(검색·분석
+    # 가능 기준과 동일) — Keywords.md(배치 크롤·트렌드 판정 대상) 편입 여부는 별개다.
+    # Keywords.md만 보면, 승격 문턱(MIN_COMMUNITY_DOCS_FOR_TAVILY) 미달로 편입 안 된
+    # 키워드가 관리자 눈에 아예 안 보여서 디스크 집계가 실제보다 적게 잡히고 정리 대상
+    # 후보에서도 빠진다. 그래서 여기선 두 목록을 합쳐서 보여주고, 각 행에 Keywords.md
+    # 편입 여부를 같이 표시한다.
+    all_keywords = sorted(set(list_analyzable_keywords_fn()) | keywords_md_set)
 
     collection_counts = {
         key: collections[key].count_documents({}) for key in _COLLECTION_NAMES
@@ -108,11 +125,15 @@ def get_admin_stats(load_keywords_fn=None, collections: dict | None = None, disk
     capped_docs = collections["crawl_requests"].find({"promotion_skipped": "cap"}, {"_id": 1})
     capped_keywords = [doc["_id"] for doc in capped_docs]
 
+    doc_counts = _count_per_keyword_by_source(collections["memes"], all_keywords)
+    for row in doc_counts:
+        row["in_keywords_md"] = row["keyword"] in keywords_md_set
+
     return {
-        "keyword_count": len(keywords),
+        "keyword_count": len(keywords_md),
         "keyword_cap": MAX_BATCH_KEYWORDS,
         "collection_counts": collection_counts,
-        "per_keyword_doc_counts": _count_per_keyword_by_source(collections["memes"], keywords),
+        "per_keyword_doc_counts": doc_counts,
         "capped_keywords": capped_keywords,
         "disk_usage": _disk_usage_stats(disk_usage_fn),
     }

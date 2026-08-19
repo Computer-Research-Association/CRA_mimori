@@ -32,10 +32,13 @@ export default function TierList({ onSelect }) {
 
   // status가 null(trend_scores 문서 자체가 없음)이거나 "데이터 부족"(문서는 있지만
   // classify_trend가 신호 부족으로 판정)이면 둘 다 순위를 매길 수 없는 상태다.
-  // 두 경우 모두 실제 순위 목록에서 빼고 "집계 전" 그룹으로 묶는다.
-  const isUnranked = (row) => row.status === null || row.status === '데이터 부족'
-  const ranked = rows.filter((row) => !isUnranked(row))
-  const unranked = rows.filter(isUnranked)
+  // 하지만 원인이 다르다 — null은 배치가 아직 안 돈 것뿐이라 내일이면 해결되지만,
+  // "데이터 부족"은 배치가 이미 돌았는데도 검색 신호 자체가 없다는 뜻이라 다음날
+  // 다시 돌려도 똑같은 결과가 나올 수 있다. "내일 합류해요"라고 뭉뚱그리면 두 번째
+  // 경우엔 거짓 안내가 되므로 두 그룹으로 나눠 각자 맞는 문구를 보여준다.
+  const ranked = rows.filter((row) => row.status !== null && row.status !== '데이터 부족')
+  const pending = rows.filter((row) => row.status === null)
+  const noSignal = rows.filter((row) => row.status === '데이터 부족')
 
   return (
     <section className="tier-section">
@@ -73,14 +76,33 @@ export default function TierList({ onSelect }) {
         </>
       )}
 
-      {unranked.length > 0 && (
+      {pending.length > 0 && (
         <div className="unknown-section">
           <h2 className="tier-section__title tier-section__title--sub">막 등록됨 · 순위 집계 전</h2>
           <p className="tier-section__caption">
             방금 수집이 끝난 신조어예요. 다음 순위 갱신(내일 새벽)부터 위 목록에 합류해요.
           </p>
           <ul className="unknown-list">
-            {unranked.map((row) => (
+            {pending.map((row) => (
+              <li key={row.keyword}>
+                <button type="button" className="unknown-chip" onClick={() => onSelect(row.keyword)}>
+                  {row.keyword}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {noSignal.length > 0 && (
+        <div className="unknown-section">
+          <h2 className="tier-section__title tier-section__title--sub">신호 부족</h2>
+          <p className="tier-section__caption">
+            네이버·카카오·구글 어디서도 뚜렷한 검색 신호를 찾지 못했어요. 아직 덜 알려졌거나
+            검색으로는 잘 안 잡히는 표현일 수 있어요 — 검색량이 늘면 자동으로 위 목록에 합류해요.
+          </p>
+          <ul className="unknown-list">
+            {noSignal.map((row) => (
               <li key={row.keyword}>
                 <button type="button" className="unknown-chip" onClick={() => onSelect(row.keyword)}>
                   {row.keyword}

@@ -126,3 +126,12 @@ export async function deleteKeywordPermanently(keyword) {
   const res = await safeFetch(`${BASE}/keywords/${keyword}`, { method: 'DELETE', headers: adminHeaders() })
   return handleResponse(res)
 }
+
+export async function mergeKeyword(source, target) {
+  const res = await safeFetch(`${BASE}/keywords/${source}/merge`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...adminHeaders() },
+    body: JSON.stringify({ target }),
+  })
+  return handleResponse(res)
+}

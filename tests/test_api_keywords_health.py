@@ -164,6 +164,85 @@ def test_숨긴_키워드_완전삭제는_delete_keyword_permanently를_호출�
 
 
 @_with_admin_key
+def test_병합_target_누락은_400():
+    app = app_module.create_app()
+    client = app.test_client()
+    resp = client.post("/api/keywords/야호~/merge", headers=_ADMIN_HEADERS, json={})
+    assert resp.status_code == 400, resp.status_code
+    print("[OK] target 누락 -> 400")
+
+
+@_with_admin_key
+def test_병합_source가_없는_키워드면_404():
+    original_list = routes.list_analyzable_keywords
+    routes.list_analyzable_keywords = lambda: ["거제 야호~"]
+    try:
+        app = app_module.create_app()
+        client = app.test_client()
+        resp = client.post(
+            "/api/keywords/없는키워드/merge", headers=_ADMIN_HEADERS, json={"target": "거제 야호~"}
+        )
+        assert resp.status_code == 404, resp.status_code
+    finally:
+        routes.list_analyzable_keywords = original_list
+    print("[OK] source가 없는 키워드 -> 404")
+
+
+@_with_admin_key
+def test_병합_target이_없는_키워드면_404():
+    original_list = routes.list_analyzable_keywords
+    routes.list_analyzable_keywords = lambda: ["야호~"]
+    try:
+        app = app_module.create_app()
+        client = app.test_client()
+        resp = client.post(
+            "/api/keywords/야호~/merge", headers=_ADMIN_HEADERS, json={"target": "없는키워드"}
+        )
+        assert resp.status_code == 404, resp.status_code
+    finally:
+        routes.list_analyzable_keywords = original_list
+    print("[OK] target이 없는 키워드 -> 404")
+
+
+@_with_admin_key
+def test_병합_source와_target이_같으면_400():
+    original_list = routes.list_analyzable_keywords
+    routes.list_analyzable_keywords = lambda: ["야호~"]
+    try:
+        app = app_module.create_app()
+        client = app.test_client()
+        resp = client.post(
+            "/api/keywords/야호~/merge", headers=_ADMIN_HEADERS, json={"target": "야호~"}
+        )
+        assert resp.status_code == 400, resp.status_code
+    finally:
+        routes.list_analyzable_keywords = original_list
+    print("[OK] source == target -> 400")
+
+
+@_with_admin_key
+def test_정상_병합은_merge_keyword를_호출하고_200을_반환한다():
+    calls = []
+    original_list = routes.list_analyzable_keywords
+    original_merge = routes.merge_keyword
+    routes.list_analyzable_keywords = lambda: ["야호~", "거제 야호~"]
+    routes.merge_keyword = lambda source, target: calls.append((source, target))
+    try:
+        app = app_module.create_app()
+        client = app.test_client()
+        resp = client.post(
+            "/api/keywords/야호~/merge", headers=_ADMIN_HEADERS, json={"target": "거제 야호~"}
+        )
+        assert resp.status_code == 200, resp.status_code
+        assert resp.get_json() == {"source": "야호~", "target": "거제 야호~", "merged": True}
+        assert calls == [("야호~", "거제 야호~")], calls
+    finally:
+        routes.list_analyzable_keywords = original_list
+        routes.merge_keyword = original_merge
+    print("[OK] POST /api/keywords/<keyword>/merge")
+
+
+@_with_admin_key
 def test_admin_stats는_get_admin_stats_결과를_그대로_반환한다():
     original = routes.get_admin_stats
     routes.get_admin_stats = lambda: {
@@ -223,6 +302,11 @@ if __name__ == "__main__":
     test_키워드_숨김_해제는_unhide_keyword를_호출한다()
     test_숨기지_않은_키워드_완전삭제는_400()
     test_숨긴_키워드_완전삭제는_delete_keyword_permanently를_호출한다()
+    test_병합_target_누락은_400()
+    test_병합_source가_없는_키워드면_404()
+    test_병합_target이_없는_키워드면_404()
+    test_병합_source와_target이_같으면_400()
+    test_정상_병합은_merge_keyword를_호출하고_200을_반환한다()
     test_admin_stats는_get_admin_stats_결과를_그대로_반환한다()
     test_관리자_키_없이_요청하면_401로_거부된다()
     test_관리자_키가_틀리면_401로_거부된다()

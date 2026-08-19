@@ -235,9 +235,68 @@ def test_GET_완료된_결과를_반환한다():
         assert body["sources"] == [{"title": "제목", "url": "https://example.com"}], body
         assert body["trend"] == {"status": "유행 중"}, body
         assert body["partial_result"] is None, "완료된 결과엔 partial_text가 없으므로 None이어야 함"
+        assert body["low_confidence"] is False, "result에 없으면 기본값 False여야 함"
     finally:
         routes.get_collection = original_get_collection
     print("[OK] GET 완료된 analyze 결과 반환")
+
+
+def test_GET_응답의_욕설은_마스킹되지만_출처_URL은_그대로다():
+    job_id = _analyze_job_id("ㅈㄱㄴ", None)
+    fake = _FakeCollection([{
+        "_id": job_id, "keyword": "ㅈㄱㄴ", "sources": None,
+        "status": "done", "requested_at": datetime.now(timezone.utc),
+        "started_at": datetime.now(timezone.utc), "completed_at": datetime.now(timezone.utc),
+        "error": None,
+        "result": {
+            "result": "'ㅈㄱㄴ'은 '좆같은 놈'의 앞글자입니다.",
+            "sources": [{"title": "ㅈㄱㄴ) 민좆 강원 당원 투표", "url": "https://example.com/원문"}],
+            "trend": None,
+            "partial_text": "좆같은 놈이라는 뜻이에요",
+        },
+    }])
+    original_get_collection = _patch(routes, "get_collection", lambda name: fake)
+    try:
+        app = create_app()
+        client = app.test_client()
+        resp = client.get(f"/api/analyze-request/{job_id}")
+        body = resp.get_json()
+        assert "좆같은" not in body["result"], body["result"]
+        assert "[욕설]" in body["result"], body["result"]
+        assert "좆같은" not in body["partial_result"], body["partial_result"]
+        assert "민좆" not in body["sources"][0]["title"], body["sources"][0]
+        assert "[욕설]" in body["sources"][0]["title"], body["sources"][0]
+        # URL은 순화 대상이 아니다 — 링크는 원문 그대로 연결돼야 한다.
+        assert body["sources"][0]["url"] == "https://example.com/원문", body["sources"][0]
+    finally:
+        routes.get_collection = original_get_collection
+    print("[OK] GET 응답 -> 답변/출처 제목은 욕설 마스킹, 출처 URL은 원문 그대로")
+
+
+def test_GET_low_confidence가_결과에_그대로_실린다():
+    job_id = _analyze_job_id("ㅈㄱㄴ", None)
+    fake = _FakeCollection([{
+        "_id": job_id, "keyword": "ㅈㄱㄴ", "sources": None,
+        "status": "done", "requested_at": datetime.now(timezone.utc),
+        "started_at": datetime.now(timezone.utc), "completed_at": datetime.now(timezone.utc),
+        "error": None,
+        "result": {
+            "result": "분석 결과 텍스트",
+            "sources": [{"title": "제목", "url": "https://example.com"}],
+            "trend": None,
+            "low_confidence": True,
+        },
+    }])
+    original_get_collection = _patch(routes, "get_collection", lambda name: fake)
+    try:
+        app = create_app()
+        client = app.test_client()
+        resp = client.get(f"/api/analyze-request/{job_id}")
+        body = resp.get_json()
+        assert body["low_confidence"] is True, body
+    finally:
+        routes.get_collection = original_get_collection
+    print("[OK] GET low_confidence=True가 그대로 전달됨")
 
 
 def test_GET_처리중이면_partial_result를_반환한다():
@@ -282,5 +341,7 @@ if __name__ == "__main__":
     test_failed_상태는_재요청시_queued로_리셋된다()
     test_GET_요청이력_없으면_404()
     test_GET_완료된_결과를_반환한다()
+    test_GET_응답의_욕설은_마스킹되지만_출처_URL은_그대로다()
+    test_GET_low_confidence가_결과에_그대로_실린다()
     test_GET_처리중이면_partial_result를_반환한다()
     print("\nALL PASS ✅")

@@ -11,6 +11,7 @@ import hashlib
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
+from pymongo import ReturnDocument
 
 from analysis.pipeline import (
     delete_keyword_permanently,
@@ -18,8 +19,11 @@ from analysis.pipeline import (
     list_analyzable_keywords,
     list_hidden_keywords,
     list_visible_keywords,
+    merge_keyword,
     unhide_keyword,
 )
+from analysis.profanity import soften_profanity
+from crawlers.keyword_shape import classify_keyword_shape
 from DB.mongo_client import get_collection
 from config.config_cilent import ADMIN_API_KEY, CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION
 from trend.trend_service import get_cached_trend, get_latest_trend_for_keywords
@@ -148,6 +152,26 @@ def delete_keyword_endpoint(keyword):
     return jsonify({"keyword": keyword, "deleted": True})
 
 
+@bp.route("/keywords/<keyword>/merge", methods=["POST"])
+@require_admin
+def merge_keyword_endpoint(keyword):
+    """keyword(source)의 데이터를 body의 target으로 옮기고 keyword는 숨긴다.
+    실제 삭제는 안 한다 — 숨긴 뒤 관리자가 확인하고 필요하면 기존 완전삭제로 지운다."""
+    data = request.get_json(silent=True) or {}
+    target = (data.get("target") or "").strip()
+    if not target:
+        return jsonify({"error": "target이 필요합니다"}), 400
+    analyzable = list_analyzable_keywords()
+    if keyword not in analyzable:
+        return jsonify({"error": f"'{keyword}' 데이터를 찾을 수 없습니다"}), 404
+    if target not in analyzable:
+        return jsonify({"error": f"병합 대상 '{target}' 데이터를 찾을 수 없습니다"}), 404
+    if keyword == target:
+        return jsonify({"error": "병합 대상과 원본 키워드가 같습니다"}), 400
+    merge_keyword(keyword, target)
+    return jsonify({"source": keyword, "target": target, "merged": True})
+
+
 @bp.route("/trend/<keyword>")
 def trend(keyword):
     result = get_cached_trend(keyword)
@@ -210,14 +234,24 @@ def analyze_request_status(job_id):
     if doc is None:
         return jsonify({"error": "요청 이력이 없습니다"}), 404
     result = doc.get("result") or {}
+    # 욕설 마스킹은 저장 시점이 아니라 응답을 만드는 지금 여기서만 한다 — Mongo에는
+    # 원문 그대로 남겨서, 목록/마스킹 방식을 나중에 바꿔도 기존 분석을 다시 돌릴
+    # 필요가 없다. 출처는 title(화면에 보이는 텍스트)만 순화하고 url은 그대로 둬서
+    # 링크 클릭은 원문으로 정상 연결된다.
+    sources = result.get("sources")
+    softened_sources = (
+        [{**s, "title": soften_profanity(s.get("title"))} for s in sources]
+        if sources else sources
+    )
     return jsonify({
         "job_id": doc["_id"],
         "keyword": doc["keyword"],
         "status": doc["status"],
-        "result": result.get("result"),
-        "sources": result.get("sources"),
+        "result": soften_profanity(result.get("result")),
+        "sources": softened_sources,
         "trend": result.get("trend"),
-        "partial_result": result.get("partial_text"),
+        "partial_result": soften_profanity(result.get("partial_text")),
+        "low_confidence": result.get("low_confidence", False),
         "error": doc["error"],
     })
 
@@ -234,13 +268,33 @@ def crawl_request_endpoint():
     keyword_error = _keyword_error(keyword)
     if keyword_error:
         return jsonify({"error": keyword_error}), 400
+    is_meme_like, shape_reason = classify_keyword_shape(keyword)
+    if not is_meme_like:
+        return jsonify({"error": shape_reason}), 400
     if keyword in list_analyzable_keywords():
         return jsonify({"error": "이미 존재하는 키워드입니다"}), 400
 
     collection = get_collection(CRAWL_REQUESTS_COLLECTION)
-    existing = collection.find_one({"_id": keyword})
+    # find_one으로 확인한 뒤 따로 insert_one을 하면 그 사이에 같은 키워드로 요청이
+    # 하나 더 들어왔을 때(React StrictMode의 effect 이중 실행 등으로 실제 재현됨)
+    # 둘 다 "없음"을 보고 둘 다 삽입을 시도해 Mongo 유니크 인덱스(_id) 충돌로 500이
+    # 났다. find_one_and_update(upsert=True)로 "확인+삽입"을 원자적 연산 하나로
+    # 묶으면 몽고가 동시 요청 중 하나만 실제로 삽입하고 나머지는 그 결과를 그대로
+    # 돌려줘서 경쟁 상태 자체가 사라진다.
+    doc = collection.find_one_and_update(
+        {"_id": keyword},
+        {"$setOnInsert": {
+            "status": "queued",
+            "requested_at": datetime.now(timezone.utc),
+            "started_at": None,
+            "completed_at": None,
+            "error": None,
+        }},
+        upsert=True,
+        return_document=ReturnDocument.AFTER,
+    )
 
-    if existing and existing["status"] == "failed":
+    if doc["status"] == "failed":
         collection.update_one(
             {"_id": keyword},
             {"$set": {
@@ -255,18 +309,7 @@ def crawl_request_endpoint():
         )
         return jsonify({"keyword": keyword, "status": "queued"}), 202
 
-    if existing:
-        return jsonify({"keyword": keyword, "status": existing["status"]}), 202
-
-    collection.insert_one({
-        "_id": keyword,
-        "status": "queued",
-        "requested_at": datetime.now(timezone.utc),
-        "started_at": None,
-        "completed_at": None,
-        "error": None,
-    })
-    return jsonify({"keyword": keyword, "status": "queued"}), 202
+    return jsonify({"keyword": keyword, "status": doc["status"]}), 202
 
 
 @bp.route("/crawl-request/<keyword>")

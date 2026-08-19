@@ -61,6 +61,21 @@ describe('AnalysisPanel', () => {
     expect(screen.queryByText(/관련 커뮤니티 자료를 찾는 중/)).not.toBeInTheDocument()
   })
 
+  it('low_confidence가 true면 확신도 낮음 안내가 뜨고, false/누락이면 안 뜬다', async () => {
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
+    vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValueOnce({
+      job_id: '잡아이디', status: 'done', result: '# 분석 결과',
+      sources: [{ title: '제목', url: 'https://example.com' }], trend: null,
+      low_confidence: true, error: null,
+    })
+
+    render(<AnalysisPanel keyword="ㅈㄱㄴ" selectedSources={['tavily']} />)
+    await vi.advanceTimersByTimeAsync(3000)
+
+    expect(await screen.findByText(/확신도가 낮아요/)).toBeInTheDocument()
+  })
+
   it('분석이 아직 done이 아니어도 트렌드는 먼저 보여준다', async () => {
     vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue({ status: '유행 중', final_z: 1.2 })

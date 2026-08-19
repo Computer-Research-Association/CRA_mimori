@@ -63,6 +63,39 @@ def unhide_keyword(keyword: str) -> None:
     get_collection(HIDDEN_KEYWORDS_COLLECTION).delete_one({"_id": keyword})
 
 
+def merge_keyword(source: str, target: str) -> dict:
+    """source의 콘텐츠 데이터를 전부 target 소속으로 옮기고 source는 숨긴다.
+
+    "거제야호"/"거제 야호~"/"야호~"처럼 같은 밈이 표기 차이로 따로 등록된
+    중복을 정리하는 용도. 실제 삭제는 하지 않는다 — source를 숨겨서 검색·
+    관리자 표에서 안 보이게만 하고, 되돌릴 수 없는 삭제는 이미 검증된
+    "숨긴 키워드 완전삭제" 흐름(delete_keyword_permanently)에 맡긴다. 그러면
+    병합이 잘못됐을 때 unhide_keyword로 되돌릴 여지가 남는다.
+
+    trend_scores(날짜별 z-score 이력)는 옮기지 않는다 — source/target 둘 다
+    같은 날짜의 판정을 이미 갖고 있을 수 있어서, keyword만 바꿔치기하면
+    (keyword, date) 조합이 중복돼 이력이 뒤섞인다. source가 숨겨지면 어차피
+    트렌드 화면에 안 보이므로, target의 기존 이력을 그대로 두는 게 안전하다.
+    """
+    if source == target:
+        raise ValueError("병합 대상과 원본 키워드가 같습니다")
+
+    get_collection().update_many({"keyword": source}, {"$set": {"keyword": target}})
+    for name in (CLEANED_COLLECTION, LLM_REQUESTS_COLLECTION):
+        get_collection(name).update_many({"keyword": source}, {"$set": {"keyword": target}})
+
+    get_client().set_payload(
+        collection_name=QDRANT_COLLECTION,
+        payload={"keyword": target},
+        points=models.Filter(
+            must=[models.FieldCondition(key="keyword", match=models.MatchValue(value=source))]
+        ),
+    )
+
+    hide_keyword(source)
+    return {"source": source, "target": target}
+
+
 def delete_keyword_permanently(keyword: str) -> None:
     """키워드와 관련된 데이터를 전부 지운다. 되돌릴 수 없다.
 
@@ -153,6 +186,19 @@ def _is_retryable(error_message: str) -> bool:
     return any(keyword in error_message for keyword in _RETRYABLE_KEYWORDS)
 
 
+def _log_finish_reason(finish_reason: str | None) -> None:
+    """finish_reason이 "length"면 max_completion_tokens 상한에 걸려 답변이
+    끊겼다는 뜻이다(모델이 스스로 끝냈으면 "stop"). gpt-oss 계열처럼 답변 전에
+    내부 reasoning 토큰을 먼저 쓰는 모델은 이 경우 본문이 아예 비거나 중간에
+    잘릴 수 있어, 상한을 실제로 올려야 하는지 판단할 근거로 로그에 남긴다."""
+    if finish_reason == "length":
+        print("[analyze] ⚠️ finish_reason=length — max_completion_tokens 상한에 걸려 답변이 잘렸습니다")
+    elif finish_reason:
+        print(f"[analyze] finish_reason={finish_reason}")
+    else:
+        print("[analyze] finish_reason을 응답에서 못 찾음(response_metadata 없음)")
+
+
 def invoke_with_retry(nvidia_client, messages, max_retries: int = 3, base_delay: float = 5.0):
     """nvidia_client.invoke()를 호출하되, 5xx(503 ResourceExhausted, 529 Overloaded 등)
     처럼 일시적인 서버 오류면 지수 백오프로 재시도한다. 그 외 오류(인증 실패 등
@@ -162,6 +208,7 @@ def invoke_with_retry(nvidia_client, messages, max_retries: int = 3, base_delay:
         try:
             print(f"[analyze] LLM 호출 시도 {attempt}/{max_retries}...")
             response = nvidia_client.invoke(messages)
+            _log_finish_reason(response.response_metadata.get("finish_reason"))
             if attempt > 1:
                 print(f"[analyze] 시도 {attempt}에서 성공")
             return response
@@ -191,9 +238,15 @@ def _stream_with_retry(
         try:
             print(f"[analyze] LLM 스트리밍 호출 시도 {attempt}/{max_retries}...")
             accumulated = ""
+            last_chunk = None
             for chunk in nvidia_client.stream(messages):
                 accumulated += chunk.content
                 on_chunk(accumulated)
+                last_chunk = chunk
+            # finish_reason은 스트림의 마지막 청크에만 실려 온다(langchain_nvidia_ai_endpoints
+            # 쪽 구현이 그렇게 되어 있음 — 매 청크마다 채우면 응답 메타데이터가 중복 누적됨).
+            if last_chunk is not None:
+                _log_finish_reason(last_chunk.response_metadata.get("finish_reason"))
             if attempt > 1:
                 print(f"[analyze] 시도 {attempt}에서 성공")
             return accumulated
@@ -223,7 +276,7 @@ def analyze(prompt: str, model: str = ANALYSIS_MODEL, on_chunk: Callable[[str], 
     nvidia_client = ChatNVIDIA(
         model=model,
         api_key=NIM_KEY,
-        temperature=1,
+        temperature=0,
         top_p=0.95,
         max_completion_tokens=4096,
         timeout=6000

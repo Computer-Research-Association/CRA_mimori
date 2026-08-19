@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from 'react'
 import {
   fetchKeywords, fetchHiddenKeywords, hideKeyword, unhideKeyword,
-  deleteKeywordPermanently, fetchAdminStats, getAdminKey, setAdminKey,
+  deleteKeywordPermanently, mergeKeyword, fetchAdminStats, getAdminKey, setAdminKey,
 } from './api.js'
 import { sourceMetaFor } from './sourceMeta.js'
 
@@ -24,6 +24,8 @@ export default function AdminPage() {
   const [confirmText, setConfirmText] = useState('')
   const [expandedKeyword, setExpandedKeyword] = useState(null)
   const [adminKeyInput, setAdminKeyInput] = useState(getAdminKey())
+  const [mergeSource, setMergeSource] = useState(null)
+  const [mergeTarget, setMergeTarget] = useState('')
 
   function loadAdminData() {
     fetchHiddenKeywords().then(setHiddenKeywords).catch((e) => setError(e.message))
@@ -81,6 +83,33 @@ export default function AdminPage() {
       setHiddenKeywords((prev) => prev.filter((k) => k !== keyword))
       setConfirmDelete(null)
       setConfirmText('')
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  function startMerge(keyword) {
+    setMergeSource(keyword)
+    setMergeTarget('')
+  }
+
+  function cancelMerge() {
+    setMergeSource(null)
+    setMergeTarget('')
+  }
+
+  async function handleMergeConfirmed() {
+    setError(null)
+    try {
+      await mergeKeyword(mergeSource, mergeTarget)
+      // 병합된 source는 숨김 처리되므로 검색 목록에서 빠지고 숨긴 키워드로 옮겨간다.
+      // 문서 수 표(per_keyword_doc_counts)도 target 쪽으로 옮겨진 걸 반영해야 하니
+      // admin stats를 통째로 다시 불러온다.
+      setKeywords((prev) => prev.filter((k) => k !== mergeSource))
+      setHiddenKeywords((prev) => [...prev, mergeSource].sort())
+      setMergeSource(null)
+      setMergeTarget('')
+      fetchAdminStats().then(setStats).catch((e) => setError(e.message))
     } catch (e) {
       setError(e.message)
     }
@@ -169,24 +198,48 @@ export default function AdminPage() {
                 <tr>
                   <th>키워드</th>
                   <th className="num-tabular">합계</th>
+                  <th>작업</th>
                 </tr>
               </thead>
               <tbody>
                 {stats.per_keyword_doc_counts.map((row) => {
                   const isOpen = expandedKeyword === row.keyword
+                  const isMerging = mergeSource === row.keyword
                   const sources = Object.entries(row.by_source).sort((a, b) => b[1] - a[1])
+                  const mergeCandidates = stats.per_keyword_doc_counts
+                    .map((r) => r.keyword)
+                    .filter((kw) => kw !== row.keyword)
                   return (
                     <Fragment key={row.keyword}>
                       <tr
                         className="admin-source-table__row"
                         onClick={() => setExpandedKeyword(isOpen ? null : row.keyword)}
                       >
-                        <td>{isOpen ? '▾' : '▸'} {row.keyword}</td>
+                        <td>
+                          {isOpen ? '▾' : '▸'} {row.keyword}
+                          {!row.in_keywords_md && (
+                            <span className="badge badge--muted" title="검색·분석은 되지만 배치(매일 재수집·트렌드 판정) 대상은 아니에요 — 문서 수가 승격 기준에 못 미쳐요.">
+                              배치 미등록
+                            </span>
+                          )}
+                        </td>
                         <td className="num-tabular">{row.total.toLocaleString()}건</td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn btn--sm btn--ghost"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              startMerge(row.keyword)
+                            }}
+                          >
+                            병합
+                          </button>
+                        </td>
                       </tr>
                       {isOpen && (
                         <tr className="admin-source-table__detail">
-                          <td colSpan={2}>
+                          <td colSpan={3}>
                             {sources.length === 0 ? (
                               <span className="admin-page__hint">출처 정보 없음</span>
                             ) : (
@@ -199,6 +252,41 @@ export default function AdminPage() {
                                 ))}
                               </ul>
                             )}
+                          </td>
+                        </tr>
+                      )}
+                      {isMerging && (
+                        <tr className="admin-source-table__detail">
+                          <td colSpan={3}>
+                            <form
+                              className="merge-form"
+                              onSubmit={(e) => {
+                                e.preventDefault()
+                                handleMergeConfirmed()
+                              }}
+                            >
+                              <span>
+                                <strong>{row.keyword}</strong>의 데이터를 아래 키워드로 옮기고
+                                {' '}<strong>{row.keyword}</strong>는 숨깁니다(삭제 아님, 되돌릴 수 있음).
+                              </span>
+                              <select
+                                className="input"
+                                aria-label={`${row.keyword} 병합 대상 선택`}
+                                value={mergeTarget}
+                                onChange={(e) => setMergeTarget(e.target.value)}
+                              >
+                                <option value="" disabled>병합 대상 선택</option>
+                                {mergeCandidates.map((kw) => (
+                                  <option key={kw} value={kw}>{kw}</option>
+                                ))}
+                              </select>
+                              <button type="submit" className="btn btn--sm" disabled={!mergeTarget}>
+                                병합 확정
+                              </button>
+                              <button type="button" className="btn btn--sm btn--ghost" onClick={cancelMerge}>
+                                취소
+                              </button>
+                            </form>
                           </td>
                         </tr>
                       )}

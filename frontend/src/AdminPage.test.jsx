@@ -13,7 +13,7 @@ const baseStats = {
   keyword_cap: 60,
   collection_counts: { memes: 1791, cleaned_memes: 1200 },
   per_keyword_doc_counts: [
-    { keyword: '야르', total: 108, by_source: { dcinside: 80, youtube: 28 } },
+    { keyword: '야르', total: 108, by_source: { dcinside: 80, youtube: 28 }, in_keywords_md: true },
   ],
   capped_keywords: [],
   disk_usage: { total_gb: 100, used_gb: 30, free_gb: 70, used_percent: 30 },
@@ -84,6 +84,27 @@ describe('AdminPage', () => {
 
     await userEvent.click(row)
     expect(screen.queryByText('디시인사이드')).not.toBeInTheDocument()
+  })
+
+  it('Keywords.md에 없는 키워드는 "배치 미등록" 배지가 뜨고, 있는 키워드는 안 뜬다', async () => {
+    setup({
+      stats: {
+        ...baseStats,
+        per_keyword_doc_counts: [
+          { keyword: '야르', total: 108, by_source: { dcinside: 80 }, in_keywords_md: true },
+          { keyword: 'ㅈㄱㄴ', total: 4, by_source: { dcinside: 4 }, in_keywords_md: false },
+        ],
+      },
+    })
+    const { container } = render(<AdminPage />)
+    await screen.findByText('배치 미등록')
+
+    const rows = container.querySelectorAll('.admin-source-table__row')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].textContent).toContain('야르')
+    expect(rows[0].textContent).not.toContain('배치 미등록')
+    expect(rows[1].textContent).toContain('ㅈㄱㄴ')
+    expect(rows[1].textContent).toContain('배치 미등록')
   })
 
   it('검색 목록과 숨긴 키워드를 함께 보여준다', async () => {
