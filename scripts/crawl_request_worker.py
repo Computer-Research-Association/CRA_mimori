@@ -36,6 +36,13 @@ preprocess_documents = None
 embed_documents = None
 # perf_log도 같은 이유로 지연 로드한다 — logging_config를 거쳐 boto3/watchtower를 끌고 온다.
 report_totals = None
+# trend_service는 torch 등 무거운 의존성이 없어 매 틱 임포트해도 비용이 미미하지만,
+# 다른 파이프라인 함수들과 같은 지연 로드 방식으로 통일해둔다 — 그래야 아래 guard(
+# "crawl_all이 이미 patch돼 있으면 다시 임포트하지 않는다")가 이 함수들에도 그대로
+# 적용되고, 기존 tests/test_crawl_request_worker.py가 crawl_all 등만 monkeypatch해도
+# get_meme_trend가 로드되지 않은 채(None) 남아 실제 네트워크/DB를 안 건드리게 된다.
+get_meme_trend = None
+save_trend_score = None
 
 
 def _load_pipeline() -> None:
@@ -46,6 +53,7 @@ def _load_pipeline() -> None:
     갈아끼우는 패턴을 그대로 지원하기 위함.
     """
     global crawl_all, add_keyword_if_missing, load_keywords, preprocess_documents, embed_documents, report_totals
+    global get_meme_trend, save_trend_score
     if crawl_all is not None:
         return
     from main import (
@@ -56,12 +64,34 @@ def _load_pipeline() -> None:
     from preprocessing.pipeline import preprocess_documents as _preprocess_documents
     from embedding.pipeline import embed_documents as _embed_documents
     from perf_log import report_totals as _report_totals
+    from trend.trend_service import (
+        get_meme_trend as _get_meme_trend,
+        save_trend_score as _save_trend_score,
+    )
     crawl_all = _crawl_all
     add_keyword_if_missing = _add_keyword_if_missing
     load_keywords = _load_keywords
     preprocess_documents = _preprocess_documents
     embed_documents = _embed_documents
     report_totals = _report_totals
+    get_meme_trend = _get_meme_trend
+    save_trend_score = _save_trend_score
+
+
+def _judge_trend_early(keyword: str) -> None:
+    """크롤링(수십 분) 시작 전에 트렌드 판정부터 먼저 끝내서 화면에 z-score를 빨리 보여준다.
+
+    트렌드 API(네이버/카카오/구글)는 크롤링·임베딩과 완전히 독립적이라 먼저 계산할 수
+    있다(보통 몇 초). 프론트(CrawlRequestPanel)가 /trend/<keyword>를 폴링하다가 여기서
+    저장한 값을 그대로 읽어간다. 부가 기능이라 실패해도 크롤링 자체를 막으면 안 된다
+    (get_meme_trend/save_trend_score 미로드 시에도 조용히 스킵 — report_totals와 동일 패턴).
+    """
+    if get_meme_trend is None:
+        return
+    try:
+        save_trend_score(get_meme_trend(keyword))
+    except Exception as e:
+        print(f"[워커] 조기 트렌드 판정 실패, 계속 진행: {e}")
 
 
 def _mark(collection, keyword: str, status: str, error: str | None = None) -> None:
@@ -143,6 +173,7 @@ def run_once(collection=None, llm_requests_collection=None) -> None:
     keyword = doc["_id"]
     try:
         _load_pipeline()
+        _judge_trend_early(keyword)
         crawl_all([keyword], on_source_done=_make_progress_callback(collection, keyword))
         _set_stage(collection, keyword, "preprocess")
         preprocess_documents(keyword)

@@ -388,6 +388,69 @@ def test_상한_도달시_편입은_거부되지만_요청_자체는_done으로_
     print("[OK] 상한 도달 -> 편입 거부 + promotion_skipped 플래그, 요청 자체는 done")
 
 
+def test_트렌드_조기_판정이_크롤보다_먼저_호출되고_저장된다():
+    """크롤링(수십 분)을 기다리지 않고 화면에 z-score를 먼저 보여주기 위한 기능.
+    get_meme_trend 결과가 save_trend_score로 그대로 넘어가고, crawl_all보다 먼저 불려야 한다."""
+    collection = _FakeCollection([
+        {"_id": "야르", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    fake_llm = _FakeLlmRequestsCollection()
+    calls = []
+    fake_trend_result = {"keyword": "야르", "final_z": 1.23, "status": "유행 중"}
+    original = (
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents,
+        worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock,
+        worker.get_meme_trend, worker.save_trend_score,
+    )
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append("crawl")
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
+    worker.acquire_heavy_job_lock_blocking = lambda owner: True
+    worker.release_heavy_job_lock = lambda owner: None
+    worker.get_meme_trend = lambda kw: calls.append(("trend", kw)) or fake_trend_result
+    worker.save_trend_score = lambda result: calls.append(("save", result))
+    try:
+        worker.run_once(collection=collection, llm_requests_collection=fake_llm)
+        assert calls == [("trend", "야르"), ("save", fake_trend_result), "crawl"], calls
+    finally:
+        (worker.crawl_all, worker.preprocess_documents, worker.embed_documents,
+         worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock,
+         worker.get_meme_trend, worker.save_trend_score) = original
+    print("[OK] 트렌드 조기 판정이 crawl_all보다 먼저 호출되고 결과가 그대로 저장됨")
+
+
+def test_트렌드_조기_판정이_실패해도_크롤링은_계속된다():
+    """트렌드는 부가 기능 — get_meme_trend가 예외를 던져도 크롤링/임베딩은 정상 진행돼야 한다."""
+    collection = _FakeCollection([
+        {"_id": "야르", "status": "queued", "requested_at": datetime(2026, 8, 10, tzinfo=timezone.utc),
+         "started_at": None, "completed_at": None, "error": None},
+    ])
+    fake_llm = _FakeLlmRequestsCollection()
+    calls = []
+    original = (
+        worker.crawl_all, worker.preprocess_documents, worker.embed_documents,
+        worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock,
+        worker.get_meme_trend, worker.save_trend_score,
+    )
+    worker.crawl_all = lambda kws, on_source_done=None: calls.append("crawl")
+    worker.preprocess_documents = lambda kw: None
+    worker.embed_documents = lambda kw: {"documents": 1, "chunks": 1}
+    worker.acquire_heavy_job_lock_blocking = lambda owner: True
+    worker.release_heavy_job_lock = lambda owner: None
+    worker.get_meme_trend = lambda kw: (_ for _ in ()).throw(RuntimeError("네이버 API 실패"))
+    worker.save_trend_score = lambda result: (_ for _ in ()).throw(AssertionError("호출되면 안 됨"))
+    try:
+        worker.run_once(collection=collection, llm_requests_collection=fake_llm)
+        assert calls == ["crawl"], calls
+        assert collection._docs["야르"]["status"] == "done", collection._docs["야르"]
+    finally:
+        (worker.crawl_all, worker.preprocess_documents, worker.embed_documents,
+         worker.acquire_heavy_job_lock_blocking, worker.release_heavy_job_lock,
+         worker.get_meme_trend, worker.save_trend_score) = original
+    print("[OK] 트렌드 조기 판정 실패해도 크롤링은 정상적으로 계속되고 done으로 끝남")
+
+
 if __name__ == "__main__":
     test_큐가_비어있으면_아무것도_안한다()
     test_정상_처리시_done으로_바뀐다()
@@ -401,4 +464,6 @@ if __name__ == "__main__":
     test_delete_many이_done_상태만_지우고_진행중인_요청은_보존한다()
     test_상한_미만이면_평소대로_Keywords_md에_편입된다()
     test_상한_도달시_편입은_거부되지만_요청_자체는_done으로_처리된다()
+    test_트렌드_조기_판정이_크롤보다_먼저_호출되고_저장된다()
+    test_트렌드_조기_판정이_실패해도_크롤링은_계속된다()
     print("\nALL PASS ✅")

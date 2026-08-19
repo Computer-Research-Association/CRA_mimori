@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { fetchAnalyzeStatus, submitAnalyzeRequest, fetchTrend } from '../api.js'
-import TrendChart from './TrendChart.jsx'
+import TrendSummary from './TrendSummary.jsx'
 import LoadingStages from './LoadingStages.jsx'
 import SourceIcon from './SourceIcon.jsx'
 import { sourceMetaForUrl } from '../sourceMeta.js'
-import { pickPrimarySeries, computeChangeRate, trendDirectionLabel } from '../trendUtils.js'
 
 const POLL_INTERVAL_MS = 3000
 
@@ -94,29 +93,12 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
     return <p className="loading-line">최소 하나의 출처를 선택하세요</p>
   }
 
-  const z = trend?.final_z ?? trend?.z_score
-  const primarySeries = pickPrimarySeries(trend)
-  const changeRate = primarySeries ? computeChangeRate(primarySeries.points) : null
-  const changeSentence = typeof changeRate === 'number' && primarySeries
-    ? `최근 ${primarySeries.points.length}일간 ${primarySeries.label}가 평균보다 ${Math.abs(changeRate).toFixed(0)}% ${changeRate >= 0 ? '더 높다' : '더 낮다'}.`
-    : trendDirectionLabel({ z })
-      ? `${trendDirectionLabel({ z })}.`
-      : null
-  const zNote = typeof z === 'number' ? ` (z ${z >= 0 ? '+' : ''}${z.toFixed(2)})` : ''
-  const trendLine = trend ? `트렌드: ${trend.status}.` : null
   const loading = status === 'queued' || status === 'running'
   const displayText = result || partialResult
 
   return (
     <div className="entry">
-      {trendLine && (
-        <p className="trend-line">
-          {trend.status === '핫함' ? <strong className="trend-line__hot">{trendLine}</strong> : trendLine}
-          {changeSentence && ` ${changeSentence}`}
-          {zNote}
-        </p>
-      )}
-      {primarySeries && <TrendChart points={primarySeries.points} label={primarySeries.label} />}
+      <TrendSummary trend={trend} />
       {loading && !displayText && <LoadingStages messages={ANALYZE_LOADING_MESSAGES} />}
       {displayText && (
         <>
