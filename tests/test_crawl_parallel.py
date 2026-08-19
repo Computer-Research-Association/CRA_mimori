@@ -63,7 +63,7 @@ def test_crawl_all_isolates_failures():
         main.COMMUNITY_CRAWLERS, main.crawl, main.crawl_duckduckgo,
     )
     try:
-        main.COMMUNITY_CRAWLERS = {"good": good, "bad": boom}
+        main.COMMUNITY_CRAWLERS = {"good": good, "bad": boom, "namuwiki": good}
         main.crawl = _no_network
         main.crawl_duckduckgo = _no_network
 

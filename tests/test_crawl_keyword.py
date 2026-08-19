@@ -47,14 +47,14 @@ def test_crawl_keyword_커뮤니티_충분하면_Tavily_호출_안됨():
         return [1, 2, 3, 4]
 
     with _Patched(
-        COMMUNITY_CRAWLERS={"dcinside": many},
+        COMMUNITY_CRAWLERS={"dcinside": many, "namuwiki": many},
         crawl=_no_call,
         crawl_duckduckgo=_no_call,
     ):
         results = main.crawl_keyword("k1")
     assert results["dcinside"] == (4, "ok"), results
     assert "tavily" not in results, results
-    print("[OK] crawl_keyword: 커뮤니티 충분하면 Tavily 호출 안 됨")
+    print("[OK] crawl_keyword: 커뮤니티 충분 + 나무위키 있음 → Tavily 호출 안 됨")
 
 
 def test_crawl_keyword_커뮤니티_부족하면_Tavily_실패시_DDG_보완():
@@ -109,7 +109,7 @@ def test_crawl_all_콜백_없이도_동작함():
     def many(keyword):
         return [1, 2, 3, 4]
 
-    with _Patched(COMMUNITY_CRAWLERS={"dcinside": many}, crawl=_no_call, crawl_duckduckgo=_no_call):
+    with _Patched(COMMUNITY_CRAWLERS={"dcinside": many, "namuwiki": many}, crawl=_no_call, crawl_duckduckgo=_no_call):
         results = main.crawl_all(["k1", "k2"])
     assert results["k1"]["dcinside"] == (4, "ok"), results
     assert results["k2"]["dcinside"] == (4, "ok"), results
