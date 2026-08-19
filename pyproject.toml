@@ -30,6 +30,7 @@ dependencies = [
     "tavily-python>=0.7.26",
     "torch",
     "transformers>=5.13.0",
+    "youtube-transcript-api>=1.2.4",
 ]
 
 [dependency-groups]
