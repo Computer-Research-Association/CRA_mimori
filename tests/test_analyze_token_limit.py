@@ -62,11 +62,14 @@ def test_max_completion_tokens는_4096이다():
     print("[OK] max_completion_tokens=4096")
 
 
-def test_temperature는_0이다():
+def test_temperature는_0_1이다():
+    # 완전 그리디(0)는 gpt-oss 계열에서 반복 루프에 빠져 504 Gateway Timeout이
+    # 나던 걸 실측했다(9/9 재현, elapsed≈302초) — 아주 낮은 값(0.1)으로 그 루프를
+    # 벗어나되, 근거 기반 답변에 필요한 결정적 성향은 거의 유지한다.
     _FakeChatNVIDIA.response = _FakeResponse()
     _run_with_fake(lambda: pipeline.analyze("테스트 프롬프트"))
-    assert _FakeChatNVIDIA.captured_kwargs["temperature"] == 0, _FakeChatNVIDIA.captured_kwargs
-    print("[OK] temperature=0 (근거 기반 답변엔 결정적 디코딩)")
+    assert _FakeChatNVIDIA.captured_kwargs["temperature"] == 0.1, _FakeChatNVIDIA.captured_kwargs
+    print("[OK] temperature=0.1 (완전 그리디의 반복 루프 회피 + 결정적 성향 유지)")
 
 
 def test_finish_reason이_length면_경고_로그를_남긴다():
@@ -114,7 +117,7 @@ def test_스트리밍_경로도_마지막_청크의_finish_reason을_기록한�
 
 if __name__ == "__main__":
     test_max_completion_tokens는_4096이다()
-    test_temperature는_0이다()
+    test_temperature는_0_1이다()
     test_finish_reason이_length면_경고_로그를_남긴다()
     test_finish_reason이_stop이면_평범하게_로그를_남긴다()
     test_스트리밍_경로도_마지막_청크의_finish_reason을_기록한다()

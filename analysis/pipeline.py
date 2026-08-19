@@ -179,10 +179,17 @@ def build_prompt(keyword: str, chunks: list[str], trend_info: str | None = None)
 _RETRYABLE_CODE_PATTERN = re.compile(r"\[(5\d{2})\]")
 _RETRYABLE_KEYWORDS = ("ResourceExhausted", "Service Unavailable", "Overloaded")
 
+# 504는 "서버가 혼잡해서 잠깐 못 받았다"가 아니라 "생성 자체가 5분 넘게 안
+# 끝났다"는 NVIDIA NIM 게이트웨이(NVCF) 자체 타임아웃이다(실측: elapsed≈302초로
+# 매번 동일). 재시도해도 같은 이유로 또 5분 걸려 또 실패할 뿐이라, 3번 재시도가
+# 실패 하나당 15분+을 날리는 낭비였다 — 504는 재시도 대상에서 뺀다.
+_NON_RETRYABLE_CODES = {"504"}
+
 
 def _is_retryable(error_message: str) -> bool:
-    if _RETRYABLE_CODE_PATTERN.search(error_message):
-        return True
+    code_match = _RETRYABLE_CODE_PATTERN.search(error_message)
+    if code_match:
+        return code_match.group(1) not in _NON_RETRYABLE_CODES
     return any(keyword in error_message for keyword in _RETRYABLE_KEYWORDS)
 
 
@@ -276,7 +283,12 @@ def analyze(prompt: str, model: str = ANALYSIS_MODEL, on_chunk: Callable[[str], 
     nvidia_client = ChatNVIDIA(
         model=model,
         api_key=NIM_KEY,
-        temperature=0,
+        # 완전 그리디(0)는 일부 모델(특히 gpt-oss처럼 응답 전에 내부 reasoning을
+        # 먼저 쓰는 모델)에서 반복 루프에 빠져 생성이 안 끝나는 실패 패턴이
+        # 있다 — 실측으로 504 Gateway Timeout이 9건 중 9건 전부 elapsed≈302초로
+        # 동일하게 재현됐다(로그: 2026-08-19). 아주 낮은 값(0.1)만 줘도 이 루프를
+        # 벗어나기 충분하면서, 근거 기반 답변에 필요한 결정적 성향은 거의 유지된다.
+        temperature=0.1,
         top_p=0.95,
         max_completion_tokens=4096,
         timeout=6000

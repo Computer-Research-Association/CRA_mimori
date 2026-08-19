@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react'
 import { valueGradientColor } from '../trendUtils.js'
 
 const WIDTH = 320
@@ -75,17 +74,6 @@ function findTurningPoints(values, span) {
 // 뽑는다. 외부에서 받은 트렌드 상태(핫함/평상 등)가 아니라 이 차트 자체의 실제
 // 값 변화를 반영하는 것이라 더 정직하다 — 값이 오르내리는 대로 선 색도 따라간다.
 export default function TrendChart({ points, label }) {
-  // 키워드를 바꿔가며 봐도(=points가 바뀔 때마다) 매번 다시 그려지는 느낌을 주려고
-  // mount 여부가 아니라 points 자체를 의존성으로 둔다. 두 번째 렌더에서 클래스를
-  // 붙여야 브라우저가 시작 상태(dashoffset:1)를 먼저 페인트하고 나서 전환하므로,
-  // 같은 렌더에서 바로 붙이면 전환 없이 완성된 모양으로 튀어 보인다.
-  const [drawn, setDrawn] = useState(false)
-  useEffect(() => {
-    setDrawn(false)
-    const raf = requestAnimationFrame(() => setDrawn(true))
-    return () => cancelAnimationFrame(raf)
-  }, [points])
-
   if (!Array.isArray(points) || points.length < 2) return null
 
   const sorted = [...points].sort((a, b) => (a.date < b.date ? -1 : 1))
@@ -124,7 +112,7 @@ export default function TrendChart({ points, label }) {
             지나가지만(참조선이니 당연함), 텍스트만큼은 데이터 영역 밖에 있다. */}
         <div className="trend-chart__svg-wrap">
           <svg
-            className={`trend-chart__svg${drawn ? ' trend-chart__svg--drawn' : ''}`}
+            className="trend-chart__svg"
             viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
             preserveAspectRatio="none"
             role="img"
