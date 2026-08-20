@@ -45,11 +45,14 @@ class _Patched:
 
 
 def _few(keyword):
-    return [1]  # MIN_COMMUNITY_DOCS_FOR_TAVILY(3) 미만
+    return [1] * (MIN_COMMUNITY_DOCS_FOR_TAVILY - 1)  # 문턱 미만
 
 
 def _many(keyword):
-    return [1, 2, 3, 4]  # MIN_COMMUNITY_DOCS_FOR_TAVILY(3) 이상
+    # 문턱보다 넉넉히 많이 — 단일 소스로 써도 "나무위키=0" 케이스(예:
+    # test_합계는_충분해도_나무위키_0건이면_Tavily_호출됨)가 합계 부족이 아니라
+    # 나무위키 조건 자체 때문에 Tavily가 호출됐는지를 격리해서 검증할 수 있어야 한다.
+    return [1] * (MIN_COMMUNITY_DOCS_FOR_TAVILY + 2)
 
 
 def _no_call(keyword):
