@@ -227,11 +227,10 @@ def test_근거_출처가_승격_문턱_미만이면_low_confidence가_True다()
     worker.release_heavy_job_lock = lambda owner: None
     worker.default_facet_config = lambda keyword: {"의미": {"question": keyword}}
     worker.encode_facets = lambda facet_config: {"의미": {"dense": [], "sparse": {}}}
-    # 문턱(3)보다 하나 적은, 서로 다른 URL 2개짜리 청크만 근거로 잡힌 상황을 재현.
-    assert MIN_COMMUNITY_DOCS_FOR_TAVILY == 3, "이 테스트는 문턱=3을 전제로 함 — 값이 바뀌면 같이 조정"
+    # 문턱보다 하나 적은, 서로 다른 URL의 청크만 근거로 잡힌 상황을 재현.
     points = [
-        SimpleNamespace(payload={"text": "청크1", "title": "글1", "url": "https://a.example.com"}),
-        SimpleNamespace(payload={"text": "청크2", "title": "글2", "url": "https://b.example.com"}),
+        SimpleNamespace(payload={"text": f"청크{i}", "title": f"글{i}", "url": f"https://{i}.example.com"})
+        for i in range(MIN_COMMUNITY_DOCS_FOR_TAVILY - 1)
     ]
     worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: (points, {})
     worker.get_cached_trend = lambda keyword: None
@@ -246,7 +245,7 @@ def test_근거_출처가_승격_문턱_미만이면_low_confidence가_True다()
         (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
          worker.default_facet_config, worker.encode_facets, worker.facet_search,
          worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url) = original
-    print("[OK] 출처 2건(<3) -> low_confidence=True")
+    print(f"[OK] 출처 {MIN_COMMUNITY_DOCS_FOR_TAVILY - 1}건(<{MIN_COMMUNITY_DOCS_FOR_TAVILY}) -> low_confidence=True")
 
 
 def test_같은_문서가_여러_facet에서_중복돼도_distinct_URL_기준으로_판단한다():
@@ -275,7 +274,7 @@ def test_같은_문서가_여러_facet에서_중복돼도_distinct_URL_기준으
     try:
         worker.run_once(collection=collection)
         doc = collection._docs["야르"]
-        # 청크는 5개(문턱 3 이상)지만 distinct URL은 1개뿐이라 여전히 low_confidence=True.
+        # 청크는 5개(문턱 이상)지만 distinct URL은 1개뿐이라 여전히 low_confidence=True.
         assert doc["result"]["low_confidence"] is True, doc
     finally:
         (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,

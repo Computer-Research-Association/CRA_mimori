@@ -92,7 +92,7 @@ CRAWL_WORKERS = 8          # (키워드 × 소스) 평평한 풀의 워커 수
 # todayhumor)를 먼저 돌리고, 한 키워드의 합계 문서 수가 이 기준 미만이면 그 키워드만
 # Tavily로 보완 호출한다. Tavily 자체가 예외로 실패하면 DuckDuckGo로 한 번 더
 # 보완한다(폴백의 폴백). 전체 실패는 합계가 자연히 0이 되어 같은 조건에 포함된다.
-MIN_COMMUNITY_DOCS_FOR_TAVILY = 3
+MIN_COMMUNITY_DOCS_FOR_TAVILY = 5
 
 # Keywords.md(배치 크롤 대상) 상한. 이 파일이 커질수록 매일 새벽 배치 크롤 시간과
 # Tavily/YouTube API 쿼터 소모가 함께 늘어난다. 상한을 넘으면 새 키워드는 (이미

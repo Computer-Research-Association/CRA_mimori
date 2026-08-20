@@ -47,8 +47,9 @@ def test_rate_limiter_holds_rate_under_many_threads():
 
 def test_crawl_all_isolates_failures():
     def good(keyword):
-        return [1, 2, 3]  # 3건 수집한 척 (MIN_COMMUNITY_DOCS_FOR_TAVILY=3 이상이라
-        # Tavily 보완 단계가 트리거되지 않아야 함 — 아래 _no_network가 그걸 검증)
+        return [1, 2, 3]  # good이 dcinside/namuwiki 두 소스에 다 쓰여 합계 6건 —
+        # MIN_COMMUNITY_DOCS_FOR_TAVILY 이상이라 Tavily 보완 단계가 트리거되지
+        # 않아야 함 (아래 _no_network가 그걸 검증)
 
     def boom(keyword):
         raise RuntimeError("quota exceeded")
