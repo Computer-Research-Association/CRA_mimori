@@ -1158,6 +1158,24 @@ a:focus-visible {
   position: relative;
   flex: 1;
   min-width: 0;
+  /* 그래프가 왼쪽부터 드러나는 효과 — clip-path로 패널 전체(선+영역+점+라벨)를
+     한 번에 감싸서 드러낸다. stroke-dasharray+pathLength 조합으로 선만 따로
+     그려지게 했던 이전 방식은 vector-effect="non-scaling-stroke"·
+     preserveAspectRatio="none"와 겹치며 특정 구간에서 선이 그냥 안 그려지는
+     렌더링 버그가 있었다(실측: 배포된 사이트에서 재현 확인) — clip-path는
+     그런 SVG dash 정규화에 안 기대므로 더 견고하다. */
+  animation: trend-chart-reveal 2.2s ease-out;
+}
+
+@keyframes trend-chart-reveal {
+  from { clip-path: inset(0 100% 0 0); }
+  to { clip-path: inset(0 0 0 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trend-chart__svg-wrap {
+    animation-duration: 0.01ms;
+  }
 }
 
 .trend-chart__svg {
@@ -1211,52 +1229,6 @@ a:focus-visible {
   stroke-width: 2.25;
   stroke-linejoin: round;
   stroke-linecap: round;
-  /* pathLength="1"(JSX)로 실제 길이를 1로 정규화해뒀으니, 데이터 포인트 수와
-     무관하게 항상 같은 dasharray/dashoffset 값으로 "그려지는" 효과를 낸다. */
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  transition: stroke-dashoffset 0.9s ease-out;
-}
-
-.trend-chart__svg--drawn .trend-chart__line {
-  stroke-dashoffset: 0;
-}
-
-/* 선이 그려지는 동안 나머지 요소(칠해진 영역, 기준선, 점, 날짜 라벨)는 옅게
-   깔려 있다가 같이 살아난다 — 전부 즉시 나타나면 "그려지는" 느낌이 선에만
-   갇혀 어색하다. */
-.trend-chart__area,
-.trend-chart__mean,
-.trend-chart__tier-line,
-.trend-chart__point,
-.trend-chart__point-label {
-  opacity: 0;
-  transition: opacity 0.6s ease-out 0.3s;
-}
-
-.trend-chart__svg--drawn .trend-chart__area,
-.trend-chart__svg--drawn .trend-chart__mean,
-.trend-chart__svg--drawn .trend-chart__tier-line {
-  opacity: 1;
-}
-
-.trend-chart__svg--drawn ~ .trend-chart__point,
-.trend-chart__svg--drawn ~ .trend-chart__point-label {
-  opacity: 1;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .trend-chart__line {
-    transition-duration: 0.01ms;
-  }
-  .trend-chart__area,
-  .trend-chart__mean,
-  .trend-chart__tier-line,
-  .trend-chart__point,
-  .trend-chart__point-label {
-    transition-duration: 0.01ms;
-    transition-delay: 0s;
-  }
 }
 
 /* 점 마커 — SVG 안에 그리면 preserveAspectRatio="none"의 비균등 확대 때문에
@@ -1319,23 +1291,28 @@ a:focus-visible {
   border-radius: var(--r-md);
 }
 
-/* 답변이 스트리밍으로 몇 초 간격씩 갱신될 때마다 짧게 켜졌다 꺼지는 표시 —
-   새 문장이 도착했다는 걸 은은하게 알려준다("타이핑" 느낌의 가벼운 대체). */
-.markdown-body--updated {
-  animation: markdown-pulse 0.5s ease-out;
+/* 실제로 한 글자씩 드러나는 동안(AnalysisPanel.jsx의 requestAnimationFrame
+   기반 reveal) 마지막에 깜빡이는 커서를 붙여 "지금 쓰이고 있다"는 걸 강조한다.
+   ReactMarkdown이 문단/목록 등 블록 요소로 나눠 렌더링해서 커서가 정확히
+   "마지막 글자 바로 뒤"가 아니라 전체 내용 맨 아래에 붙지만, 그래도 타이핑
+   중이라는 신호로는 충분하다. */
+.markdown-body--typing::after {
+  content: '';
+  display: inline-block;
+  width: 0.5em;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--c-accent);
+  vertical-align: text-bottom;
+  animation: markdown-cursor-blink 0.9s step-end infinite;
 }
 
-@keyframes markdown-pulse {
-  from {
-    box-shadow: 0 0 0 3px var(--c-accent-soft);
-  }
-  to {
-    box-shadow: 0 0 0 0 transparent;
-  }
+@keyframes markdown-cursor-blink {
+  50% { opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .markdown-body--updated {
+  .markdown-body--typing::after {
     animation: none;
   }
 }
