@@ -53,8 +53,6 @@ uv run python -m eval.run_compare
 docker-compose up --build
 ```
 
-- Qdrant는 호스트 포트 `16333`에 노출됩니다 (컨테이너 내부는 `6333` 그대로 — `6333`은 Windows 예약
-  포트 범위와 겹쳐서 회피).
 - 스케줄러 컨테이너는 매일 KST 14:00에 `main.py`를 자동 실행합니다(놓친 시간대는 캐치업 실행).
 
 ## 환경 변수 (.env)
