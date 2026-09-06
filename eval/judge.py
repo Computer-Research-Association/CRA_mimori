@@ -25,8 +25,9 @@ from config.config_cilent import NIM_KEY
 
 # 판정용 모델. 분석 파이프라인과 동일 계열을 쓰되 필요하면 여기서 바꾼다.
 # deepseek-ai/deepseek-v4-flash에 이어 openai/gpt-oss-120b도 NIM 카탈로그에서
-# EOL 처리되어([410] Gone, 2026-09-03) 호출 불가 — ANALYSIS_MODEL과 함께 20b로 교체.
-JUDGE_MODEL = "openai/gpt-oss-20b"
+# EOL 처리되어([410] Gone, 2026-09-03) 호출 불가 — ANALYSIS_MODEL과 함께 교체.
+# (모델 선정 근거는 config_cilent.py의 ANALYSIS_MODEL 주석 참고)
+JUDGE_MODEL = "minimaxai/minimax-m3"
 
 _RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
 _CACHE_PATH = os.path.join(_RESULTS_DIR, "judge_cache.json")
