@@ -166,7 +166,10 @@ USER_AGENTS = [
 
 # LLM 분석 설정
 
-ANALYSIS_MODEL = "openai/gpt-oss-120b"
+# openai/gpt-oss-120b는 NIM 카탈로그에서 2026-09-03 EOL 처리되어([410] Gone) 더 이상
+# 호출 불가 — 같은 계열(reasoning 모델, temperature=0.1 보정 대상)인 20b로 교체.
+# 이 계정 키로 접근 가능한 모델이 제한적이라(대형 모델 다수가 404) 실측 후 선택함.
+ANALYSIS_MODEL = "openai/gpt-oss-20b"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
