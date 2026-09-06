@@ -252,7 +252,7 @@ def _fetch_comments(session, gallery_id: str, post_no: str, e_s_n_o: str,
 
 # ── 4. 메인 크롤러 ────────────────────────────────────────────────────────────
 
-def crawl_dcinside(keyword: str) -> list[dict]:
+def crawl_dcinside(keyword: str, max_posts: int = CRAWL_MAX_POSTS) -> list[dict]:
     """
     키워드로 디시인사이드 검색 → 게시글+댓글 수집 → MongoDB 저장.
     """
@@ -260,7 +260,7 @@ def crawl_dcinside(keyword: str) -> list[dict]:
     collection = get_collection()
 
     print(f"[디시인사이드] '{keyword}' 검색 시작...")
-    posts = _get_post_urls_multi(session, keyword, CRAWL_MAX_POSTS, DCINSIDE_SORTS)
+    posts = _get_post_urls_multi(session, keyword, max_posts, DCINSIDE_SORTS)
     print(f"[디시인사이드] 총 {len(posts)}개 URL 수집 완료 (정렬: {', '.join(DCINSIDE_SORTS)})")
 
     # 이미 가진 글은 여기서 걸러 요청 자체를 생략한다(게시글당 GET+POST 2회 절약).

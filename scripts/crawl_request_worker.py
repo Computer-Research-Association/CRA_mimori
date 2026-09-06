@@ -21,6 +21,7 @@ from config.config_cilent import (
     LLM_REQUESTS_COLLECTION,
     MAX_BATCH_KEYWORDS,
     MIN_COMMUNITY_DOCS_FOR_TAVILY,
+    ON_DEMAND_MAX_POSTS,
 )
 from scripts.heavy_job_lock import acquire_heavy_job_lock_blocking, release_heavy_job_lock
 
@@ -174,7 +175,11 @@ def run_once(collection=None, llm_requests_collection=None) -> None:
     try:
         _load_pipeline()
         _judge_trend_early(keyword)
-        crawl_all([keyword], on_source_done=_make_progress_callback(collection, keyword))
+        crawl_all(
+            [keyword],
+            on_source_done=_make_progress_callback(collection, keyword),
+            max_posts=ON_DEMAND_MAX_POSTS,
+        )
         _set_stage(collection, keyword, "preprocess")
         preprocess_documents(keyword)
 
