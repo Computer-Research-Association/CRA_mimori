@@ -167,9 +167,15 @@ USER_AGENTS = [
 # LLM 분석 설정
 
 # openai/gpt-oss-120b는 NIM 카탈로그에서 2026-09-03 EOL 처리되어([410] Gone) 더 이상
-# 호출 불가 — 같은 계열(reasoning 모델, temperature=0.1 보정 대상)인 20b로 교체.
-# 이 계정 키로 접근 가능한 모델이 제한적이라(대형 모델 다수가 404) 실측 후 선택함.
-ANALYSIS_MODEL = "openai/gpt-oss-20b"
+# 호출 불가. 이 계정 키로 접근 가능한 모델이 제한적이라(mistral-large-2,
+# llama-3.1-nemotron-70b/51b, nemotron-4-340b, llama3-chatqa-1.5-70b, dbrx,
+# yi-large 등 다수가 404) 실측으로 대체재를 찾음. gpt-oss-20b/nemotron-3-super-120b/
+# nemotron-3.5-lightning은 접근되지만 reasoning 모델이라 답변 전 내부 사고가 길어져
+# max_completion_tokens를 넘기고 끝나거나(예전 gpt-oss-120b 504 재발 위험) content에
+# 사고 과정이 그대로 새는 문제가 있었다. minimax-m3는 접근 가능하면서 매 요청
+# finish_reason="stop"으로 깔끔히 종료하고 content에 최종 답만 담겨(reasoning_content는
+# 별도 필드) 스트리밍도 정상 동작함을 확인 — gpt-oss-20b보다 큰 모델이면서 더 안정적.
+ANALYSIS_MODEL = "minimaxai/minimax-m3"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
