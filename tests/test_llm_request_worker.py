@@ -151,12 +151,13 @@ def test_LLM_호출_전에_출처와_트렌드를_미리_기록한다():
     collection = _FakeCollection([_analyze_doc()])
     calls = {}
     original = (
-        worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+        worker.acquire_heavy_job_lock, worker.release_heavy_job_lock, worker.renew_heavy_job_lock,
         worker.default_facet_config, worker.encode_facets, worker.facet_search,
         worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url,
     )
     worker.acquire_heavy_job_lock = lambda owner: True
     worker.release_heavy_job_lock = lambda owner: None
+    worker.renew_heavy_job_lock = lambda owner: calls.setdefault("lock_renewed", True)
     worker.default_facet_config = lambda keyword: {"의미": {"question": keyword}}
     worker.encode_facets = lambda facet_config: {"의미": {"dense": [], "sparse": {}}}
     fake_point = SimpleNamespace(payload={"text": "청크", "title": "제목", "url": "https://example.com"})
@@ -179,14 +180,15 @@ def test_LLM_호출_전에_출처와_트렌드를_미리_기록한다():
         assert before["trend"] == {"status": "유행 중"}, before
         assert before["partial_text"] is None, before
         assert calls["partial_after_on_chunk"] == "스트리밍 중간 텍스트", calls
+        assert calls.get("lock_renewed") is True, calls
         doc = collection._docs["야르"]
         assert doc["status"] == "done", doc
         assert doc["result"]["result"] == "최종 결과", doc
     finally:
-        (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock,
+        (worker.acquire_heavy_job_lock, worker.release_heavy_job_lock, worker.renew_heavy_job_lock,
          worker.default_facet_config, worker.encode_facets, worker.facet_search,
          worker.get_cached_trend, worker.build_facet_prompt, worker.analyze, worker.clean_source_url) = original
-    print("[OK] LLM 호출 전 출처/트렌드 조기 기록 + on_chunk로 partial_text 즉시 갱신")
+    print("[OK] LLM 호출 전 출처/트렌드 조기 기록 + on_chunk로 partial_text 즉시 갱신 + 락 갱신")
 
 
 def test_결과가_없으면_failed로_기록된다():
