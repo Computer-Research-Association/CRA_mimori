@@ -179,10 +179,11 @@ USER_AGENTS = [
 # yi-large 등 다수가 404) 실측으로 대체재를 찾음. gpt-oss-20b/nemotron-3-super-120b/
 # nemotron-3.5-lightning은 접근되지만 reasoning 모델이라 답변 전 내부 사고가 길어져
 # max_completion_tokens를 넘기고 끝나거나(예전 gpt-oss-120b 504 재발 위험) content에
-# 사고 과정이 그대로 새는 문제가 있었다. minimax-m3는 접근 가능하면서 매 요청
-# finish_reason="stop"으로 깔끔히 종료하고 content에 최종 답만 담겨(reasoning_content는
-# 별도 필드) 스트리밍도 정상 동작함을 확인 — gpt-oss-20b보다 큰 모델이면서 더 안정적.
-ANALYSIS_MODEL = "minimaxai/minimax-m3"
+# 사고 과정이 그대로 새는 문제가 있었다. 후속으로 쓰던 minimax-m3도 2026-09-09 EOL
+# 처리되어([410] Gone) 호출 불가가 됨. moonshotai/kimi-k3로 재교체 — 실측 결과
+# max_completion_tokens=4096 기준 매 요청 finish_reason="stop"으로 깔끔히 종료하고
+# content에 최종 답만 담김(<think> 누출 없음, reasoning_content는 별도 필드)을 확인.
+ANALYSIS_MODEL = "moonshotai/kimi-k3"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정
