@@ -56,7 +56,7 @@ from config.config_cilent import (
     LLM_WORKER_POLL_INTERVAL_SECONDS,
     MIN_COMMUNITY_DOCS_FOR_TAVILY,
 )
-from scripts.heavy_job_lock import acquire_heavy_job_lock, release_heavy_job_lock
+from scripts.heavy_job_lock import acquire_heavy_job_lock, release_heavy_job_lock, renew_heavy_job_lock
 from trend.trend_service import format_trend_context, get_cached_trend
 
 _LOCK_OWNER = "llm_request_worker"
@@ -118,14 +118,26 @@ def _write_progress(
         print(f"[llm_request_worker] 진행 상황 기록 실패(무시하고 계속): {e}")
 
 
+_LOCK_RENEW_INTERVAL_SECONDS = 60.0  # heavy_job_lock._STALE_AFTER(20분)보다 훨씬 촘촘한 여유
+
+
 def _make_stream_progress_writer(collection, job_id: str, sources: list, trend: dict | None, low_confidence: bool):
     """analyze(on_chunk=...)에 넘길 콜백. ANALYZE_STREAM_WRITE_INTERVAL_SECONDS보다
-    짧은 간격의 청크는 건너뛰어 Mongo write가 토큰 속도로 발생하지 않게 한다."""
+    짧은 간격의 청크는 건너뛰어 Mongo write가 토큰 속도로 발생하지 않게 한다.
+
+    청크가 오는 한(=아직 살아서 일하는 중인 한) heavy_job_lock도 같이 갱신한다 —
+    analyze()는 시도당 최대 100분씩 걸릴 수 있어(NIM이 느리지만 살아있는 경우)
+    락의 20분 staleness 기준을 그냥 두면 살아있는 작업의 락을 다른 워커가 뺏어갈
+    수 있다(그러면 이 락이 막으려던 BGE-M3 동시 로딩이 재현됨)."""
     last_write = 0.0
+    last_lock_renew = 0.0
 
     def on_chunk(accumulated_text: str) -> None:
-        nonlocal last_write
+        nonlocal last_write, last_lock_renew
         now = time.monotonic()
+        if now - last_lock_renew >= _LOCK_RENEW_INTERVAL_SECONDS:
+            last_lock_renew = now
+            renew_heavy_job_lock(_LOCK_OWNER)
         if now - last_write < ANALYZE_STREAM_WRITE_INTERVAL_SECONDS:
             return
         last_write = now

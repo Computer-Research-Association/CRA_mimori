@@ -58,6 +58,20 @@ def acquire_heavy_job_lock(owner: str, collection=None) -> bool:
     return result.modified_count == 1
 
 
+def renew_heavy_job_lock(owner: str, collection=None) -> None:
+    """오래 걸리는 작업(예: analyze()의 최대 100분×3회 재시도) 도중 주기적으로
+    호출해 locked_at을 갱신한다. _STALE_AFTER(20분)는 '죽은 프로세스 회수'용이라,
+    살아서 일하는 중인데도 단순히 오래 걸린다는 이유로 다른 워커에게 락을 뺏기면
+    두 워커가 동시에 BGE-M3를 메모리에 올리는, 이 락이 막으려던 상황이 그대로
+    재현된다. owner가 아니면(이미 락을 잃었으면) 조용히 무시한다."""
+    if collection is None:
+        collection = _collection()
+    collection.update_one(
+        {"_id": _LOCK_ID, "owner": owner},
+        {"$set": {"locked_at": datetime.now(timezone.utc)}},
+    )
+
+
 def release_heavy_job_lock(owner: str, collection=None) -> None:
     """owner가 실제 소유자일 때만 락을 푼다."""
     if collection is None:
