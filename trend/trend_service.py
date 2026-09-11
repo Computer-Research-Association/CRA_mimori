@@ -72,6 +72,16 @@ KAKAO_MIN_IQR = 5.0
 KAKAO_MIN_BASELINE_AVG = 10
 GOOGLE_MIN_BASELINE_AVG = 10
 
+# baseline 중 '값이 있는(0보다 큰) 날'의 최소 비율. baseline_avg 하한만으로는
+# 대부분 0이다가 간헐적으로만 스파이크가 나는 이봉(bimodal) 분포를 못 걸러낸다 —
+# 30일 중 소수만 스파이크여도 평균은 쉽게 하한을 넘는다. 이런 분포는 median=0,
+# IQR≈0으로 무너져 min_iqr 바닥값에 걸리고, 오늘 값 하나가 스케일에 안 맞게
+# 거대한 z를 만든다(실측: '젬민이' 2026-09-10, google_ratios 30일 중 22일이 0인데
+# baseline_avg=20.7로 GOOGLE_MIN_BASELINE_AVG=10은 통과, google_z=49로 폭주해
+# final_z가 FINAL_Z_CLIP=8.0에 걸려 '핫함'으로 오판정됨). 카카오는 지금까지
+# 이 패턴으로 관측된 사례가 없어 우선 구글에만 적용한다.
+GOOGLE_MIN_NONZERO_FRACTION = 0.5
+
 # 앙상블에 반영된 소스들의 pairwise z 격차가 이 이상이고 부호가 반대면
 # 발산 플래그를 남긴다. 초기값이며 실측 후 조정.
 DIVERGENCE_THRESHOLD = 10
@@ -210,6 +220,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         google_scored = drop_incomplete_today(google_ratios)
         google_active = _has_signal(google_scored)
         google_baseline_avg = _baseline_avg(google_scored) if google_active else 0.0
+        google_nonzero_fraction = _nonzero_fraction(google_scored) if google_active else 0.0
         google_z = (
             zscore_from_series(google_scored, min_iqr=GOOGLE_MIN_IQR)
             if google_active
@@ -219,6 +230,8 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
             note_parts.append("google_excluded_no_signal")
         elif google_baseline_avg < GOOGLE_MIN_BASELINE_AVG:
             note_parts.append("google_excluded_low_baseline")
+        elif google_nonzero_fraction < GOOGLE_MIN_NONZERO_FRACTION:
+            note_parts.append("google_excluded_sparse_signal")
         else:
             google_usable = True
 
@@ -432,6 +445,20 @@ def _baseline_avg(counts: list[dict]) -> float:
     if not baseline:
         return 0.0
     return sum(float(row["ratio"]) for row in baseline) / len(baseline)
+
+
+def _nonzero_fraction(counts: list[dict]) -> float:
+    """
+    baseline(최신일=today_value 제외)에서 ratio > 0인 날의 비율.
+    GOOGLE_MIN_NONZERO_FRACTION 판정에 사용 — _baseline_avg만으로는 못 잡는
+    이봉(대부분 0, 가끔 스파이크) 분포를 걸러내기 위함.
+    """
+    ordered = sorted(counts, key=lambda row: row["date"])
+    baseline = ordered[:-1]
+    if not baseline:
+        return 0.0
+    nonzero = sum(1 for row in baseline if row["ratio"] > 0)
+    return nonzero / len(baseline)
 
 
 def get_cached_trend(keyword: str, collection=None) -> dict | None:
