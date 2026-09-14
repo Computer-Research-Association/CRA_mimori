@@ -125,6 +125,25 @@ def add_keyword_if_missing(keyword: str) -> bool:
     return True
 
 
+def remove_keyword(keyword: str) -> bool:
+    """Keywords.md에서 keyword와 일치하는 줄을 전부 지운다. 지웠으면 True, 없었으면 False.
+
+    완전삭제(analysis.pipeline.delete_keyword_permanently)가 호출한다 — Mongo/Qdrant
+    데이터만 지우고 여기서 안 빼면, 다음 배치 크롤(이 파일의 __main__, 스케줄러가
+    KST 02:00에 돌림)이 load_keywords()로 이 파일을 그대로 읽어 삭제한 키워드를
+    되살린다. load_keywords()/add_keyword_if_missing()과 동일하게 줄 단위 strip
+    기준으로 비교한다 — "야르 "처럼 끝에 공백이 붙은 줄도 지워져야 한다.
+    """
+    with open(KEYWORDS_PATH, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    kept = [line for line in lines if line.strip() != keyword]
+    if len(kept) == len(lines):
+        return False
+    with open(KEYWORDS_PATH, "w", encoding="utf-8") as f:
+        f.writelines(kept)
+    return True
+
+
 def crawl_all(
     keywords: list[str], on_source_done: ProgressCallback = None
 ) -> dict[str, dict[str, tuple[int, str]]]:
