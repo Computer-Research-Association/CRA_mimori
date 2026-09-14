@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { requestCrawl, fetchCrawlStatus } from '../api.js'
+import { requestCrawl, fetchCrawlStatus, fetchTrend } from '../api.js'
+import TrendSummary from './TrendSummary.jsx'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -31,8 +32,26 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
   const [stage, setStage] = useState(null)
   const [progress, setProgress] = useState({})
   const [error, setError] = useState(null)
+  const [trend, setTrend] = useState(null)
   const timerRef = useRef(null)
   const cancelledRef = useRef(false)
+  const trendFoundRef = useRef(false)
+
+  // 트렌드 판정(네이버/카카오/구글)은 크롤링·임베딩과 완전히 독립적이라 워커가
+  // 큐를 집자마자 몇 초 만에 끝난다(scripts/crawl_request_worker.py의 조기 판정 단계).
+  // 수십 분 걸리는 수집을 기다리지 않고 먼저 보여주기 위해 크롤 상태와 별도로 폴링한다.
+  // 한 번 찾으면 더 조회하지 않는다(같은 세션에서 값이 바뀔 일이 없음).
+  async function pollTrend() {
+    if (trendFoundRef.current) return
+    try {
+      const data = await fetchTrend(keyword)
+      if (cancelledRef.current || !data) return
+      trendFoundRef.current = true
+      setTrend(data)
+    } catch {
+      // 부가 정보라 조회 실패해도 크롤링 진행 표시엔 영향 없음 — 다음 틱에 재시도.
+    }
+  }
 
   function startPolling() {
     timerRef.current = setInterval(async () => {
@@ -45,20 +64,27 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
         if (data.status === 'done') {
           clearInterval(timerRef.current)
           onDone(keyword)
+          return
         } else if (data.status === 'failed') {
           clearInterval(timerRef.current)
           setError(data.error)
+          return
         }
       } catch (e) {
         if (cancelledRef.current) return
         clearInterval(timerRef.current)
         setError(e.message || '네트워크 오류가 발생했습니다')
+        return
       }
+      pollTrend()
     }, POLL_INTERVAL_MS)
   }
 
   useEffect(() => {
     cancelledRef.current = false
+    trendFoundRef.current = false
+    setTrend(null)
+    pollTrend()
     requestCrawl(keyword)
       .then(() => {
         if (!cancelledRef.current) startPolling()
@@ -104,6 +130,7 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
 
   return (
     <div>
+      <TrendSummary trend={trend} />
       <p className="loading-line">
         <span className="spinner" aria-hidden="true" />
         '{keyword}' {headline}... (전체 수십 분 소요)

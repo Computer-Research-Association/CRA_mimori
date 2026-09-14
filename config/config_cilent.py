@@ -57,6 +57,11 @@ YOUTUBE_MAX_COMMENTS = 50   # 영상당 가져올 댓글 개수
 # (댓글 수 하한선은 제거됨 — 제목/설명 키워드 필터가 관련성 판별을 대신함)
 # 같은 키워드를 이 일수 이내에 이미 크롤했으면 API 호출을 건너뛴다 (쿼터 절약).
 YOUTUBE_RECRAWL_DAYS = 3
+# 자막(트랜스크립트) 텍스트 상한(글자 수). 긴 영상은 자막이 수천~수만 자에 달해
+# 청킹/임베딩 비용이 커지므로 앞부분만 쓴다(밈/신조어 설명 영상은 보통 도입부에
+# 핵심 정의가 나온다). youtube-transcript-api(비공식, OAuth 불필요)로 가져오며,
+# 자막이 없는 영상(다수)은 조용히 건너뛴다 — 댓글/설명만으로도 문서 자체는 유효하므로.
+YOUTUBE_MAX_TRANSCRIPT_CHARS = 4000
 
 
 # 웹 크롤러 공통 설정
@@ -64,6 +69,16 @@ CRAWL_DELAY_MIN = 1.5       # 요청 사이 최소 대기 (초)
 CRAWL_DELAY_MAX = 4.0       # 요청 사이 최대 대기 (초)
 CRAWL_MAX_RETRIES = 3       # 실패 시 최대 재시도 횟수
 CRAWL_MAX_POSTS = 20        # 사이트당 최대 수집 게시글 수
+
+# 온디맨드(사용자가 화면 앞에서 기다리는) 크롤 전용 상한. dcinside/natepann/todayhumor는
+# 게시글 1건당 요청 2회(본문+댓글)라 CRAWL_MAX_POSTS=20을 다 채우는 "핫한"
+# 키워드는 사이트당 도메인 RateLimiter(1.5~4초 간격)만으로 2~3분이 걸린다.
+# 배치(매일 새벽) 크롤은 시간 제약이 없어 CRAWL_MAX_POSTS를 그대로 쓰고,
+# 사람이 기다리는 온디맨드 경로만 이 값으로 낮춰 체감 대기시간을 줄인다.
+# 8(정렬 2개 기준 정렬당 4건 × 요청 2회 = 사이트당 약 16회 요청 ≈ 40~60초)에서
+# 4(정렬당 2건 × 요청 2회 = 사이트당 약 8회 요청 ≈ 20~30초)로 낮춰 체감 대기시간을
+# 추가로 절반가량 줄인다(2026-09-11, 사용자 피드백 "온디맨드 크롤러가 너무 느림").
+ON_DEMAND_MAX_POSTS = 4
 
 # 내용 필터(본문 길이/관련성)로 걸러낸 글을 기록해 두는 컬렉션.
 # 걸러진 글은 memes에 저장되지 않아 '이미 저장됨' 판정에 안 걸리고, 그래서 매 실행마다
@@ -87,7 +102,7 @@ CRAWL_WORKERS = 8          # (키워드 × 소스) 평평한 풀의 워커 수
 # todayhumor)를 먼저 돌리고, 한 키워드의 합계 문서 수가 이 기준 미만이면 그 키워드만
 # Tavily로 보완 호출한다. Tavily 자체가 예외로 실패하면 DuckDuckGo로 한 번 더
 # 보완한다(폴백의 폴백). 전체 실패는 합계가 자연히 0이 되어 같은 조건에 포함된다.
-MIN_COMMUNITY_DOCS_FOR_TAVILY = 3
+MIN_COMMUNITY_DOCS_FOR_TAVILY = 5
 
 # Keywords.md(배치 크롤 대상) 상한. 이 파일이 커질수록 매일 새벽 배치 크롤 시간과
 # Tavily/YouTube API 쿼터 소모가 함께 늘어난다. 상한을 넘으면 새 키워드는 (이미
@@ -161,7 +176,17 @@ USER_AGENTS = [
 
 # LLM 분석 설정
 
-ANALYSIS_MODEL = "openai/gpt-oss-120b"
+# openai/gpt-oss-120b는 NIM 카탈로그에서 2026-09-03 EOL 처리되어([410] Gone) 더 이상
+# 호출 불가. 이 계정 키로 접근 가능한 모델이 제한적이라(mistral-large-2,
+# llama-3.1-nemotron-70b/51b, nemotron-4-340b, llama3-chatqa-1.5-70b, dbrx,
+# yi-large 등 다수가 404) 실측으로 대체재를 찾음. gpt-oss-20b/nemotron-3-super-120b/
+# nemotron-3.5-lightning은 접근되지만 reasoning 모델이라 답변 전 내부 사고가 길어져
+# max_completion_tokens를 넘기고 끝나거나(예전 gpt-oss-120b 504 재발 위험) content에
+# 사고 과정이 그대로 새는 문제가 있었다. 후속으로 쓰던 minimax-m3도 2026-09-09 EOL
+# 처리되어([410] Gone) 호출 불가가 됨. moonshotai/kimi-k3로 재교체 — 실측 결과
+# max_completion_tokens=4096 기준 매 요청 finish_reason="stop"으로 깔끔히 종료하고
+# content에 최종 답만 담김(<think> 누출 없음, reasoning_content는 별도 필드)을 확인.
+ANALYSIS_MODEL = "moonshotai/kimi-k3"
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정

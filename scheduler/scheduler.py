@@ -37,16 +37,27 @@ def log_status(message: str):
 def heartbeat():
     log_status("working: true")
 
+# main.py(배치 크롤)와 crawl_request_worker.py(온디맨드 크롤)는 서로 다른 프로세스라
+# crawlers/base.py의 도메인별 RateLimiter가 따로 논다 — 조율 없이 겹치면 같은 사이트로
+# 나가는 실제 요청량이 두 배가 되어 IP 차단 위험이 커진다. 같은 scheduler.py 프로세스
+# 안에서 도는 두 잡이라 Mongo 락 없이 스레드 안전한 플래그만으로 충분하다.
+_batch_crawl_running = threading.Event()
+
+
 def crawlrun():
-    log_status("크롤링 시작")
-    result = subprocess.run([sys.executable, MAIN_PY])
-    if result.returncode == 0:
-        log_status("크롤링 성공")
-        with open(LAST_CRAWL_PATH, "w", encoding="utf-8") as f:
-            f.write(datetime.utcnow().isoformat())
-    else:
-        logger.error("크롤링 실패 (code=%d)", result.returncode)
-        log_status(f"크롤링 실패 (code={result.returncode})")
+    _batch_crawl_running.set()
+    try:
+        log_status("크롤링 시작")
+        result = subprocess.run([sys.executable, MAIN_PY])
+        if result.returncode == 0:
+            log_status("크롤링 성공")
+            with open(LAST_CRAWL_PATH, "w", encoding="utf-8") as f:
+                f.write(datetime.utcnow().isoformat())
+        else:
+            logger.error("크롤링 실패 (code=%d)", result.returncode)
+            log_status(f"크롤링 실패 (code={result.returncode})")
+    finally:
+        _batch_crawl_running.clear()
 
 
 def preprocess_embed_run():
@@ -81,6 +92,8 @@ def crawl_request_run():
     워커 프로세스 '안'에서 2시간 기준으로 도는데, queued만 보면 running에 멈춰있는
     고아 문서가 있어도 워커가 다시는 안 뜨게 되어 그 회수 로직 자체가 영영 실행되지
     않는다."""
+    if _batch_crawl_running.is_set():
+        return  # 배치 크롤(main.py) 실행 중 — 같은 사이트에 이중 부하를 주지 않도록 이번 틱은 건너뜀
     from DB.mongo_client import get_collection
     from config.config_cilent import CRAWL_REQUESTS_COLLECTION
     has_work = get_collection(CRAWL_REQUESTS_COLLECTION).find_one(

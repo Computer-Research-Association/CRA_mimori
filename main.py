@@ -4,6 +4,7 @@ import threading
 from collections import defaultdict
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import partial
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE_DIR)
@@ -17,13 +18,13 @@ from crawlers.namuwiki_crawler import crawl_namuwiki
 from crawlers.natepann_crawler import crawl_natepann
 from crawlers.dcinside_crawler import crawl_dcinside
 from crawlers.todayhumor_crawler import crawl_todayhumor
-from config.config_cilent import CRAWL_WORKERS, MIN_COMMUNITY_DOCS_FOR_TAVILY
+from config.config_cilent import CRAWL_WORKERS, MIN_COMMUNITY_DOCS_FOR_TAVILY, ON_DEMAND_MAX_POSTS
 from trend.trend_service import get_meme_trend, save_trend_score
 
 logger = get_logger("main")
 
-# 1단계: 항상 먼저 도는 커뮤니티 크롤러. 이 합계가 MIN_COMMUNITY_DOCS_FOR_TAVILY
-# 미만인 키워드만 2단계(Tavily → 실패 시 DuckDuckGo)로 보완한다.
+# 1단계: 항상 먼저 도는 커뮤니티 크롤러. 합계가 MIN_COMMUNITY_DOCS_FOR_TAVILY 미만이거나
+# 나무위키(정의/설명 위주 자료)가 0건인 키워드만 2단계(Tavily → 실패 시 DuckDuckGo)로 보완한다.
 COMMUNITY_CRAWLERS = {
     "youtube":    crawl_youtube,
     "namuwiki":   crawl_namuwiki,
@@ -35,6 +36,10 @@ COMMUNITY_CRAWLERS = {
 # 요약표 출력 순서 고정용(judge_and_report). 실제로 호출됐는지와 무관하게 항상
 # 이 순서로 표시하고, 호출 안 된 소스는 "미실행"으로 나온다.
 CRAWLERS = {**COMMUNITY_CRAWLERS, "tavily": crawl, "duckduckgo": crawl_duckduckgo}
+
+# 게시글 1건당 요청 2회(본문+댓글)를 도는 크롤러만 max_posts로 시간을 줄일 수 있다.
+# namuwiki(문서 1건)/youtube(자체 API 쿼터)는 대상이 아니라 시그니처에 없다.
+_SUPPORTS_MAX_POSTS = {"dcinside", "natepann", "todayhumor"}
 
 KEYWORDS_PATH = os.path.join(BASE_DIR, "crawlers", "Keywords.md")
 
@@ -91,7 +96,7 @@ def _crawl_tavily_with_fallback(keyword: str) -> dict[str, tuple[int, str]]:
 
 
 def crawl_keyword(
-    keyword: str, on_source_done: ProgressCallback = None
+    keyword: str, on_source_done: ProgressCallback = None, max_posts: int = ON_DEMAND_MAX_POSTS
 ) -> dict[str, tuple[int, str]]:
     """한 키워드만 크롤하는 진입점(RAG 온디맨드 수집 등). crawl_all()에 그대로 위임한다.
 
@@ -99,9 +104,12 @@ def crawl_keyword(
     구현하면 2단계 게이팅(커뮤니티 부족 → Tavily 보완) 로직만 두 벌이 된다.
     그러다 한쪽만 바뀌면 배치와 온디맨드의 수집 기준이 조용히 갈라지므로 위임한다.
 
+    사람이 화면 앞에서 기다리는 경로라 max_posts 기본값도 배치(CRAWL_MAX_POSTS)보다
+    낮춘 ON_DEMAND_MAX_POSTS를 쓴다 — 체감 대기시간 단축.
+
     반환: {source: (count, status)}
     """
-    return crawl_all([keyword], on_source_done=on_source_done)[keyword]
+    return crawl_all([keyword], on_source_done=on_source_done, max_posts=max_posts)[keyword]
 
 
 def add_keyword_if_missing(keyword: str) -> bool:
@@ -145,7 +153,7 @@ def remove_keyword(keyword: str) -> bool:
 
 
 def crawl_all(
-    keywords: list[str], on_source_done: ProgressCallback = None
+    keywords: list[str], on_source_done: ProgressCallback = None, max_posts: int | None = None
 ) -> dict[str, dict[str, tuple[int, str]]]:
     """크롤을 2단계로 나눠 돈다.
 
@@ -154,18 +162,32 @@ def crawl_all(
     스크래퍼의 요청 rate 는 crawlers/base.py 의 도메인별 RateLimiter 가 직렬 수준으로
     묶으므로, 워커 수를 늘려도 사이트별 rate 는 안전하게 유지된다.
 
-    2단계: 1단계 합계가 MIN_COMMUNITY_DOCS_FOR_TAVILY 미만인 키워드만 Tavily로
-    보완한다(그 키워드들끼리도 평평한 풀에서 병렬 — Tavily/DuckDuckGo는 API·쿼터
-    기반이라 동시 요청에 관대함). Tavily가 예외로 실패하면 DuckDuckGo까지 보완한다.
+    2단계: 다음 중 하나라도 해당하는 키워드만 Tavily로 보완한다(그 키워드들끼리도
+    평평한 풀에서 병렬 — Tavily/DuckDuckGo는 API·쿼터 기반이라 동시 요청에 관대함).
+    Tavily가 예외로 실패하면 DuckDuckGo까지 보완한다.
+      - 1단계 합계가 MIN_COMMUNITY_DOCS_FOR_TAVILY 미만 (자료 자체가 부족)
+      - 나무위키가 0건 (댓글·영상 자막만으로는 신조어 정의가 부정확하게 나올 수
+        있다 — '알잘딱깔센'을 왁키 관련 밈으로 오인한 사례로 확인됨. 나무위키는
+        신조어/밈 표제어를 다루는 비중이 커서 "정의 자료 유무"의 대리 지표로 쓴다)
 
     on_source_done을 주면 소스 하나가 끝날 때마다 호출한다(진행 표시용, ProgressCallback 참고).
+    max_posts를 주면 게시글당 요청 2회짜리 크롤러(_SUPPORTS_MAX_POSTS)의 상한을 덮어쓴다
+    (온디맨드 경로가 CRAWL_MAX_POSTS 대신 더 낮은 값을 넣어 대기시간을 줄이는 용도).
+    None이면 각 크롤러가 자기 기본값(CRAWL_MAX_POSTS)을 그대로 쓴다 — 배치는 이 인자를
+    넘기지 않으므로 기존 동작과 동일.
 
     반환: {keyword: {source: (count, status)}}
     """
+    community_crawlers = COMMUNITY_CRAWLERS
+    if max_posts is not None:
+        community_crawlers = {
+            name: (partial(fn, max_posts=max_posts) if name in _SUPPORTS_MAX_POSTS else fn)
+            for name, fn in COMMUNITY_CRAWLERS.items()
+        }
     community_tasks = [
         (kw, name, crawler)
         for kw in keywords
-        for name, crawler in COMMUNITY_CRAWLERS.items()
+        for name, crawler in community_crawlers.items()
     ]
     results: dict[str, dict[str, tuple[int, str]]] = defaultdict(dict)
 
@@ -186,11 +208,12 @@ def crawl_all(
     needs_tavily = [
         kw for kw in keywords
         if sum(count for count, _ in results[kw].values()) < MIN_COMMUNITY_DOCS_FOR_TAVILY
+        or results[kw].get("namuwiki", (0, ""))[0] == 0
     ]
 
     if needs_tavily:
         logger.info(
-            "커뮤니티 수집 %d건 미만: %d개 키워드에 Tavily 보완 — %s",
+            "커뮤니티 수집 %d건 미만 또는 나무위키 0건: %d개 키워드에 Tavily 보완 — %s",
             MIN_COMMUNITY_DOCS_FOR_TAVILY, len(needs_tavily), ", ".join(needs_tavily),
         )
         with stage("크롤:Tavily 보완(벽시계)", 작업수=len(needs_tavily)):

@@ -208,7 +208,7 @@ def _parse_post(soup: BeautifulSoup) -> tuple[str, str]:
     return title, content
 
 
-def crawl_natepann(keyword: str) -> list[dict]:
+def crawl_natepann(keyword: str, max_posts: int = CRAWL_MAX_POSTS) -> list[dict]:
     """
     키워드로 네이트판 검색 → 게시글+댓글 수집 → MongoDB 저장.
     """
@@ -216,7 +216,7 @@ def crawl_natepann(keyword: str) -> list[dict]:
     collection = get_collection()
 
     print(f"[네이트판] '{keyword}' 검색 시작...")
-    posts = _get_post_urls_multi(session, keyword, CRAWL_MAX_POSTS, NATEPANN_SORTS)
+    posts = _get_post_urls_multi(session, keyword, max_posts, NATEPANN_SORTS)
     print(f"[네이트판] 총 {len(posts)}개 URL 수집 완료 (정렬: {', '.join(NATEPANN_SORTS)})")
 
     # 이미 가진 글은 여기서 걸러 요청 자체를 생략한다.

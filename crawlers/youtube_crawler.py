@@ -1,10 +1,13 @@
 """
 youtube_crawler.py
-키워드 입력 → YouTube 검색 → 영상 제목/설명/댓글 수집 → MongoDB 저장
+키워드 입력 → YouTube 검색 → 영상 제목/설명/자막/댓글 수집 → MongoDB 저장
 
-content 구성: 제목 + 설명 + [댓글] 섹션 (dcinside/natepann과 동일한 "[댓글]" 마커 사용).
-댓글만 저장하면 밈의 뜻/유래 설명이 빠져 관련성 판정이 구조적으로 불가능하므로
-영상 제목과 전체 설명을 본문 앞에 포함한다.
+content 구성: 제목 + 설명 + [자막] + [댓글] 섹션 (dcinside/natepann과 동일한 "[댓글]" 마커 사용,
+청커는 "[댓글]" 이전을 전부 본문(body)으로 취급하므로 자막은 별도 처리 없이 본문에 포함됨).
+설명만으로는 "이 밈의 뜻이 뭔지 영상에서 설명한다"는 식의 영상이 많아 실제 설명 내용이
+빠지므로, 공식 API로는 못 가져오는(캡션 다운로드는 채널 소유자 OAuth 필요) 자막을
+비공식 youtube-transcript-api로 보완한다. 자막 없는 영상(다수)은 조용히 건너뛴다 —
+댓글/설명만으로도 문서 자체는 유효하므로 크롤을 막지 않는다.
 """
 
 import hashlib
@@ -13,11 +16,13 @@ import sys
 from datetime import datetime, timezone, timedelta
 
 from googleapiclient.discovery import build
+from youtube_transcript_api import YouTubeTranscriptApi
 
 from config.config_cilent import (
     YOUTUBE_API_KEY,
     YOUTUBE_MAX_RESULTS,
     YOUTUBE_MAX_COMMENTS,
+    YOUTUBE_MAX_TRANSCRIPT_CHARS,
     YOUTUBE_ORDER,
     YOUTUBE_RECRAWL_DAYS,
 )
@@ -104,6 +109,25 @@ def is_keyword_relevant(keyword: str, title: str, description: str) -> bool:
     return _normalize(keyword) in _normalize(f"{title} {description}")
 
 
+def fetch_transcript(video_id: str) -> str:
+    """
+    영상 자막(트랜스크립트)을 가져와 하나의 텍스트로 합친다.
+    한국어 우선, 없으면 영어 자막이라도 가져온다(자동 생성 자막 포함).
+
+    비공식 라이브러리(구글트렌드 pytrends와 동일 성격 — 공식 API로는 임의 영상의
+    캡션을 다운로드할 수 없어 이 방법뿐)라 실패 사유가 다양하다(자막 비활성화,
+    해당 언어 없음, 일시적 네트워크 오류 등). 자막 없는 영상이 절대다수이므로
+    실패를 예외로 전파하지 않고 빈 문자열로 조용히 넘긴다 — 자막은 본문/댓글을
+    보완하는 선택적 자료일 뿐, 없다고 문서 자체가 무효가 되진 않는다.
+    """
+    try:
+        transcript = YouTubeTranscriptApi().fetch(video_id, languages=["ko", "en"])
+    except Exception:
+        return ""
+    text = " ".join(snippet.text for snippet in transcript if snippet.text.strip())
+    return text[:YOUTUBE_MAX_TRANSCRIPT_CHARS]
+
+
 def fetch_comments(youtube, video_id: str, max_comments: int = YOUTUBE_MAX_COMMENTS):
     """영상 ID로 댓글 가져오기 (관련도순, 답글 제외)"""
     comments = []
@@ -134,13 +158,18 @@ def fetch_comments(youtube, video_id: str, max_comments: int = YOUTUBE_MAX_COMME
     return comments
 
 
-def build_document(keyword: str, video: dict, description: str, comments: list[dict]) -> dict:
+def build_document(
+    keyword: str, video: dict, description: str, transcript: str, comments: list[dict]
+) -> dict:
     """
-    영상 제목+설명+댓글을 MongoDB 저장 스키마로 변환 (Tavily와 동일 스키마).
-    content는 "제목\n\n설명\n\n[댓글]\n..." 구조 — chunker의 "[댓글]" 구분자와 호환.
+    영상 제목+설명+자막+댓글을 MongoDB 저장 스키마로 변환 (Tavily와 동일 스키마).
+    content는 "제목\n\n설명\n\n[자막]\n...\n\n[댓글]\n..." 구조 — chunker는 "[댓글]"
+    이전을 전부 본문(body)으로 취급하므로 자막도 별도 처리 없이 본문으로 청킹된다.
     """
     url = f"https://www.youtube.com/watch?v={video['video_id']}"
     content = f"{video['title']}\n\n{description}".strip()
+    if transcript.strip():
+        content += "\n\n[자막]\n" + transcript
     comment_text = "\n".join(c["text"] for c in comments if c["text"].strip())
     if comment_text:
         content += "\n\n[댓글]\n" + comment_text
@@ -198,8 +227,9 @@ def crawl_youtube(keyword: str) -> list[dict]:
             filtered += 1
             continue
 
+        transcript = fetch_transcript(video["video_id"])
         comments = fetch_comments(youtube, video["video_id"])
-        doc = build_document(keyword, video, description, comments)
+        doc = build_document(keyword, video, description, transcript, comments)
         if not doc["content"].strip():
             empty += 1
             continue

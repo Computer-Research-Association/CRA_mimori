@@ -25,6 +25,7 @@ from qdrant_client.http import models
 from config.config_cilent import (
     CLEANED_COLLECTION,
     EMBEDDING_BATCH_SIZE,
+    LLM_REQUESTS_COLLECTION,
     QDRANT_COLLECTION,
     QDRANT_DENSE_VECTOR_NAME,
     QDRANT_SPARSE_VECTOR_NAME,
@@ -188,6 +189,11 @@ def embed_documents(keyword: str | None = None) -> dict:
     not_yet_chunked = len(pending_ids) - len(docs)
 
     doc_count, chunk_count, failed, near_dup_skipped = 0, 0, 0, 0
+    # 이번 실행에서 실제로 is_embedded가 바뀐(=코퍼스가 바뀐) 키워드. 끝에 이 키워드들의
+    # 캐시된 분석 결과(llm_requests)를 무효화해 다음 조회가 최신 코퍼스로 재분석하게 한다
+    # — crawl_request_worker.py가 온디맨드 경로에서 하는 것과 같은 이유, 여기선 배치
+    # 경로(스케줄러가 매일 부르는 preprocess_embed_main.py)까지 빠짐없이 커버한다.
+    affected_keywords: set[str] = set()
     # 키워드별로 한 번만 Qdrant에서 기존 청크 텍스트를 가져와 이번 실행 내내 재사용한다
     # (문서마다 다시 조회하지 않음). 이번 실행에서 채택된 청크도 계속 누적해서, 같은
     # 실행 안에서 여러 문서가 서로 근접중복인 경우(크로스포스팅)도 걸러진다.
@@ -220,6 +226,8 @@ def embed_documents(keyword: str | None = None) -> dict:
                 continue  # is_embedded는 False로 남아 다음 실행에서 재시도
             memes.update_one({"_id": doc["_id"]}, {"$set": {"is_embedded": True}})
             doc_count += 1
+            if doc_keyword:
+                affected_keywords.add(doc_keyword)
             continue
 
         # _build_points()를 먼저 실행하는 것은 의도된 설계다. 임베딩 모델(가장 실패할 수 있는
@@ -243,6 +251,8 @@ def embed_documents(keyword: str | None = None) -> dict:
             memes.update_one({"_id": doc["_id"]}, {"$set": {"is_embedded": True}})
         doc_count += 1
         chunk_count += len(points)
+        if doc_keyword:
+            affected_keywords.add(doc_keyword)
         print(f"[임베딩] {doc.get('title')} — 청크 {len(points)}개 적재 완료")
 
     print(
@@ -250,6 +260,12 @@ def embed_documents(keyword: str | None = None) -> dict:
         f"/ 실패 {failed}개 / 아직 청킹 안 됨(스킵) {not_yet_chunked}개 "
         f"/ 근접중복 제외 {near_dup_skipped}개"
     )
+
+    if affected_keywords:
+        llm_requests = get_collection(LLM_REQUESTS_COLLECTION)
+        llm_requests.delete_many({"keyword": {"$in": list(affected_keywords)}, "status": "done"})
+        print(f"[임베딩] 코퍼스 변경으로 분석 캐시 무효화: {', '.join(sorted(affected_keywords))}")
+
     return {
         "documents": doc_count,
         "chunks": chunk_count,

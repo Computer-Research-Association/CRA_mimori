@@ -45,22 +45,22 @@ def _no_call(keyword):
 
 
 def test_crawl_keyword_커뮤니티_충분하면_Tavily_호출_안됨():
-    def many(keyword):
+    def many(keyword, max_posts=None):
         return [1, 2, 3, 4]
 
     with _Patched(
-        COMMUNITY_CRAWLERS={"dcinside": many},
+        COMMUNITY_CRAWLERS={"dcinside": many, "namuwiki": many},
         crawl=_no_call,
         crawl_duckduckgo=_no_call,
     ):
         results = main.crawl_keyword("k1")
     assert results["dcinside"] == (4, "ok"), results
     assert "tavily" not in results, results
-    print("[OK] crawl_keyword: 커뮤니티 충분하면 Tavily 호출 안 됨")
+    print("[OK] crawl_keyword: 커뮤니티 충분 + 나무위키 있음 → Tavily 호출 안 됨")
 
 
 def test_crawl_keyword_커뮤니티_부족하면_Tavily_실패시_DDG_보완():
-    def few(keyword):
+    def few(keyword, max_posts=None):
         return [1]
 
     def tavily_fails(keyword):
@@ -84,7 +84,7 @@ def test_crawl_keyword_커뮤니티_부족하면_Tavily_실패시_DDG_보완():
 def test_crawl_keyword_진행_콜백이_커뮤니티와_Tavily_보완_모두에서_호출됨():
     """온디맨드 크롤은 20분 넘게 걸릴 수 있어 소스별 진행 표시가 유일한 생존신호다.
     2단계(Tavily 보완)에서 끝난 소스도 빠짐없이 보고돼야 한다."""
-    def few(keyword):
+    def few(keyword, max_posts=None):
         return [1]
 
     def tavily_ok(keyword):
@@ -108,10 +108,10 @@ def test_crawl_keyword_진행_콜백이_커뮤니티와_Tavily_보완_모두에�
 
 def test_crawl_all_콜백_없이도_동작함():
     """배치(main.py)는 콜백을 안 넘긴다 — 기본값 None 경로가 깨지지 않았는지 확인."""
-    def many(keyword):
+    def many(keyword, max_posts=None):
         return [1, 2, 3, 4]
 
-    with _Patched(COMMUNITY_CRAWLERS={"dcinside": many}, crawl=_no_call, crawl_duckduckgo=_no_call):
+    with _Patched(COMMUNITY_CRAWLERS={"dcinside": many, "namuwiki": many}, crawl=_no_call, crawl_duckduckgo=_no_call):
         results = main.crawl_all(["k1", "k2"])
     assert results["k1"]["dcinside"] == (4, "ok"), results
     assert results["k2"]["dcinside"] == (4, "ok"), results

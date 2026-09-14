@@ -64,6 +64,15 @@ MIN_SERIES_POINTS = 7
 #   - 카카오: 언급 '건수'(상대값보다 스케일이 크고 분산도 큼) → 5.0
 # 모두 초기값이며 실측 후 재보정 대상. (기존엔 셋 다 zscore.MIN_IQR=2.0 을 공유해
 # 카카오 저빈도 구간의 z 스케일이 검색량 소스와 어긋나던 문제를 분리했다.)
+#
+# 2026-09-12에 저빈도 키워드가 "평상"에 뭉개지는 문제를 완화하려고 2.0→1.0으로
+# 낮췄다가 2026-09-13 롤백. min_iqr는 분모라 낮추면 z 크기가 양쪽 방향으로 다
+# 커지는데, 실제로는 이미 꺾인(과거에 반짝하고 지금은 죽어가는) 키워드가 더 많아서
+# today_value<median인 음수 쪽이 그대로 2배가 됐다 — 결과적으로 다수 키워드가
+# FINAL_Z_CLIP=-8.0에 몰려 찍히는, dc289e9가 잡았던 z 폭주의 반대(음수) 버전이
+# 재발했다(실측: '67'/'두쫀쿠'/'억까' 등이 나란히 -8.00 근처로 클리핑). 이 바닥값을
+# 다시 만지려면 반드시 diagnose_zscore.py로 실제 naver ratio/IQR 분포부터 확인할 것 —
+# 감으로 반토막 내는 식의 조정은 금지.
 NAVER_MIN_IQR = 2.0
 GOOGLE_MIN_IQR = 2.0
 KAKAO_MIN_IQR = 5.0
@@ -71,6 +80,16 @@ KAKAO_MIN_IQR = 5.0
 # baseline 평균 하한(저빈도 키워드의 z 불안정 방지). 카카오/구글 동일 패턴.
 KAKAO_MIN_BASELINE_AVG = 10
 GOOGLE_MIN_BASELINE_AVG = 10
+
+# baseline 중 '값이 있는(0보다 큰) 날'의 최소 비율. baseline_avg 하한만으로는
+# 대부분 0이다가 간헐적으로만 스파이크가 나는 이봉(bimodal) 분포를 못 걸러낸다 —
+# 30일 중 소수만 스파이크여도 평균은 쉽게 하한을 넘는다. 이런 분포는 median=0,
+# IQR≈0으로 무너져 min_iqr 바닥값에 걸리고, 오늘 값 하나가 스케일에 안 맞게
+# 거대한 z를 만든다(실측: '젬민이' 2026-09-10, google_ratios 30일 중 22일이 0인데
+# baseline_avg=20.7로 GOOGLE_MIN_BASELINE_AVG=10은 통과, google_z=49로 폭주해
+# final_z가 FINAL_Z_CLIP=8.0에 걸려 '핫함'으로 오판정됨). 카카오는 지금까지
+# 이 패턴으로 관측된 사례가 없어 우선 구글에만 적용한다.
+GOOGLE_MIN_NONZERO_FRACTION = 0.5
 
 # 앙상블에 반영된 소스들의 pairwise z 격차가 이 이상이고 부호가 반대면
 # 발산 플래그를 남긴다. 초기값이며 실측 후 조정.
@@ -210,6 +229,7 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
         google_scored = drop_incomplete_today(google_ratios)
         google_active = _has_signal(google_scored)
         google_baseline_avg = _baseline_avg(google_scored) if google_active else 0.0
+        google_nonzero_fraction = _nonzero_fraction(google_scored) if google_active else 0.0
         google_z = (
             zscore_from_series(google_scored, min_iqr=GOOGLE_MIN_IQR)
             if google_active
@@ -219,6 +239,8 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
             note_parts.append("google_excluded_no_signal")
         elif google_baseline_avg < GOOGLE_MIN_BASELINE_AVG:
             note_parts.append("google_excluded_low_baseline")
+        elif google_nonzero_fraction < GOOGLE_MIN_NONZERO_FRACTION:
+            note_parts.append("google_excluded_sparse_signal")
         else:
             google_usable = True
 
@@ -432,6 +454,20 @@ def _baseline_avg(counts: list[dict]) -> float:
     if not baseline:
         return 0.0
     return sum(float(row["ratio"]) for row in baseline) / len(baseline)
+
+
+def _nonzero_fraction(counts: list[dict]) -> float:
+    """
+    baseline(최신일=today_value 제외)에서 ratio > 0인 날의 비율.
+    GOOGLE_MIN_NONZERO_FRACTION 판정에 사용 — _baseline_avg만으로는 못 잡는
+    이봉(대부분 0, 가끔 스파이크) 분포를 걸러내기 위함.
+    """
+    ordered = sorted(counts, key=lambda row: row["date"])
+    baseline = ordered[:-1]
+    if not baseline:
+        return 0.0
+    nonzero = sum(1 for row in baseline if row["ratio"] > 0)
+    return nonzero / len(baseline)
 
 
 def get_cached_trend(keyword: str, collection=None) -> dict | None:
