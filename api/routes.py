@@ -181,9 +181,24 @@ def trend(keyword):
     return jsonify(result)
 
 
+# 프론트(frontend/src/api.js의 AVAILABLE_SOURCES)와 반드시 같은 집합을 유지해야
+# 한다 — 둘이 어긋나면 아래 "전체 선택 = 미필터" 정규화가 조용히 무력화된다.
+_ALL_ANALYZE_SOURCES = frozenset({"tavily", "youtube", "namuwiki", "natepann", "dcinside", "todayhumor"})
+
+
 def _analyze_job_id(keyword: str, sources: list[str] | None) -> str:
     """분석 결과 캐시 키. sources가 다르면 다른 결과가 나오므로 키에 포함시켜서,
-    출처를 좁혀 재요청했을 때 예전(다른 출처) 캐시가 그대로 나오는 걸 막는다."""
+    출처를 좁혀 재요청했을 때 예전(다른 출처) 캐시가 그대로 나오는 걸 막는다.
+
+    다만 "출처 전체를 명시적으로 다 나열한 것"과 "출처를 아예 안 넘긴 것"은
+    둘 다 의미상 '필터 없음'으로 동일한데, 그대로 해시하면 서로 다른 캐시
+    키가 된다. 홈 화면 체크박스가 기본값으로 전체 선택 상태라, 대부분의
+    실제 사용자 요청은 항상 "6개 다 나열"로 오는데, 그 외 경로(CLI 스크립트 등)는
+    sources를 아예 생략하는 경우가 많아 같은 키워드인데도 캐시가 안 맞아
+    똑같은 분석을 두 번 하는 낭비가 있었다 — 전체 집합과 같으면 필터 없음으로 취급한다.
+    """
+    if sources and set(sources) == _ALL_ANALYZE_SOURCES:
+        sources = None
     normalized_sources = ",".join(sorted(sources)) if sources else ""
     raw = f"{keyword}|{normalized_sources}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()

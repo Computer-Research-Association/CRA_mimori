@@ -102,6 +102,12 @@ def delete_keyword_permanently(keyword: str) -> None:
     memes/cleaned_memes/trend_scores는 (keyword, ...) 조합으로 문서가 여러 개
     쌓이므로 delete_many를 쓴다. crawl_requests/hidden_keywords는 keyword 자체가
     _id라 문서가 하나뿐이다. Qdrant는 payload.keyword로 필터링해 지운다.
+
+    Keywords.md에서도 줄을 지운다(main.remove_keyword) — 안 그러면 여기서 데이터를
+    다 지워도 다음 배치 크롤(main.py, 스케줄러가 KST 02:00에 돌림)이 여전히 그
+    키워드를 읽어 재수집해버린다. main을 모듈 최상단에서 import하면 크롤러 7개가
+    전부 API 프로세스에 딸려 들어오므로, 여기서만 지연 import한다(admin_stats.py가
+    이미 쓰는 패턴과 동일).
     """
     get_collection().delete_many({"keyword": keyword})
     get_collection(CLEANED_COLLECTION).delete_many({"keyword": keyword})
@@ -115,6 +121,9 @@ def delete_keyword_permanently(keyword: str) -> None:
             must=[models.FieldCondition(key="keyword", match=models.MatchValue(value=keyword))]
         ),
     )
+
+    from main import remove_keyword
+    remove_keyword(keyword)
 
 
 _SCROLL_BATCH_SIZE = 100
