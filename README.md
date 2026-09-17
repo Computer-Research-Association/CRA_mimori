@@ -97,3 +97,7 @@ docker compose up --build
 | `scheduler/` | 크론 데몬 (Docker 컨테이너의 기본 실행 명령), 위 워커들도 함께 기동 |
 | `tests/` | 백엔드 pytest 스위트 (DB/Qdrant/API 키 불필요, fake/monkeypatch 사용) |
 
+
+
+# 최종 웹사이트 : https://mimori-cra.duckdns.org/
+
