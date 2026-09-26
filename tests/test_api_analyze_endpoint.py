@@ -55,6 +55,21 @@ def test_job_id는_keyword와_sources로_결정된다():
     print("[OK] job_id는 keyword+sources(순서 무관)로 결정됨")
 
 
+def test_출처를_전부_명시해도_생략한것과_같은_job_id():
+    # 프론트 기본값(체크박스 전부 선택)은 항상 6개를 명시해서 보내는데, sources를
+    # 아예 생략한 요청(스크립트 등)과 캐시가 안 섞이면 똑같은 키워드를 두 번
+    # 분석하는 낭비가 생긴다 — 전체 집합 명시와 생략은 같은 job_id여야 한다.
+    all_explicit = ["tavily", "youtube", "namuwiki", "natepann", "dcinside", "todayhumor"]
+    omitted = _analyze_job_id("야르", None)
+    explicit_all = _analyze_job_id("야르", all_explicit)
+    explicit_all_shuffled = _analyze_job_id("야르", list(reversed(all_explicit)))
+    partial = _analyze_job_id("야르", ["tavily"])
+    assert explicit_all == omitted, "출처 전체 명시는 생략과 같은 job_id여야 함(둘 다 '필터 없음')"
+    assert explicit_all_shuffled == omitted, "순서가 달라도 전체 집합이면 동일해야 함"
+    assert partial != omitted, "일부만 지정하면 여전히 별개 job_id여야 함"
+    print("[OK] 출처 전체 명시와 생략이 같은 job_id로 정규화됨")
+
+
 def test_keyword_없이_요청하면_400():
     app = create_app()
     client = app.test_client()
@@ -330,6 +345,7 @@ def test_GET_처리중이면_partial_result를_반환한다():
 
 if __name__ == "__main__":
     test_job_id는_keyword와_sources로_결정된다()
+    test_출처를_전부_명시해도_생략한것과_같은_job_id()
     test_keyword_없이_요청하면_400()
     test_keyword에_개행이_있으면_400()
     test_keyword가_너무_길면_400()

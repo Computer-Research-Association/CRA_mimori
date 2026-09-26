@@ -8,6 +8,8 @@ issue #69 (온디맨드 RAG 크롤)에서 rag_main.py가 재사용하는 두 함
   3. crawl_keyword: 진행 콜백(on_source_done)이 두 단계 모두에서 정확히 호출된다
   4. add_keyword_if_missing: 이미 있는 키워드는 추가하지 않고 False, 파일 변경 없음
   5. add_keyword_if_missing: 없는 키워드는 한 줄 추가하고 True, 재호출해도 중복 안 됨
+  6. remove_keyword: 있으면 그 줄만 지우고 True, 없으면 False(변경 없음)
+  7. remove_keyword: 줄 끝에 공백이 붙어있어도 strip 비교로 지워짐
 
 실행:  uv run python tests/test_crawl_keyword.py
 """
@@ -183,6 +185,56 @@ def test_add_keyword_if_missing_두번_호출해도_중복_안됨():
         os.unlink(path)
 
 
+def test_remove_keyword_있으면_지우고_True():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("야르\n아자스\n밤티\n")
+        path = f.name
+    try:
+        with _Patched(KEYWORDS_PATH=path):
+            removed = main.remove_keyword("아자스")
+            with open(path, encoding="utf-8") as rf:
+                content = rf.read()
+        assert removed is True
+        assert content == "야르\n밤티\n"
+        print("[OK] remove_keyword: 있으면 그 줄만 지우고 True")
+    finally:
+        os.unlink(path)
+
+
+def test_remove_keyword_없으면_False_변경없음():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("야르\n아자스\n")
+        path = f.name
+    try:
+        with _Patched(KEYWORDS_PATH=path):
+            removed = main.remove_keyword("없는키워드")
+            with open(path, encoding="utf-8") as rf:
+                content = rf.read()
+        assert removed is False
+        assert content == "야르\n아자스\n"  # 변경 없음
+        print("[OK] remove_keyword: 없으면 False, 파일 변경 없음")
+    finally:
+        os.unlink(path)
+
+
+def test_remove_keyword_끝에_공백있는_줄도_strip비교로_지워짐():
+    """실제 Keywords.md 1번째 줄이 "야르 "처럼 끝에 공백이 붙어있다 — 정확 매칭이면
+    가장 흔히 지우려는 키워드가 조용히 안 지워지는 회귀가 생긴다."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
+        f.write("야르 \n아자스\n")  # "야르" 뒤에 trailing space
+        path = f.name
+    try:
+        with _Patched(KEYWORDS_PATH=path):
+            removed = main.remove_keyword("야르")
+            with open(path, encoding="utf-8") as rf:
+                content = rf.read()
+        assert removed is True
+        assert content == "아자스\n"
+        print("[OK] remove_keyword: 줄 끝 공백이 있어도 strip 비교로 지워짐")
+    finally:
+        os.unlink(path)
+
+
 if __name__ == "__main__":
     test_crawl_keyword_커뮤니티_충분하면_Tavily_호출_안됨()
     test_crawl_keyword_커뮤니티_부족하면_Tavily_실패시_DDG_보완()
@@ -192,4 +244,7 @@ if __name__ == "__main__":
     test_add_keyword_if_missing_없으면_추가하고_True()
     test_add_keyword_if_missing_파일이_개행없이_끝나도_줄이_안_합쳐짐()
     test_add_keyword_if_missing_두번_호출해도_중복_안됨()
+    test_remove_keyword_있으면_지우고_True()
+    test_remove_keyword_없으면_False_변경없음()
+    test_remove_keyword_끝에_공백있는_줄도_strip비교로_지워짐()
     print("\nALL PASS ✅")
