@@ -20,7 +20,8 @@ services:
     # 죽으면 그 순간 처리 중이던 다른 모든 요청도 함께 죽는다(전체 다운타임 + BGE-M3 재로드 발생).
     command: uv run --no-dev gunicorn -w 1 --threads 4 --timeout 600 -b 0.0.0.0:5000 api.app:app
     ports:
-      - "5000:5000"
+      # web(nginx)이 컨테이너 내부망(api:5000)으로 프록시하므로 호스트에는 localhost만 노출.
+      - "127.0.0.1:5000:5000"
     depends_on:
       - mongo
       - qdrant
