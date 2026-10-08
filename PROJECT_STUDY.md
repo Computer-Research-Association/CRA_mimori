@@ -52,13 +52,14 @@ Mongo의 `is_embedded` 플래그(또는 `cleaned_memes` 존재 여부)로 "누�
 
 - **로컬 (이 PC)**: `docker-compose.yml`로 flask/mongo/qdrant 3개 컨테이너 실행. 개발/테스트용.
   실제로는 스케줄러가 한 번도 정상 발화한 적이 없어서 최근까지 완전히 비어 있었음.
-- **EC2 서버 (100.29.36.216)**: 같은 스택이 상시로 돌면서 실제 데이터가 쌓임
-  (mongo `memes` 1383개, `cleaned_memes` 657개 — 2026-07-27 확인 기준). **진짜 데이터는 여기 있음.**
+- **운영 서버 (Oracle Cloud, 161.33.10.143)**: 같은 스택이 상시로 돌면서 실제 데이터가 쌓임.
+  2026-10-06에 AWS EC2(100.29.36.216)에서 이전함 (이전 시점 `memes` 11,653개, `cleaned_memes` 11,544개).
+  **진짜 데이터는 여기 있음.** 접속은 `ssh oracle` (`~/.ssh/config`의 `Host oracle`, 사용자 `opc`).
 - 로컬 `.env`의 `MONGODB_URI=mongodb://mongo:27017` / `QDRANT_HOST=qdrant`는 docker-compose 내부
   네트워크 이름이라 **EC2로 연결될 일이 절대 없음** — 로컬 작업이 EC2 데이터를 건드릴 위험은 없음.
 - EC2 데이터를 로컬 도구(DataGrip 등)로 들여다보고 싶으면 SSH 로컬 포트포워딩 필요:
   ```
-  ssh -i ~/.ssh/id_ed25519 -L 27017:localhost:27017 -L 6333:localhost:6333 ec2-user@100.29.36.216
+  ssh -L 27017:localhost:27017 -L 36333:localhost:16333 oracle
   ```
   단, 이 터널이 떠 있는 동안은 Windows에서 `127.0.0.1:27017`이 (더 구체적인 바인딩이라)
   로컬 docker mongo보다 우선순위를 가져가서, 로컬 도구가 자기도 모르게 EC2 쪽으로 붙을 수 있음.

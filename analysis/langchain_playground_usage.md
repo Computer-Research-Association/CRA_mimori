@@ -9,11 +9,12 @@
 
 ## 실행 전 준비
 
-이 노트북은 기본적으로 **EC2 서버(진짜 운영 데이터)** 를 봅니다. 그러려면 별도 터미널에서 SSH 터널이 먼저 떠 있어야 합니다:
+이 노트북은 기본적으로 **운영 서버(Oracle Cloud, 진짜 운영 데이터)** 를 봅니다. 2026-10-06에 AWS EC2에서 이전했고, 코드의 `USE_EC2` 변수명은 그대로 남아 있지만 이제 오라클 서버를 가리킵니다. 그러려면 별도 터미널에서 SSH 터널이 먼저 떠 있어야 합니다:
 ```
-ssh -i ~/.ssh/id_ed25519 -L 27017:localhost:27017 -L 36333:localhost:16333 ec2-user@100.29.36.216
+ssh -L 27017:localhost:27017 -L 36333:localhost:16333 oracle
 ```
-(mongo는 27017 그대로, qdrant는 EC2용으로 로컬 `36333`을 씀 — `6333`은 Windows 예약 포트라 로컬에서 못 열고, `16333`은 로컬 docker qdrant가 이미 쓰고 있어서 겹치지 않게 분리했습니다. 원격(EC2) 쪽 타겟도 `6333`이 아니라 `16333`인데, EC2의 `mimori-qdrant` 컨테이너도 로컬과 동일하게 호스트 16333 → 컨테이너 6333으로 포트가 매핑돼 있기 때문입니다 — EC2 자신도 6333을 직접 안 듣습니다. 타겟을 `localhost:6333`으로 잘못 잡으면 SSH 세션은 붙지만 `channel N: open failed: connect failed: Connection refused`가 뜹니다.)
+(`oracle`은 `~/.ssh/config`의 `Host oracle` 항목: `opc@161.33.10.143`, 키 `~/.ssh/oracle`.)
+(mongo는 27017 그대로, qdrant는 원격 서버용으로 로컬 `36333`을 씀 — `6333`은 Windows 예약 포트라 로컬에서 못 열고, `16333`은 로컬 docker qdrant가 이미 쓰고 있어서 겹치지 않게 분리했습니다. 원격(EC2) 쪽 타겟도 `6333`이 아니라 `16333`인데, EC2의 `mimori-qdrant` 컨테이너도 로컬과 동일하게 호스트 16333 → 컨테이너 6333으로 포트가 매핑돼 있기 때문입니다 — EC2 자신도 6333을 직접 안 듣습니다. 타겟을 `localhost:6333`으로 잘못 잡으면 SSH 세션은 붙지만 `channel N: open failed: connect failed: Connection refused`가 뜹니다.)
 
 ## 실행 순서
 
