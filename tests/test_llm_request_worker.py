@@ -90,7 +90,7 @@ def test_analyze_작업이_정상_처리되면_done으로_바뀐다():
     worker.get_cached_trend = lambda keyword: {"status": "유행 중"}
     worker.format_trend_context = lambda keyword, result=None: "트렌드요약"
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
-    worker.analyze = lambda prompt, on_chunk=None: calls.setdefault("analyze_prompt", prompt) and "분석 결과"
+    worker.analyze = lambda prompt, on_chunk=None, require_complete=False: calls.setdefault("analyze_prompt", prompt) and "분석 결과"
     worker.clean_source_url = lambda url: url
     try:
         did_work = worker.run_once(collection=collection)
@@ -132,7 +132,7 @@ def test_요청에_담긴_sources가_facet_search로_전달된다():
     worker.facet_search = fake_facet_search
     worker.get_cached_trend = lambda keyword: None
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
-    worker.analyze = lambda prompt, on_chunk=None: "결과"
+    worker.analyze = lambda prompt, on_chunk=None, require_complete=False: "결과"
     worker.clean_source_url = lambda url: url
     try:
         worker.run_once(collection=collection)
@@ -165,7 +165,8 @@ def test_LLM_호출_전에_출처와_트렌드를_미리_기록한다():
     worker.get_cached_trend = lambda keyword: {"status": "유행 중"}
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
 
-    def fake_analyze(prompt, on_chunk=None):
+    def fake_analyze(prompt, on_chunk=None, require_complete=False):
+        assert require_complete is True
         calls["result_before_llm"] = dict(collection._docs["야르"]["result"])
         on_chunk("스트리밍 중간 텍스트")
         calls["partial_after_on_chunk"] = collection._docs["야르"]["result"]["partial_text"]
@@ -237,7 +238,7 @@ def test_근거_출처가_승격_문턱_미만이면_low_confidence가_True다()
     worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: (points, {})
     worker.get_cached_trend = lambda keyword: None
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
-    worker.analyze = lambda prompt, on_chunk=None: "결과"
+    worker.analyze = lambda prompt, on_chunk=None, require_complete=False: "결과"
     worker.clean_source_url = lambda url: url
     try:
         worker.run_once(collection=collection)
@@ -271,7 +272,7 @@ def test_같은_문서가_여러_facet에서_중복돼도_distinct_URL_기준으
     worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: (points, {})
     worker.get_cached_trend = lambda keyword: None
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
-    worker.analyze = lambda prompt, on_chunk=None: "결과"
+    worker.analyze = lambda prompt, on_chunk=None, require_complete=False: "결과"
     worker.clean_source_url = lambda url: url
     try:
         worker.run_once(collection=collection)
@@ -364,7 +365,7 @@ def test_오래된_running_요청은_requeue된다():
     worker.facet_search = lambda keyword, facet_config, facet_vectors=None, sources=None, is_relevant=None: ([fake_point], {})
     worker.get_cached_trend = lambda keyword: None
     worker.build_facet_prompt = lambda keyword, points, trend_info=None: "프롬프트"
-    worker.analyze = lambda prompt, on_chunk=None: "결과"
+    worker.analyze = lambda prompt, on_chunk=None, require_complete=False: "결과"
     worker.clean_source_url = lambda url: url
     try:
         worker.run_once(collection=collection)

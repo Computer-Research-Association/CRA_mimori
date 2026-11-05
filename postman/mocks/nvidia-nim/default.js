@@ -34,6 +34,7 @@ http.createServer(async (req, res) => {
   for (const content of [text.slice(0,10), text.slice(10)]) {
     res.write('data: '+JSON.stringify({id:'test',object:'chat.completion.chunk',model,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\n');
   }
-  res.write('data: '+JSON.stringify({id:'test',object:'chat.completion.chunk',model,choices:[{index:0,delta:{},finish_reason:'stop'}]})+'\n\n');
+  res.write('data: '+JSON.stringify({id:'test',object:'chat.completion.chunk',model,choices:[{index:0,delta:{},finish_reason:mode === 'truncated' ? 'length' : 'stop'}]})+'\n\n');
+  res.write('data: '+JSON.stringify({id:'test',object:'chat.completion.chunk',model,choices:[],usage:{prompt_tokens:10,completion_tokens:20,total_tokens:30}})+'\n\n');
   res.end('data: [DONE]\n\n');
 }).listen(process.env.PORT || 4617);

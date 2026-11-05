@@ -1,12 +1,13 @@
 """
-analyze()가 ChatNVIDIA를 생성할 때 max_completion_tokens=4096으로 호출하는지,
-그리고 응답의 finish_reason(특히 "length" = 토큰 상한에 걸려 잘림)을 로그로
-남기는지 확인. 실제 NVIDIA API 호출은 하지 않는다 — ChatNVIDIA 클래스 자체를
+analyze()가 ChatNVIDIA를 생성할 때 max_completion_tokens=8192으로 호출하는지,
+그리고 응답의 finish_reason(특히 "length" = 토큰 상한에 걸려 잘림)을 확인해
+불완전한 답변을 거르는지 검증. 실제 NVIDIA API 호출은 하지 않는다 — ChatNVIDIA 클래스 자체를
 fake로 바꿔치기한다.
 
 실행: uv run python tests/test_analyze_token_limit.py
 """
 import io
+import pytest
 import os
 import sys
 from contextlib import redirect_stdout
@@ -25,8 +26,7 @@ class _FakeResponse:
 class _FakeStreamChunk:
     def __init__(self, content, finish_reason=None):
         self.content = content
-        # langchain_nvidia_ai_endpoints는 스트림의 마지막 청크에만 finish_reason을
-        # response_metadata에 채운다 — 중간 청크는 빈 dict로 흉내낸다.
+        # 종료 청크의 finish_reason 뒤에도 메타데이터 없는 사용량 청크가 올 수 있다.
         self.response_metadata = {"finish_reason": finish_reason} if finish_reason else {}
 
 
@@ -54,12 +54,12 @@ def _run_with_fake(fn):
         pipeline.ChatNVIDIA = original
 
 
-def test_max_completion_tokens는_4096이다():
+def test_max_completion_tokens는_8192이다():
     _FakeChatNVIDIA.response = _FakeResponse()
     result = _run_with_fake(lambda: pipeline.analyze("테스트 프롬프트"))
     assert result == "가짜 응답", result
-    assert _FakeChatNVIDIA.captured_kwargs["max_completion_tokens"] == 4096, _FakeChatNVIDIA.captured_kwargs
-    print("[OK] max_completion_tokens=4096")
+    assert _FakeChatNVIDIA.captured_kwargs["max_completion_tokens"] == 8192, _FakeChatNVIDIA.captured_kwargs
+    print("[OK] max_completion_tokens=8192")
 
 
 def test_temperature와_타임아웃은_검증된_설정을_따른다():
@@ -70,13 +70,12 @@ def test_temperature와_타임아웃은_검증된_설정을_따른다():
 
 
 def test_finish_reason이_length면_경고_로그를_남긴다():
-    """max_completion_tokens 상한에 걸려 잘린 경우(finish_reason=length)를
-    조용히 넘기지 않고 눈에 띄게 로그로 남기는지 확인 — 이게 있어야 상한을
-    올려야 하는지 실측 근거를 모을 수 있다."""
+    """길이 제한은 경고하고 불완전한 답변을 반환하지 않는다."""
     _FakeChatNVIDIA.response = _FakeResponse(finish_reason="length")
     buf = io.StringIO()
     with redirect_stdout(buf):
-        _run_with_fake(lambda: pipeline.analyze("테스트 프롬프트"))
+        with pytest.raises(pipeline.IncompleteAnalysisError):
+            _run_with_fake(lambda: pipeline.analyze("테스트 프롬프트"))
     output = buf.getvalue()
     assert "finish_reason=length" in output, output
     assert "잘렸습니다" in output, output
@@ -94,28 +93,29 @@ def test_finish_reason이_stop이면_평범하게_로그를_남긴다():
     print("[OK] finish_reason=stop -> 경고 없이 평범한 로그")
 
 
-def test_스트리밍_경로도_마지막_청크의_finish_reason을_기록한다():
+def test_사용량_청크가_뒤따라도_잘린_답변을_완료로_반환하지_않는다():
     _FakeChatNVIDIA.stream_chunks = [
-        _FakeStreamChunk("안"),
-        _FakeStreamChunk("녕"),
+        _FakeStreamChunk("중간에 끊긴 답변"),
         _FakeStreamChunk("", finish_reason="length"),
+        _FakeStreamChunk(""),
     ]
-    chunks_seen = []
-    buf = io.StringIO()
-    with redirect_stdout(buf):
-        result = _run_with_fake(
-            lambda: pipeline.analyze("테스트 프롬프트", on_chunk=chunks_seen.append)
-        )
-    assert result == "안녕", result
-    assert chunks_seen == ["안", "안녕", "안녕"], chunks_seen
-    assert "finish_reason=length" in buf.getvalue(), buf.getvalue()
-    print("[OK] 스트리밍 경로 — 마지막 청크의 finish_reason만 기록됨")
+    with pytest.raises(pipeline.IncompleteAnalysisError):
+        _run_with_fake(lambda: pipeline.analyze("테스트", on_chunk=lambda text: None))
+
+
+def test_사용량_청크가_뒤따르는_정상_답변은_보존한다():
+    _FakeChatNVIDIA.stream_chunks = [
+        _FakeStreamChunk("완성된 답변입니다."),
+        _FakeStreamChunk("", finish_reason="stop"),
+        _FakeStreamChunk(""),
+    ]
+    assert _run_with_fake(lambda: pipeline.analyze("테스트", on_chunk=lambda text: None)) == "완성된 답변입니다."
 
 
 if __name__ == "__main__":
-    test_max_completion_tokens는_4096이다()
+    test_max_completion_tokens는_8192이다()
     test_temperature와_타임아웃은_검증된_설정을_따른다()
     test_finish_reason이_length면_경고_로그를_남긴다()
     test_finish_reason이_stop이면_평범하게_로그를_남긴다()
-    test_스트리밍_경로도_마지막_청크의_finish_reason을_기록한다()
+    test_사용량_청크가_뒤따라도_잘린_답변을_완료로_반환하지_않는다()
     print("\nALL PASS ✅")

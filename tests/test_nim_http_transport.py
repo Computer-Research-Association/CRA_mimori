@@ -34,7 +34,7 @@ def test_실제_HTTP_스트림과_요약_설정이_전달된다(transport):
     sent = calls()
     assert len(sent) == 1
     assert sent[0]['stream'] is True
-    assert sent[0]['max_tokens'] == 4096
+    assert sent[0]['max_tokens'] == 8192
     assert sent[0]['temperature'] == 0.1
     assert sent[0].get('chat_template_kwargs') in (None, {})
 
@@ -56,5 +56,12 @@ def test_일시적503은_최대3회_후_실패한다(transport):
 def test_빈응답을_완성된_분석으로_반환하지_않는다(transport):
     transport('empty')
     with pytest.raises(ValueError, match='답변을 받지 못했습니다'):
+        pipeline.analyze('분석', on_chunk=lambda text: None)
+    assert len(calls()) == 1
+
+
+def test_실제SDK에서도_사용량청크_뒤의_길이제한을_놓치지_않는다(transport):
+    transport('truncated')
+    with pytest.raises(pipeline.IncompleteAnalysisError, match='길이 제한'):
         pipeline.analyze('분석', on_chunk=lambda text: None)
     assert len(calls()) == 1

@@ -95,3 +95,26 @@ def link_citations(text, source_count):
             return '[출처 확인 필요]'
         return f'[자료 {number}](#source-{number})'
     return _CITATION.sub(replace, text)
+
+
+_SECTION_TITLE = re.compile(
+    r'(?m)^(?:#{1,6}\s*)?(?:\*\*)?([1-4])[.)]\s*(?:\*\*)?'
+    r'(의미|유행\s*이유|사용법|확인된\s*사용\s*맥락)(?:\*\*)?\s*[:：]?[ \t]*\n?'
+)
+_SECTION_NAMES = ['의미', '유행 이유', '사용법', '확인된 사용 맥락']
+
+
+def normalize_analysis_sections(text):
+    """네 항목의 누락·잘린 끝문장을 거르고 읽기 쉬운 제목 형식으로 통일한다."""
+    body = _TREND_SECTION.split(text, maxsplit=1)[0].strip()
+    matches = list(_SECTION_TITLE.finditer(body))
+    if [m.group(1) for m in matches] != ['1', '2', '3', '4']:
+        raise ValueError('분석 항목이 완성되지 않았습니다. 완성된 답변이 필요합니다.')
+    sections = []
+    for index, match in enumerate(matches):
+        content = body[match.end():matches[index + 1].start() if index + 1 < len(matches) else len(body)].strip()
+        ending = _CITATION.sub('', content).rstrip(' \n\t*`\"\'’”)]')
+        if not ending or not ending.endswith(('.', '!', '?', '다', '요', '죠', '음', '함', '됨', '임')):
+            raise ValueError('분석 문장이 중간에 끊겼습니다. 완성된 답변이 필요합니다.')
+        sections.append(f'### {index + 1}. {_SECTION_NAMES[index]}\n\n{content}')
+    return '\n\n'.join(sections)

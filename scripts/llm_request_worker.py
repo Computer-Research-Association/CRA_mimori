@@ -189,7 +189,7 @@ def _process_analyze(doc: dict, collection, job_id: str) -> dict:
 
     on_chunk = _make_stream_progress_writer(collection, job_id, sources, trend_response, low_confidence)
     generation_started = time.monotonic()
-    result_text = analyze(prompt, on_chunk=on_chunk)
+    result_text = analyze(prompt, on_chunk=on_chunk, require_complete=True)
     if not result_text or not result_text.strip():
         raise ValueError("분석 답변을 받지 못했습니다. 잠시 후 다시 시도해 주세요.")
     result_text = compose_analysis(result_text, trend_response)

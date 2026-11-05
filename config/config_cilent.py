@@ -187,7 +187,8 @@ ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "minimaxai/minimax-m3.1-flash")
 ANALYSIS_TEMPERATURE = 0.1
 ANALYSIS_BASE_URL = os.getenv("ANALYSIS_BASE_URL", "https://integrate.api.nvidia.com/v1")
 ANALYSIS_TIMEOUT_SECONDS = 120
-ANALYSIS_MAX_TOKENS = 4096
+# 추론 토큰도 같은 예산을 사용한다. 본문이 중간에 잘리지 않도록 여유를 둔다.
+ANALYSIS_MAX_TOKENS = 8192
 # low 추론 옵션은 동일 입력 비교에서 빈 답변을 반환해 기본 추론 설정을 사용한다.
 ANALYSIS_MODEL_KWARGS = {}
 ANALYSIS_MAX_SOURCES = 6

@@ -1,8 +1,29 @@
 """제한된 근거가 원문을 훼손하지 않고 실제 출처 번호로 연결되는지 확인한다."""
 from types import SimpleNamespace
+import pytest
 
 from analysis.evidence import prepare_evidence, citation_warning, link_citations
 from analysis.rag_pipeline import clean_source_url, build_facet_prompt
+from analysis.evidence import normalize_analysis_sections
+
+
+def test_굵은제목과_인라인제목을_분리해_읽기쉽게_표시한다():
+    body = '**1. 의미**\n설명입니다 [자료 1].\n\n2. **유행 이유**: 확인할 수 없음.\n\n### 3. 사용법\n예시입니다.\n\n**4. 확인된 사용 맥락**\n자료만으로 확인할 수 없음.'
+    result = normalize_analysis_sections(body)
+    assert result.startswith('### 1. 의미\n\n설명입니다')
+    assert '### 2. 유행 이유\n\n확인할 수 없음.' in result
+    assert result.count('### ') == 4
+
+
+def test_네번째항목이_그외에는으로_잘린_실제형태를_거른다():
+    body = '**1. 의미**\n설명입니다 [자료 1].\n\n**2. 유행 이유**\n설명입니다.\n\n**3. 사용법**\n설명입니다.\n\n**4. 확인된 사용 맥락**\n게임이 끝나갈 때였습니다 [자료 1]. 그 외에는'
+    with pytest.raises(ValueError, match='중간에 끊겼습니다'):
+        normalize_analysis_sections(body)
+
+
+def test_항목이_누락된_답변을_완성으로_저장하지_않는다():
+    with pytest.raises(ValueError, match='항목이 완성되지 않았습니다'):
+        normalize_analysis_sections('### 1. 의미\n\n설명입니다.')
 
 
 def point(url, text):

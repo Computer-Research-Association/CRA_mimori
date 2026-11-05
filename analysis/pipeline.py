@@ -200,6 +200,18 @@ _RETRYABLE_KEYWORDS = ("ResourceExhausted", "Service Unavailable", "Overloaded")
 _NON_RETRYABLE_CODES = {"504"}
 
 
+class IncompleteAnalysisError(ValueError):
+    """모델이 정상 종료하지 않은 답변은 완성 결과로 취급하지 않는다."""
+
+
+def _check_finish_reason(reason):
+    _log_finish_reason(reason)
+    if reason == "length":
+        raise IncompleteAnalysisError("분석이 길이 제한으로 중단됐습니다. 완성된 답변을 받지 못했습니다.")
+    if reason in {"content_filter", "tool_calls"}:
+        raise IncompleteAnalysisError("분석이 정상적으로 완료되지 않았습니다.")
+
+
 def _is_retryable(error_message: str) -> bool:
     code_match = _RETRYABLE_CODE_PATTERN.search(error_message)
     if code_match:
@@ -229,7 +241,7 @@ def invoke_with_retry(nvidia_client, messages, max_retries: int = 3, base_delay:
         try:
             print(f"[analyze] LLM 호출 시도 {attempt}/{max_retries}...")
             response = nvidia_client.invoke(messages)
-            _log_finish_reason(response.response_metadata.get("finish_reason"))
+            _check_finish_reason(response.response_metadata.get("finish_reason"))
             if attempt > 1:
                 print(f"[analyze] 시도 {attempt}에서 성공")
             return response
@@ -259,17 +271,17 @@ def _stream_with_retry(
         try:
             print(f"[analyze] LLM 스트리밍 호출 시도 {attempt}/{max_retries}...")
             accumulated = ""
-            last_chunk = None
+            finish_reason = None
             for chunk in nvidia_client.stream(messages):
                 accumulated += chunk.content
                 on_chunk(accumulated)
-                last_chunk = chunk
+                # 종료 청크 뒤에 사용량 전용 청크가 올 수 있으므로 마지막 값으로 덮지 않는다.
+                reason = chunk.response_metadata.get("finish_reason")
+                if reason:
+                    finish_reason = reason
             if not accumulated.strip():
                 raise ValueError("분석 답변을 받지 못했습니다. 잠시 후 다시 시도해 주세요.")
-            # finish_reason은 스트림의 마지막 청크에만 실려 온다(langchain_nvidia_ai_endpoints
-            # 쪽 구현이 그렇게 되어 있음 — 매 청크마다 채우면 응답 메타데이터가 중복 누적됨).
-            if last_chunk is not None:
-                _log_finish_reason(last_chunk.response_metadata.get("finish_reason"))
+            _check_finish_reason(finish_reason)
             if attempt > 1:
                 print(f"[analyze] 시도 {attempt}에서 성공")
             return accumulated
@@ -289,7 +301,8 @@ def _stream_with_retry(
             time.sleep(wait)
 
 
-def analyze(prompt: str, model: str = ANALYSIS_MODEL, on_chunk: Callable[[str], None] | None = None) -> str:
+def analyze(prompt: str, model: str = ANALYSIS_MODEL, on_chunk: Callable[[str], None] | None = None,
+            require_complete: bool = False) -> str:
     """prompt를 model에 보내 분석 결과 텍스트를 반환. 503 등 일시적 오류는 자동 재시도.
 
     on_chunk가 주어지면 .stream()으로 호출해 청크가 도착할 때마다 누적 텍스트로
@@ -313,6 +326,10 @@ def analyze(prompt: str, model: str = ANALYSIS_MODEL, on_chunk: Callable[[str], 
         response = invoke_with_retry(nvidia_client, messages)
         if not response.content or not response.content.strip():
             raise ValueError("분석 답변을 받지 못했습니다. 잠시 후 다시 시도해 주세요.")
-        return response.content
-
-    return _stream_with_retry(nvidia_client, messages, on_chunk)
+        result = response.content
+    else:
+        result = _stream_with_retry(nvidia_client, messages, on_chunk)
+    if require_complete:
+        from analysis.evidence import normalize_analysis_sections
+        result = normalize_analysis_sections(result)
+    return result
