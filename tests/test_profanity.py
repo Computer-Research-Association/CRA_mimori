@@ -66,3 +66,16 @@ if __name__ == "__main__":
     test_애매한_단어는_목록에_없어_오검열되지_않는다()
     test_출처_제목에도_적용된다()
     print("\nALL PASS ✅")
+
+
+def test_요이_분석에_남았던_가족성별비하를_순화한다():
+    text = '요이는 뭔 애미터진말임. 한남말투 남충이년들이 이지랄한다.'
+    result = soften_profanity(text)
+    for word in ['애미터진', '한남말투', '남충', '년들', '이지랄']:
+        assert word not in result
+    assert soften_profanity('한남동 한남대학교 강아지 새끼와 걸레') == '한남동 한남대학교 강아지 새끼와 걸레'
+
+
+def test_연령이나_학년_표현을_욕설로_오인하지_않는다():
+    text = '청년들과 소년들, 고학년들이 함께 참여합니다.'
+    assert soften_profanity(text) == text

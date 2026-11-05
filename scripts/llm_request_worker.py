@@ -42,12 +42,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 같은 세그폴트가 재현된다. 반드시 analysis.pipeline/rag_pipeline을 먼저 임포트한
 # 뒤에 DB.mongo_client/config.config_cilent를 임포트할 것.
 from analysis.pipeline import analyze
+from analysis.evidence import citation_warning, compose_analysis, prepare_evidence
 from analysis.rag_pipeline import (
     build_facet_prompt,
     clean_source_url,
     default_facet_config,
     encode_facets,
     facet_search,
+    is_content_source,
 )
 from DB.mongo_client import get_collection
 from config.config_cilent import (
@@ -147,12 +149,16 @@ def _make_stream_progress_writer(collection, job_id: str, sources: list, trend: 
 
 
 def _process_analyze(doc: dict, collection, job_id: str) -> dict:
+    started = time.monotonic()
     keyword = doc["keyword"]
     sources_filter = doc.get("sources")
     facet_config = default_facet_config(keyword)
     facet_vectors = encode_facets(facet_config)
     points, _ = facet_search(
         keyword, facet_config, facet_vectors=facet_vectors, sources=sources_filter, is_relevant=True
+    )
+    points = prepare_evidence(
+        [p for p in points if is_content_source(p.payload.get("url"))], clean_source_url, keyword=keyword,
     )
     if not points:
         # 이 시점의 keyword는 이미 api/routes.py에서 list_analyzable_keywords()로
@@ -182,9 +188,27 @@ def _process_analyze(doc: dict, collection, job_id: str) -> dict:
     _write_progress(collection, job_id, sources, trend_response, partial_text=None, low_confidence=low_confidence)
 
     on_chunk = _make_stream_progress_writer(collection, job_id, sources, trend_response, low_confidence)
+    generation_started = time.monotonic()
     result_text = analyze(prompt, on_chunk=on_chunk)
+    if not result_text or not result_text.strip():
+        raise ValueError("분석 답변을 받지 못했습니다. 잠시 후 다시 시도해 주세요.")
+    result_text = compose_analysis(result_text, trend_response)
 
-    return {"result": result_text, "sources": sources, "trend": trend_response, "low_confidence": low_confidence}
+    finished = time.monotonic()
+    metrics = {
+        "retrieval_seconds": round(generation_started - started, 3),
+        "generation_seconds": round(finished - generation_started, 3),
+        "total_seconds": round(finished - started, 3),
+        "context_chars": sum(len(p.payload.get("text", "")) for p in points),
+        "source_count": len(sources),
+    }
+    print(f"[llm_request_worker] 분석 완료: {metrics}", flush=True)
+    return {
+        "result": result_text, "sources": sources, "trend": trend_response,
+        "low_confidence": low_confidence,
+        "citation_warning": citation_warning(result_text, len(sources)),
+        "metrics": metrics,
+    }
 
 
 def run_once(collection=None) -> bool:

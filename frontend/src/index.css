@@ -1348,3 +1348,86 @@ a:focus-visible {
 .markdown-body strong {
   font-weight: 700;
 }
+
+/* 작은 화면에서도 검색과 근거 링크를 읽고 누를 수 있게 한다. */
+.results-topbar__search,
+.markdown-body,
+.source-list li,
+.source-list a {
+  min-width: 0;
+}
+.markdown-body,
+.source-list a,
+.unknown-chip {
+  overflow-wrap: anywhere;
+}
+.source-list li {
+  max-width: 100%;
+  align-items: flex-start;
+  scroll-margin-top: 140px;
+}
+.source-list .source-icon {
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+.analysis-sources__title {
+  font-size: var(--fs-sm);
+  margin: var(--s-6) 0 var(--s-2);
+}
+.analysis-sources .source-list {
+  margin-top: 0;
+}
+.markdown-body a[href^="#source-"] {
+  color: var(--c-accent);
+  font-size: 0.85em;
+  text-decoration: underline;
+}
+@media (max-width: 600px) {
+  .home-screen {
+    padding: 88px var(--s-4) var(--s-8);
+    align-items: flex-start;
+  }
+  .home-hero {
+    margin-bottom: 0;
+  }
+
+  .results-topbar {
+    height: auto;
+    min-height: var(--h-topbar);
+    flex-wrap: wrap;
+    gap: var(--s-2) var(--s-4);
+    padding: var(--s-3) var(--s-4);
+  }
+  .results-topbar__search {
+    order: 3;
+    flex: 1 0 100%;
+    max-width: none;
+  }
+  .search-form--compact {
+    max-width: none;
+  }
+  .search-form--compact .search-form__input {
+    font-size: 16px;
+    height: 44px;
+  }
+  .results-body {
+    padding: var(--s-6) var(--s-4) var(--s-12);
+  }
+  .tier-section__head {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--s-1);
+  }
+  .tier-section__meta {
+    white-space: normal;
+  }
+  .source-list {
+    flex-direction: column;
+    gap: var(--s-3);
+  }
+  .unknown-chip {
+    max-width: 100%;
+    text-align: left;
+    min-height: 44px;
+  }
+}

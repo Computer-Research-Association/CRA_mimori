@@ -58,3 +58,11 @@ if __name__ == "__main__":
     test_is_relevant_필드가_없으면_걸러지지_않는다()
     test_is_relevant가_True여도_키워드_자체_검증은_그대로_적용된다()
     print("\nALL PASS ✅")
+
+
+def test_동명_인스타그램_프로필과_검색페이지를_근거에서_제외한다():
+    for url in ['https://www.instagram.com/yoistudio_', 'https://www.instagram.com/popular/요이-뜻']:
+        point = _point({'text': '요이 관련 설명이 충분히 길게 담긴 텍스트입니다', 'title': '요이', 'url': url})
+        assert not _is_valid_chunk(point, '요이', min_length=10)
+    point = _point({'text': '요이 실제 용례를 설명한 개별 게시물입니다', 'url': 'https://www.instagram.com/p/abc123/'})
+    assert _is_valid_chunk(point, '요이', min_length=10)

@@ -3,6 +3,10 @@ from dotenv import load_dotenv
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+# 정기 수집 목록과 분석 품질 기준이 바뀌었을 때의 캐시 세대.
+BATCH_KEYWORDS_PATH = os.path.join(_ROOT, "crawlers", "Keywords.md")
+ANALYSIS_CACHE_VERSION = "2026-11-05-citations-v2"
+
 load_dotenv()
 
 # api/routes.py의 관리자 전용 엔드포인트(hide/unhide/완전삭제/admin stats)를 보호하는
@@ -176,17 +180,22 @@ USER_AGENTS = [
 
 # LLM 분석 설정
 
-# openai/gpt-oss-120b는 NIM 카탈로그에서 2026-09-03 EOL 처리되어([410] Gone) 더 이상
-# 호출 불가. 이 계정 키로 접근 가능한 모델이 제한적이라(mistral-large-2,
-# llama-3.1-nemotron-70b/51b, nemotron-4-340b, llama3-chatqa-1.5-70b, dbrx,
-# yi-large 등 다수가 404) 실측으로 대체재를 찾음. gpt-oss-20b/nemotron-3-super-120b/
-# nemotron-3.5-lightning은 접근되지만 reasoning 모델이라 답변 전 내부 사고가 길어져
-# max_completion_tokens를 넘기고 끝나거나(예전 gpt-oss-120b 504 재발 위험) content에
-# 사고 과정이 그대로 새는 문제가 있었다. 후속으로 쓰던 minimax-m3도 2026-09-09 EOL
-# 처리되어([410] Gone) 호출 불가가 됨. moonshotai/kimi-k3로 재교체 — 실측 결과
-# max_completion_tokens=4096 기준 매 요청 finish_reason="stop"으로 깔끔히 종료하고
-# content에 최종 답만 담김(<think> 누출 없음, reasoning_content는 별도 필드)을 확인.
-ANALYSIS_MODEL = "moonshotai/kimi-k3"
+# kimi-k3는 2026-10-15 종료(410). 운영 계정으로 실제 호출 성공을 확인한 모델을 사용한다.
+# 카탈로그에 있어도 이 계정에서 404인 모델이 있으므로 변경 시 생성 완료까지 확인해야 한다.
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "minimaxai/minimax-m3.1-flash")
+# 현재 계정의 실제 짧은 분석에서는 1.0보다 0.1의 완료 시간이 짧아 유지한다.
+ANALYSIS_TEMPERATURE = 0.1
+ANALYSIS_BASE_URL = os.getenv("ANALYSIS_BASE_URL", "https://integrate.api.nvidia.com/v1")
+ANALYSIS_TIMEOUT_SECONDS = 120
+ANALYSIS_MAX_TOKENS = 4096
+# low 추론 옵션은 동일 입력 비교에서 빈 답변을 반환해 기본 추론 설정을 사용한다.
+ANALYSIS_MODEL_KWARGS = {}
+ANALYSIS_MAX_SOURCES = 6
+ANALYSIS_MAX_SOURCE_CHARS = 1800
+ANALYSIS_MAX_CONTEXT_CHARS = 8000
+# 실제 답변 검토에서 확인한 별개 표현. 해당 키워드를 분석할 때 이 표현이 제목에 있는
+# 문서는 제외한다. 현재 밈의 어원과 동일하다는 검증 없이 사전적 설명을 가져오지 않기 위함이다.
+ANALYSIS_DISTINCT_EXPRESSIONS = {"요이": ("요이 땅",)}
 ANALYSIS_PROMPT_PATH = os.path.join(_ROOT, "analysis", "prompt_template.md")
 
 # RAG 질의응답 설정

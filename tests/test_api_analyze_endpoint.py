@@ -361,3 +361,24 @@ if __name__ == "__main__":
     test_GET_low_confidence가_결과에_그대로_실린다()
     test_GET_처리중이면_partial_result를_반환한다()
     print("\nALL PASS ✅")
+
+
+def test_이전_품질기준의_캐시와_새_요청은_분리된다(monkeypatch):
+    current = _analyze_job_id('요이', None)
+    monkeypatch.setattr(routes, 'ANALYSIS_CACHE_VERSION', '이전버전')
+    assert _analyze_job_id('요이', None) != current
+
+
+def test_자료번호는_실제_출처에만_연결된다(monkeypatch):
+    job_id = _analyze_job_id('요이', None)
+    fake = _FakeCollection([{
+        '_id': job_id, 'keyword': '요이', 'status': 'done', 'error': None,
+        'result': {'result': '설명 [자료 1] 주장 [자료 99]', 'citation_warning': True,
+                   'sources': [{'title': '원문', 'url': 'https://example.com'}]},
+    }])
+    monkeypatch.setattr(routes, 'get_collection', lambda name: fake)
+    data = create_app().test_client().get('/api/analyze-request/' + job_id).get_json()
+    assert '[자료 1](#source-1)' in data['result']
+    assert '#source-99' not in data['result']
+    assert '[출처 확인 필요]' in data['result']
+    assert data['citation_warning'] is True

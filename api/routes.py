@@ -8,6 +8,7 @@ scripts/llm_request_worker.py가 처리한다(docs/superpowers/specs/2026-08-11-
 """
 import functools
 import hashlib
+from pathlib import Path
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request
@@ -23,9 +24,14 @@ from analysis.pipeline import (
     unhide_keyword,
 )
 from analysis.profanity import soften_profanity
+from analysis.evidence import link_citations
 from crawlers.keyword_shape import classify_keyword_shape
 from DB.mongo_client import get_collection
-from config.config_cilent import ADMIN_API_KEY, CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION
+from config.config_cilent import (
+    ADMIN_API_KEY, ANALYSIS_CACHE_VERSION, BATCH_KEYWORDS_PATH,
+    ANALYSIS_DISTINCT_EXPRESSIONS,
+    CRAWL_REQUESTS_COLLECTION, LLM_REQUESTS_COLLECTION,
+)
 from trend.trend_service import get_cached_trend, get_latest_trend_for_keywords
 from trend.zscore import STATUS_INSUFFICIENT
 from admin_stats import get_admin_stats
@@ -97,11 +103,19 @@ def trend_leaderboard():
     프론트가 이를 "데이터 부족"으로 표시한다."""
     kws = list_visible_keywords()
     latest = get_latest_trend_for_keywords(kws)
+    # 크롤러 전체를 임포트하지 않고 실제 배치 목록만 읽는다. 읽기 실패 시 갱신을 약속하지 않는다.
+    try:
+        daily_keywords = set(Path(BATCH_KEYWORDS_PATH).read_text(encoding="utf-8").splitlines())
+        daily_keywords = {kw.strip() for kw in daily_keywords if kw.strip()}
+    except OSError:
+        daily_keywords = set()
     rows = []
     for kw in kws:
         doc = latest.get(kw)
         rows.append({
             "keyword": kw,
+            "date": doc.get("date") if doc else None,
+            "daily_refresh": kw in daily_keywords,
             "status": doc.get("status") if doc else None,
             "z_score": doc.get("z_score") if doc else None,
             "final_z": doc.get("final_z") if doc else None,
@@ -200,7 +214,10 @@ def _analyze_job_id(keyword: str, sources: list[str] | None) -> str:
     if sources and set(sources) == _ALL_ANALYZE_SOURCES:
         sources = None
     normalized_sources = ",".join(sorted(sources)) if sources else ""
-    raw = f"{keyword}|{normalized_sources}"
+    # 이전 기준의 추정이 섞인 답변을 재사용하지 않고 검색 시 새 품질 기준으로 생성한다.
+    raw = f"{ANALYSIS_CACHE_VERSION}|{keyword}|{normalized_sources}"
+    if keyword in ANALYSIS_DISTINCT_EXPRESSIONS:
+        raw += "|" + ",".join(ANALYSIS_DISTINCT_EXPRESSIONS[keyword])
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -262,10 +279,11 @@ def analyze_request_status(job_id):
         "job_id": doc["_id"],
         "keyword": doc["keyword"],
         "status": doc["status"],
-        "result": soften_profanity(result.get("result")),
+        "result": link_citations(soften_profanity(result.get("result")), len(sources or [])),
         "sources": softened_sources,
         "trend": result.get("trend"),
-        "partial_result": soften_profanity(result.get("partial_text")),
+        "partial_result": link_citations(soften_profanity(result.get("partial_text")), len(sources or [])),
+        "citation_warning": result.get("citation_warning", False),
         "low_confidence": result.get("low_confidence", False),
         "error": doc["error"],
     })

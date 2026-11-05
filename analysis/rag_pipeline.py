@@ -102,6 +102,16 @@ _DEFAULT_MIN_CHUNK_LENGTH = 30
 _DEFAULT_OVER_FETCH_FACTOR = 3
 
 
+def is_content_source(raw_url: str | None) -> bool:
+    """동명 계정 프로필·검색 디렉터리는 개별 밈 용례의 근거로 사용하지 않는다."""
+    parsed = urlparse(clean_source_url(raw_url))
+    host = (parsed.hostname or '').lower()
+    if host == 'instagram.com' or host.endswith('.instagram.com'):
+        parts = [part for part in parsed.path.split('/') if part]
+        return len(parts) >= 2 and parts[0] in {'p', 'reel', 'reels', 'tv'}
+    return True
+
+
 def _is_valid_chunk(point: models.ScoredPoint, keyword: str, min_length: int) -> bool:
     """크롤러가 매긴 keyword 태그를 그대로 믿지 않고, title/text에 실제로 그 키워드가
     있는지 + 텍스트가 최소 길이 이상인지 재검증한다.
@@ -116,6 +126,8 @@ def _is_valid_chunk(point: models.ScoredPoint, keyword: str, min_length: int) ->
     "값이 없으면 걸러지지 않는다"를 지켜야 기존 데이터가 갑자기 검색에서
     전부 사라지는 회귀가 안 생긴다.
     """
+    if not is_content_source(point.payload.get("url")):
+        return False
     text = point.payload.get("text", "")
     title = point.payload.get("title", "")
     if len(text.strip()) < min_length:
@@ -508,20 +520,20 @@ def build_facet_prompt(
 ) -> str:
     """rag_facet_prompt_template.md를 읽어 {keyword}/{trend_info}/{context}를 채운다.
 
-    자유질문용 build_rag_prompt와 달리 {question}이 없고(4항목 고정 지시), context의 각
-    자료 앞에 '소스유형'을 붙여 LLM이 1차 자료(커뮤니티)와 2차 자료(가공 콘텐츠)를 구분하게 한다.
+    자유질문용 build_rag_prompt와 달리 {question}이 없으며, 자료 번호와 수집 경로를
+    전달한다. 자료 번호는 호출자가 전달한 points 및 화면 출처 목록 순서와 같다.
     trend_info=None이면 keyword로 조회해 채운다. 넣지 않으려면 빈 문자열("")을 명시적으로 넘긴다.
     """
     with open(RAG_FACET_PROMPT_PATH, "r", encoding="utf-8") as f:
         template = f.read()
 
     context_parts = []
-    for point in points:
+    for number, point in enumerate(points, 1):
         title = point.payload.get("title") or "제목 없음"
         url = clean_source_url(point.payload.get("url"))
         source = point.payload.get("source") or "알수없음"
         text = point.payload.get("text", "")
-        context_parts.append(f"[출처: {title} / {url} / 소스유형: {source}]\n{text}")
+        context_parts.append(f"[자료 {number}] [제목: {title} / {url} / 소스유형: {source}]\n{text}")
 
     context = _wrap_untrusted(_CONTEXT_SEPARATOR.join(context_parts))
     if trend_info is None:

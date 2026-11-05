@@ -28,8 +28,8 @@ describe('App', () => {
   it('순위표에 순위/상태/z-score가 있는 키워드를 클릭하면 결과 화면으로 전환된다', async () => {
     vi.spyOn(api, 'fetchKeywords').mockResolvedValue(['야르', '쌰갈'])
     vi.spyOn(api, 'fetchTrendLeaderboard').mockResolvedValue([
-      { keyword: '야르', status: '핫함', z_score: 2.1, final_z: 2.1 },
-      { keyword: '쌰갈', status: '평상', z_score: 0.1, final_z: 0.1 },
+      { date: '2026-11-03', daily_refresh: true, keyword: '야르', status: '핫함', z_score: 2.1, final_z: 2.1 },
+      { date: '2026-11-03', daily_refresh: true, keyword: '쌰갈', status: '평상', z_score: 0.1, final_z: 0.1 },
     ])
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
     vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })

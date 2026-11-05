@@ -30,26 +30,34 @@ export default function TierList({ onSelect }) {
   if (!rows) return null
   if (rows.length === 0) return null
 
-  // status가 null(trend_scores 문서 자체가 없음)이거나 "데이터 부족"(문서는 있지만
-  // classify_trend가 신호 부족으로 판정)이면 둘 다 순위를 매길 수 없는 상태다.
-  // 하지만 원인이 다르다 — null은 배치가 아직 안 돈 것뿐이라 내일이면 해결되지만,
-  // "데이터 부족"은 배치가 이미 돌았는데도 검색 신호 자체가 없다는 뜻이라 다음날
-  // 다시 돌려도 똑같은 결과가 나올 수 있다. "내일 합류해요"라고 뭉뚱그리면 두 번째
-  // 경우엔 거짓 안내가 되므로 두 그룹으로 나눠 각자 맞는 문구를 보여준다.
-  const ranked = rows.filter((row) => row.status !== null && row.status !== '데이터 부족')
+  // 배치 대상 중 같은 집계일인 자료만 순위를 매긴다. 이전 자료는 검색 가능한 보관 목록이다.
+  const dailyRows = rows.filter((row) => row.daily_refresh !== false)
+  const latestDate = dailyRows.reduce((latest, row) => row.date > latest ? row.date : latest, '')
+  const current = dailyRows.filter((row) => row.date && row.date === latestDate)
+  const ranked = current.filter((row) => row.status && row.status !== '데이터 부족')
   const pending = rows.filter((row) => row.status === null)
-  const noSignal = rows.filter((row) => row.status === '데이터 부족')
+  const noSignal = current.filter((row) => row.status === '데이터 부족')
+  const archived = rows.filter((row) => row.status !== null && !current.includes(row))
+  // 새벽 2시 전에는 전날 집계가 정상이다.
+  const expectedDateKst = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date(Date.now() - 2 * 60 * 60 * 1000))
 
   return (
     <section className="tier-section">
+      {latestDate && latestDate < expectedDateKst && (
+        <p className="tier-section__caption" role="status">
+          최신 집계는 {latestDate} 자료예요. 오늘 집계가 아직 반영되지 않았어요.
+        </p>
+      )}
       {ranked.length > 0 && (
         <>
           <div className="tier-section__head">
-            <h2 className="tier-section__title">지금 순위</h2>
-            <span className="tier-section__meta">검색 관심도 z-score 기준 · 매일 새벽 갱신</span>
+            <h2 className="tier-section__title">최근 집계 순위</h2>
+            <span className="tier-section__meta">{latestDate} 집계 · 검색 관심도 z-score 기준</span>
           </div>
           <p className="tier-section__caption">
-            저장된 신조어를 최근 반응 세기 순으로 정렬했어요. 클릭하면 바로 결과가 나와요 — 이미 분석까지 끝나 있어요.
+            같은 집계일의 정기 갱신 키워드만 비교해요. 정기 수집은 매일 새벽 2시에 시작하며, 분석문은 검색 시 작성해 저장해요.
           </p>
           <ul className="tier-list">
             {ranked.map((row, i) => (
@@ -60,7 +68,12 @@ export default function TierList({ onSelect }) {
                   onClick={() => onSelect(row.keyword)}
                 >
                   <span className="tier-row__rank num-tabular">{i + 1}</span>
-                  <span className="tier-row__word">{row.keyword}</span>
+                  <span className="tier-row__word">
+                    {row.keyword}
+                    <small style={{ display: 'block', fontWeight: 400, fontSize: '0.7em' }}>
+                      {row.date ? `${row.date} 기준` : '집계일 미확인'}
+                    </small>
+                  </span>
                   <span className={`tier-pill ${tierPillClass(row.status)}`}>{row.status}</span>
                   <span
                     className={`tier-row__z num-tabular${
@@ -76,11 +89,29 @@ export default function TierList({ onSelect }) {
         </>
       )}
 
+      {archived.length > 0 && (
+        <div className="unknown-section">
+          <h2 className="tier-section__title tier-section__title--sub">이전 집계 · 보관 자료</h2>
+          <p className="tier-section__caption">
+            정기 갱신 대상이 아니거나 집계일이 다른 자료예요. 최근 집계 순위에는 포함하지 않아요.
+          </p>
+          <ul className="unknown-list">
+            {archived.map((row) => (
+              <li key={row.keyword}>
+                <button type="button" className="unknown-chip" onClick={() => onSelect(row.keyword)}>
+                  {row.keyword} · {row.date || '집계일 미확인'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {pending.length > 0 && (
         <div className="unknown-section">
           <h2 className="tier-section__title tier-section__title--sub">막 등록됨 · 순위 집계 전</h2>
           <p className="tier-section__caption">
-            방금 수집이 끝난 신조어예요. 다음 순위 갱신(내일 새벽)부터 위 목록에 합류해요.
+            아직 트렌드 집계 결과가 없는 키워드예요. 집계 결과가 생기면 순위에 반영돼요.
           </p>
           <ul className="unknown-list">
             {pending.map((row) => (
@@ -99,7 +130,7 @@ export default function TierList({ onSelect }) {
           <h2 className="tier-section__title tier-section__title--sub">신호 부족</h2>
           <p className="tier-section__caption">
             네이버·카카오·구글 어디서도 뚜렷한 검색 신호를 찾지 못했어요. 아직 덜 알려졌거나
-            검색으로는 잘 안 잡히는 표현일 수 있어요 — 검색량이 늘면 자동으로 위 목록에 합류해요.
+            검색으로는 잘 안 잡히는 표현일 수 있어요 — 추가 집계에서 충분한 신호가 확인되면 순위에 반영해요.
           </p>
           <ul className="unknown-list">
             {noSignal.map((row) => (

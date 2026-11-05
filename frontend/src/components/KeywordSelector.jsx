@@ -134,7 +134,6 @@ export default function KeywordSelector({ keywords, onSelect, onNewKeyword, vari
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder="밈/신조어를 입력하세요"
-          autoFocus
         />
         <button type="submit" className="search-form__btn" aria-label="검색" disabled={disabled}>
           <SearchIcon />

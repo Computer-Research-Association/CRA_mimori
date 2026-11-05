@@ -12,6 +12,11 @@ from qdrant_client.http import models
 
 from config.config_cilent import (
     ANALYSIS_MODEL,
+    ANALYSIS_BASE_URL,
+    ANALYSIS_MAX_TOKENS,
+    ANALYSIS_MODEL_KWARGS,
+    ANALYSIS_TIMEOUT_SECONDS,
+    ANALYSIS_TEMPERATURE,
     ANALYSIS_PROMPT_PATH,
     CLEANED_COLLECTION,
     CRAWL_REQUESTS_COLLECTION,
@@ -259,6 +264,8 @@ def _stream_with_retry(
                 accumulated += chunk.content
                 on_chunk(accumulated)
                 last_chunk = chunk
+            if not accumulated.strip():
+                raise ValueError("분석 답변을 받지 못했습니다. 잠시 후 다시 시도해 주세요.")
             # finish_reason은 스트림의 마지막 청크에만 실려 온다(langchain_nvidia_ai_endpoints
             # 쪽 구현이 그렇게 되어 있음 — 매 청크마다 채우면 응답 메타데이터가 중복 누적됨).
             if last_chunk is not None:
@@ -292,20 +299,20 @@ def analyze(prompt: str, model: str = ANALYSIS_MODEL, on_chunk: Callable[[str], 
     nvidia_client = ChatNVIDIA(
         model=model,
         api_key=NIM_KEY,
-        # 완전 그리디(0)는 일부 모델(특히 gpt-oss처럼 응답 전에 내부 reasoning을
-        # 먼저 쓰는 모델)에서 반복 루프에 빠져 생성이 안 끝나는 실패 패턴이
-        # 있다 — 실측으로 504 Gateway Timeout이 9건 중 9건 전부 elapsed≈302초로
-        # 동일하게 재현됐다(로그: 2026-08-19). 아주 낮은 값(0.1)만 줘도 이 루프를
-        # 벗어나기 충분하면서, 근거 기반 답변에 필요한 결정적 성향은 거의 유지된다.
-        temperature=0.1,
+        base_url=ANALYSIS_BASE_URL,
+        # 실제 생성 검증을 거친 샘플링 설정을 사용한다.
+        temperature=ANALYSIS_TEMPERATURE,
         top_p=0.95,
-        max_completion_tokens=4096,
-        timeout=6000
+        max_completion_tokens=ANALYSIS_MAX_TOKENS,
+        model_kwargs=ANALYSIS_MODEL_KWARGS if model == ANALYSIS_MODEL else {},
+        timeout=ANALYSIS_TIMEOUT_SECONDS,
     )
     messages = [{"role": "user", "content": prompt}]
 
     if on_chunk is None:
         response = invoke_with_retry(nvidia_client, messages)
+        if not response.content or not response.content.strip():
+            raise ValueError("분석 답변을 받지 못했습니다. 잠시 후 다시 시도해 주세요.")
         return response.content
 
     return _stream_with_retry(nvidia_client, messages, on_chunk)

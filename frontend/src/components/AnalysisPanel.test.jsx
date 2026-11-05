@@ -23,28 +23,16 @@ describe('AnalysisPanel', () => {
     await waitFor(() => expect(submitSpy).toHaveBeenCalledWith('야르', ['tavily', 'youtube']))
   })
 
-  it('답변이 즉시 통째로 나오지 않고 한 글자씩 늘어나며(타이핑 커서 포함) 결국 전체가 보인다', async () => {
+  it('완료된 긴 답변은 타이핑 대기 없이 전체를 즉시 보여준다', async () => {
     vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'done' })
     vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+    const text = '완료된 분석을 기다리지 않고 읽습니다. '.repeat(100)
     vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
-      job_id: '잡아이디', status: 'done', result: '충분히 긴 테스트용 답변 문장입니다',
-      sources: [], trend: null, error: null,
+      job_id: '잡아이디', status: 'done', result: text, sources: [], error: null,
     })
-
     const { container } = render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
-
-    // 타이핑 커서가 붙어있어야 "지금 쓰이는 중"임을 알 수 있다.
-    await waitFor(() => {
-      expect(container.querySelector('.markdown-body--typing')).toBeTruthy()
-    })
-
-    // 전체 문장이 끝까지 다 보일 때까지 기다리면, 커서도 사라진다.
-    await waitFor(() => {
-      expect(screen.getByText('충분히 긴 테스트용 답변 문장입니다', { exact: false })).toBeInTheDocument()
-    })
-    await waitFor(() => {
-      expect(container.querySelector('.markdown-body--typing')).toBeFalsy()
-    })
+    await waitFor(() => expect(container.querySelector('.markdown-body')?.textContent).toContain(text.trim()))
+    expect(container.querySelector('.markdown-body--typing')).toBeNull()
   })
 
   it('캐시된(이미 done인) 결과는 첫 폴링 주기(3초)를 기다리지 않고 바로 보인다', async () => {
@@ -152,4 +140,41 @@ describe('AnalysisPanel', () => {
     screen.getByRole('button', { name: '다시 시도' }).click()
     await waitFor(() => expect(submitSpy).toHaveBeenCalledTimes(2))
   })
+})
+
+it('분석 본문을 기다리는 동안에도 확인 가능한 근거 자료를 보여준다', async () => {
+  vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: 'job', status: 'queued' })
+  vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+  vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({ status: 'running', sources: [{ title: '원문', url: 'https://example.com/a' }] })
+  render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
+  expect(await screen.findByRole('link', { name: '[자료 1] 원문' })).toHaveAttribute('href', 'https://example.com/a')
+  expect(screen.getByText('근거 자료 1개')).toBeInTheDocument()
+})
+
+it('본문 인용은 실제 출처 항목으로 연결되고 누락 경고를 표시한다', async () => {
+  vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: 'job', status: 'done' })
+  vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+  vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
+    status: 'done', result: '설명 [자료 1](#source-1)', citation_warning: true,
+    sources: [{ title: '원문', url: 'https://example.com/a' }],
+  })
+  const { container } = render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
+  expect(await screen.findByRole('link', { name: '자료 1' })).toHaveAttribute('href', '#source-1')
+  expect(container.querySelector('#source-1')).toHaveTextContent('원문')
+  expect(screen.getByText(/일부 설명의 출처를 확인하지 못했어요/)).toBeInTheDocument()
+})
+
+it('이전 키워드의 느린 응답이 현재 키워드의 분석을 덮지 않는다', async () => {
+  let resolveOld
+  const oldRequest = new Promise((resolve) => { resolveOld = resolve })
+  vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+  vi.spyOn(api, 'submitAnalyzeRequest').mockImplementation((keyword) => keyword === '이전' ? oldRequest : Promise.resolve({ job_id: 'new', status: 'done' }))
+  const status = vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({ status: 'done', result: '현재 분석', sources: [] })
+  const sources = ['tavily']
+  const { rerender } = render(<AnalysisPanel keyword="이전" selectedSources={sources} />)
+  rerender(<AnalysisPanel keyword="현재" selectedSources={sources} />)
+  await screen.findByText('현재 분석')
+  resolveOld({ job_id: 'old', status: 'done' })
+  await Promise.resolve()
+  expect(status).not.toHaveBeenCalledWith('old')
 })

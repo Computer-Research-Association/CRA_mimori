@@ -53,3 +53,12 @@ if __name__ == "__main__":
     test_trend_info를_주면_실시간_조회를_안한다()
     test_trend_info_생략하면_기존처럼_실시간_조회한다()
     print("\nALL PASS ✅")
+
+
+def test_프롬프트_트렌드_요약은_과거_집계일을_전달한다():
+    from trend.trend_service import format_trend_context
+    context = format_trend_context('요이', result={
+        'status': '핫함', 'final_z': 3.27, 'sources': ['naver'], 'flags': [], 'date': '2026-09-26',
+    })
+    assert '집계일: 2026-09-26' in context
+    assert '현재 상태를 보장하지 않음' in context

@@ -11,7 +11,7 @@ export default function TrendSummary({ trend }) {
   const primarySeries = pickPrimarySeries(trend)
   const changeRate = primarySeries ? computeChangeRate(primarySeries.points) : null
   const changeSentence = typeof changeRate === 'number' && primarySeries
-    ? `최근 ${primarySeries.points.length}일간 ${primarySeries.label}가 평균보다 ${Math.abs(changeRate).toFixed(0)}% ${changeRate >= 0 ? '더 높다' : '더 낮다'}.`
+    ? `집계 구간 ${primarySeries.points.length}일간 ${primarySeries.label}가 평균보다 ${Math.abs(changeRate).toFixed(0)}% ${changeRate >= 0 ? '더 높다' : '더 낮다'}.`
     : trendDirectionLabel({ z })
       ? `${trendDirectionLabel({ z })}.`
       : null
@@ -24,6 +24,7 @@ export default function TrendSummary({ trend }) {
         <strong className={trend.status === '핫함' ? 'trend-line__hot' : undefined}>{trendLine}</strong>
         {changeSentence && ` ${changeSentence}`}
         {zNote}
+        {trend.date && <span> · {trend.date} 집계 기준</span>}
       </p>
       {primarySeries && <TrendChart points={primarySeries.points} label={primarySeries.label} />}
     </>

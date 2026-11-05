@@ -1,0 +1,10 @@
+version: 1
+name: NVIDIA chat transport test
+slug: nvidia-chat-transport-test
+protocol: http
+port: 4617
+interceptRequests: true
+scenarios:
+  - name: default
+    path: ./default.js
+    default: true
