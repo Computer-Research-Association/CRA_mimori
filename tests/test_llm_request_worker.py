@@ -397,7 +397,7 @@ def test_run_loop는_종료하지_않고_run_once를_반복_호출한다():
     worker.get_collection = lambda name: None
     try:
         try:
-            worker.run_loop()
+            worker.run_loop(concurrency=1)
         except _StopLoop:
             pass
         assert calls["n"] == 3, calls

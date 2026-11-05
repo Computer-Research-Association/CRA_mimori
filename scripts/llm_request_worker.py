@@ -18,12 +18,13 @@ queued로 되돌려 다음 시도에 재시도한다(사전에 아무 무거운 
 sunk cost 없음). 락은 요청을 실제로 처리하는 구간에만 걸리므로, run_loop가
 유휴 대기 중인 동안은 크롤 워커를 막지 않는다.
 
-동시 처리 1개 제한은 scheduler.py의 APScheduler max_instances(기본값 1) +
-상주 워커가 하나뿐이라는 사실이 함께 보장한다.
+상주 워커 하나에서 검색은 직렬 처리하고, 외부 LLM 생성은 설정된 개수만큼 병렬 처리한다.
 """
 import os
 import sys
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 # torch와 다른 네이티브 의존성(qdrant-client/ollama 등)이 각자 별도의 Intel
 # OpenMP 런타임(libiomp5md.dll)을 들고 있어, 한 프로세스에서 같이 로드되면
@@ -56,12 +57,14 @@ from config.config_cilent import (
     ANALYZE_STREAM_WRITE_INTERVAL_SECONDS,
     LLM_REQUESTS_COLLECTION,
     LLM_WORKER_POLL_INTERVAL_SECONDS,
+    LLM_WORKER_CONCURRENCY,
     MIN_COMMUNITY_DOCS_FOR_TAVILY,
 )
 from scripts.heavy_job_lock import acquire_heavy_job_lock, release_heavy_job_lock, renew_heavy_job_lock
 from trend.trend_service import format_trend_context, get_cached_trend
 
 _LOCK_OWNER = "llm_request_worker"
+_RETRIEVAL_LOCK = threading.Lock()
 
 
 def _mark_done(collection, job_id: str, result: dict) -> None:
@@ -152,14 +155,16 @@ def _process_analyze(doc: dict, collection, job_id: str) -> dict:
     started = time.monotonic()
     keyword = doc["keyword"]
     sources_filter = doc.get("sources")
-    facet_config = default_facet_config(keyword)
-    facet_vectors = encode_facets(facet_config)
-    points, _ = facet_search(
-        keyword, facet_config, facet_vectors=facet_vectors, sources=sources_filter, is_relevant=True
-    )
-    points = prepare_evidence(
-        [p for p in points if is_content_source(p.payload.get("url"))], clean_source_url, keyword=keyword,
-    )
+    # 동일 BGE-M3 인스턴스의 추론은 겹치지 않게 한다. 이후 원격 생성은 락 밖이다.
+    with _RETRIEVAL_LOCK:
+        facet_config = default_facet_config(keyword)
+        facet_vectors = encode_facets(facet_config)
+        points, _ = facet_search(
+            keyword, facet_config, facet_vectors=facet_vectors, sources=sources_filter, is_relevant=True
+        )
+        points = prepare_evidence(
+            [p for p in points if is_content_source(p.payload.get("url"))], clean_source_url, keyword=keyword,
+        )
     if not points:
         # 이 시점의 keyword는 이미 api/routes.py에서 list_analyzable_keywords()로
         # 존재를 확인받은 뒤라, 여기서 못 찾는 건 "키워드 자체가 없음"이 아니라
@@ -243,19 +248,69 @@ def run_once(collection=None) -> bool:
     return True
 
 
-def run_loop() -> None:
-    """종료하지 않고 큐를 계속 폴링한다 — scheduler.py가 컨테이너 기동 시
-    한 번만 띄워 상주시킨다.
+def _process_and_store(doc, collection):
+    """개별 실패를 격리한다. 공유 프로세스 락은 조정 루프가 마지막 작업 뒤 해제한다."""
+    try:
+        result = _process_analyze(doc, collection, doc['_id'])
+        _mark_done(collection, doc['_id'], result)
+    except Exception as error:
+        _mark_failed(collection, doc['_id'], str(error))
 
-    BGE-M3(embedding/encoder.py의 모듈 전역 싱글턴)가 프로세스 생존 기간
-    내내 재사용되므로, 이 루프 안에서 이어지는 요청들은 모델을 다시 로드하지
-    않는다. 큐가 비어 대기하는 동안은 heavy_job_lock을 붙잡지 않으므로
-    (run_once가 처리 구간에만 짧게 건다) 크롤 워커를 막지 않는다.
-    """
+
+def run_loop(concurrency=LLM_WORKER_CONCURRENCY, stop_event=None) -> None:
+    """BGE-M3 하나를 공유하고 외부 생성만 병렬 처리한다. 유휴 시 프로세스 락을 푼다."""
     collection = get_collection(LLM_REQUESTS_COLLECTION)
-    while True:
-        run_once(collection=collection)
-        time.sleep(LLM_WORKER_POLL_INTERVAL_SECONDS)
+    stop_event = stop_event or threading.Event()
+    if concurrency == 1:
+        while not stop_event.is_set():
+            run_once(collection=collection)
+            stop_event.wait(LLM_WORKER_POLL_INTERVAL_SECONDS)
+        return
+    if concurrency < 1:
+        raise ValueError('동시 생성 수는 1 이상이어야 합니다.')
+    pool = ThreadPoolExecutor(max_workers=concurrency, thread_name_prefix='analysis')
+    active = set()
+    owns_lock = False
+    last_renew = 0.0
+    try:
+        while not stop_event.is_set():
+            for future in list(active):
+                if future.done():
+                    active.remove(future)
+                    future.result()
+            if not active:
+                if owns_lock:
+                    release_heavy_job_lock(_LOCK_OWNER)
+                    owns_lock = False
+                # 실행 중인 자기 작업을 20분 뒤 중복 회수하지 않도록 유휴 시에만 수행한다.
+                _requeue_stale_running(collection)
+            if not owns_lock and collection.find_one({'status': 'queued'}):
+                owns_lock = acquire_heavy_job_lock(_LOCK_OWNER)
+                last_renew = 0.0
+            if owns_lock:
+                now = time.monotonic()
+                # 첫 토큰이 오기 전에도 락을 갱신한다.
+                if now - last_renew >= _LOCK_RENEW_INTERVAL_SECONDS:
+                    renew_heavy_job_lock(_LOCK_OWNER)
+                    last_renew = now
+                while len(active) < concurrency:
+                    doc = collection.find_one_and_update(
+                        {'status': 'queued'},
+                        {'$set': {'status': 'running', 'started_at': datetime.now(timezone.utc)}},
+                        sort=[('requested_at', 1)],
+                    )
+                    if doc is None:
+                        break
+                    active.add(pool.submit(_process_and_store, doc, collection))
+                if not active:
+                    release_heavy_job_lock(_LOCK_OWNER)
+                    owns_lock = False
+            stop_event.wait(LLM_WORKER_POLL_INTERVAL_SECONDS)
+    finally:
+        # 정상 종료 시 남은 생성이 끝나기 전에 크롤 워커에 락을 넘기지 않는다.
+        pool.shutdown(wait=True)
+        if owns_lock:
+            release_heavy_job_lock(_LOCK_OWNER)
 
 
 if __name__ == "__main__":

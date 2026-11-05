@@ -37,6 +37,8 @@ LLM_REQUESTS_COLLECTION = "llm_requests"          # analyze/rag 비동기 큐 �
 # free -h로 확인한 가용 메모리(6.3GB)가 감당 가능해 콜드스타트 완전 제거를
 # 택했다(2026-08-14). RAM 여유가 없는 환경으로 옮기면 이 상주 방식부터 재검토할 것.
 LLM_WORKER_POLL_INTERVAL_SECONDS = 2
+# BGE-M3는 한 프로세스에서 공유하고 검색은 직렬, 외부 LLM 호출만 병렬 처리한다.
+LLM_WORKER_CONCURRENCY = 3
 
 # analyze 스트리밍 답변을 Mongo에 반영하는 최소 간격(초). 청크마다 쓰면 LLM이
 # 토큰을 뱉는 속도로 Mongo write가 발생해 부담이 크므로, 이 간격보다 짧게는
