@@ -3,6 +3,7 @@ import sys
 import subprocess
 import threading
 import time
+import json
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
@@ -19,6 +20,8 @@ MAIN_PY = os.path.join(BASE_DIR, "main.py")
 PREPROCESS_EMBED_PY = os.path.join(BASE_DIR, "preprocess_embed_main.py")
 CRAWL_REQUEST_WORKER_PY = os.path.join(BASE_DIR, "scripts", "crawl_request_worker.py")
 LLM_REQUEST_WORKER_PY = os.path.join(BASE_DIR, "scripts", "llm_request_worker.py")
+WARM_ANALYSIS_CACHE_PY = os.path.join(BASE_DIR, "scripts", "warm_analysis_cache.py")
+CACHE_REPORT_PATH = os.path.join(BASE_DIR, "data", "analysis-cache-daily.json")
 DB_PATH = os.path.join(SCHEDULER_DIR, "scheduler.db")
 STATUS_PATH = os.path.join(SCHEDULER_DIR, "status.txt")
 LAST_CRAWL_PATH = os.path.join(SCHEDULER_DIR, "last_crawl_at.txt")
@@ -74,9 +77,32 @@ def preprocess_embed_run():
         log_status("전처리+임베딩 성공")
         with open(LAST_EMBED_PATH, "w", encoding="utf-8") as f:
             f.write(datetime.utcnow().isoformat())
+        warm_analysis_cache_run()
     else:
         logger.error("전처리+임베딩 실패 (code=%d)", result.returncode)
         log_status(f"전처리+임베딩 실패 (code={result.returncode})")
+
+
+def warm_analysis_cache_run():
+    """임베딩으로 무효화된 캐시를 다시 채우고 실패 항목은 직렬로 한 번 재시도한다."""
+    command = [sys.executable, WARM_ANALYSIS_CACHE_PY, '--run', '--retry-failed', '--report', CACHE_REPORT_PATH]
+    log_status('자료 갱신 후 분석 캐시 사전 생성 시작')
+    try:
+        for attempt in range(2):
+            result = subprocess.run(command if attempt == 0 else command + ['--concurrency', '1'])
+            if result.returncode != 0:
+                log_status(f'분석 캐시 사전 생성 실행 실패 (code={result.returncode})')
+                return
+            with open(CACHE_REPORT_PATH, encoding='utf-8') as report_file:
+                counts = json.load(report_file)['counts']
+            if not any(count for status, count in counts.items() if status != 'done'):
+                log_status(f'분석 캐시 사전 생성 완료: {counts}')
+                return
+            log_status(f'분석 캐시 사전 생성 결과: {counts}')
+        log_status('분석 캐시 재시도 후 미완료 항목이 남았습니다. 보고서 확인 필요')
+    except Exception as error:
+        # 임베딩 성공 기록은 유지한다. 캐시 오류로 수집 자료까지 다시 처리하지 않는다.
+        log_status(f'분석 캐시 사전 생성 오류: {error}')
 
 
 def crawl_request_run():
