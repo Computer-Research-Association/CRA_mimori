@@ -341,7 +341,7 @@ def format_trend_context(keyword: str, result: dict | None = None) -> str:
     flag_str = f" ({', '.join(result['flags'])})" if result["flags"] else ""
 
     return (
-        "[참고: 검색/언급량 기반 유행 상태 앙상블 판정 — 정성적 분석의 보조 지표로만 활용]\n"
+        "서비스 계산 집계: 검색·언급량 기반 유행 상태와 관측값\n"
         f"집계일: {result.get('date') or '미확인'} (이 집계 시점의 판정이며 현재 상태를 보장하지 않음)\n"
         "z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸\n"
         f"상태: {result['status']} (robust z-score: {result['final_z']:.2f}, 반영 소스: {sources_str}){flag_str}\n"
