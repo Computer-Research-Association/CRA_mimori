@@ -5,7 +5,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 정기 수집 목록과 분석 품질 기준이 바뀌었을 때의 캐시 세대.
 BATCH_KEYWORDS_PATH = os.path.join(_ROOT, "crawlers", "Keywords.md")
-ANALYSIS_CACHE_VERSION = "2026-11-07-detailed-trend-v1"
+ANALYSIS_CACHE_VERSION = "2026-11-07-nemotron35-fast-v1"
 
 load_dotenv()
 
@@ -183,17 +183,21 @@ USER_AGENTS = [
 
 # LLM 분석 설정
 
-# 설명·예시와 근거 표현을 비교해 선택한 모델(2026-11-07). 속도보다 답변 품질을 우선한다.
+# 동일한 상세 프롬프트로 속도·완성도·근거 표현을 검증한 모델(2026-11-07).
 # 카탈로그에 있어도 이 계정에서 404인 모델이 있으므로 변경 시 생성 완료까지 확인해야 한다.
-ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "minimaxai/minimax-m3.1-flash")
+ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "nvidia/nemotron-3.5-super-vl-120b-a12b")
 # 실제 생성 확인에 사용한 샘플링 설정.
 ANALYSIS_TEMPERATURE = 0.1
 ANALYSIS_BASE_URL = os.getenv("ANALYSIS_BASE_URL", "https://integrate.api.nvidia.com/v1")
 ANALYSIS_TIMEOUT_SECONDS = 120
 # 추론 토큰도 같은 예산을 사용한다. 본문이 중간에 잘리지 않도록 여유를 둔다.
 ANALYSIS_MAX_TOKENS = 16384
-# 모델별 추가 옵션 없이 기본 추론 설정을 사용한다.
-ANALYSIS_MODEL_KWARGS = {}
+# 근거 요약·상세 설명은 유지하고 내부 추론 생성을 꺼 첫 본문 대기를 줄인다.
+# ChatNVIDIA가 실제 요청 본문에 chat_template_kwargs로 전달한다.
+ANALYSIS_MODEL_KWARGS = (
+    {"chat_template_kwargs": {"enable_thinking": False}}
+    if ANALYSIS_MODEL == "nvidia/nemotron-3.5-super-vl-120b-a12b" else {}
+)
 ANALYSIS_MAX_SOURCES = 6
 ANALYSIS_MAX_SOURCE_CHARS = 1800
 ANALYSIS_MAX_CONTEXT_CHARS = 8000
