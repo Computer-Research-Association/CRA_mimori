@@ -69,6 +69,19 @@ def test_temperature와_타임아웃은_검증된_설정을_따른다():
     assert _FakeChatNVIDIA.captured_kwargs["timeout"] == 120
 
 
+def test_기본모델에는_추론끄기_옵션을_전달한다():
+    _FakeChatNVIDIA.response = _FakeResponse()
+    _run_with_fake(lambda: pipeline.analyze("테스트 프롬프트"))
+    assert _FakeChatNVIDIA.captured_kwargs["model"] == "nvidia/nemotron-3.5-super-vl-120b-a12b"
+    assert _FakeChatNVIDIA.captured_kwargs["model_kwargs"] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def test_다른모델에_기본모델의_추론옵션을_섞지않는다():
+    _FakeChatNVIDIA.response = _FakeResponse()
+    _run_with_fake(lambda: pipeline.analyze("테스트 프롬프트", model="다른-모델"))
+    assert _FakeChatNVIDIA.captured_kwargs["model_kwargs"] == {}
+
+
 def test_finish_reason이_length면_경고_로그를_남긴다():
     """길이 제한은 경고하고 불완전한 답변을 반환하지 않는다."""
     _FakeChatNVIDIA.response = _FakeResponse(finish_reason="length")
