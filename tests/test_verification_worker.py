@@ -1,6 +1,8 @@
 """새 근거가 기존 답변을 갱신할지 결정하는 보수적 워커 테스트."""
 from datetime import datetime, timezone
 import os
+from pathlib import Path
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -38,6 +40,18 @@ def test_독립_새_자료가_충분하면_기존_답변을_재생성_큐로_보
     assert run_once(queue, answers) is True
     assert answers.docs["a"]["status"] == "queued"
     assert answers.docs["a"]["refresh_reason"] == "evidence"
+
+
+def test_워커_파일을_스케줄러처럼_직접_불러도_프로젝트_모듈을_찾는다(tmp_path):
+    """scheduler의 subprocess 실행은 scripts 디렉터리만 sys.path에 넣는다."""
+    worker_path = Path(__file__).parents[1] / "scripts" / "verification_worker.py"
+    result = subprocess.run(
+        [sys.executable, "-c", f"import runpy; runpy.run_path({str(worker_path)!r}, run_name='worker_import')"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 if __name__ == "__main__":

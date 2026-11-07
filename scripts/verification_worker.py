@@ -1,5 +1,9 @@
 """새 임베딩 근거가 기존 분석을 다시 만들 만큼 충분한지 보수적으로 판단한다."""
 from datetime import datetime, timezone
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from DB.mongo_client import get_collection
 from config.config_cilent import EVIDENCE_VERIFICATION_COLLECTION, LLM_REQUESTS_COLLECTION
