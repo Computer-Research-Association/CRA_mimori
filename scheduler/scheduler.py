@@ -19,6 +19,7 @@ MAIN_PY = os.path.join(BASE_DIR, "main.py")
 PREPROCESS_EMBED_PY = os.path.join(BASE_DIR, "preprocess_embed_main.py")
 CRAWL_REQUEST_WORKER_PY = os.path.join(BASE_DIR, "scripts", "crawl_request_worker.py")
 LLM_REQUEST_WORKER_PY = os.path.join(BASE_DIR, "scripts", "llm_request_worker.py")
+VERIFICATION_WORKER_PY = os.path.join(BASE_DIR, "scripts", "verification_worker.py")
 DB_PATH = os.path.join(SCHEDULER_DIR, "scheduler.db")
 STATUS_PATH = os.path.join(SCHEDULER_DIR, "status.txt")
 LAST_CRAWL_PATH = os.path.join(SCHEDULER_DIR, "last_crawl_at.txt")
@@ -136,6 +137,13 @@ def llm_worker_watchdog():
     _llm_worker_proc = subprocess.Popen([sys.executable, LLM_REQUEST_WORKER_PY, "--loop"])
 
 
+def verification_worker_run():
+    """새 임베딩 근거 검토 큐를 한 건 처리한다. LLM 호출은 하지 않는다."""
+    result = subprocess.run([sys.executable, VERIFICATION_WORKER_PY])
+    if result.returncode != 0:
+        logger.error("근거 검토 워커 실패 (code=%d)", result.returncode)
+
+
 CRAWL_HOUR = 2   # KST 02:00 — 크론(hour=2, minute=0)과 반드시 같은 값을 유지해야 함
 CRAWL_MINUTE = 0
 
@@ -238,6 +246,16 @@ scheduler.add_job(
     id='llm_request_job',
     coalesce=True,
     misfire_grace_time=30,
+    replace_existing=True,
+)
+
+scheduler.add_job(
+    verification_worker_run,
+    'interval',
+    seconds=30,
+    id='evidence_verification_job',
+    coalesce=True,
+    misfire_grace_time=60,
     replace_existing=True,
 )
 

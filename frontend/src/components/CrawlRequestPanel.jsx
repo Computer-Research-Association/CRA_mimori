@@ -31,6 +31,8 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
   const [status, setStatus] = useState('queued')
   const [stage, setStage] = useState(null)
   const [progress, setProgress] = useState({})
+  const [queuePosition, setQueuePosition] = useState(null)
+  const [estimatedWaitMinutes, setEstimatedWaitMinutes] = useState(null)
   const [error, setError] = useState(null)
   const [trend, setTrend] = useState(null)
   const timerRef = useRef(null)
@@ -54,13 +56,15 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
   }
 
   function startPolling() {
-    timerRef.current = setInterval(async () => {
+    async function pollStatus() {
       try {
         const data = await fetchCrawlStatus(keyword)
         if (cancelledRef.current) return
         setStatus(data.status)
         setStage(data.stage ?? null)
         setProgress(data.progress ?? {})
+        setQueuePosition(data.queue_position ?? null)
+        setEstimatedWaitMinutes(data.estimated_wait_minutes ?? null)
         if (data.status === 'done') {
           clearInterval(timerRef.current)
           onDone(keyword)
@@ -77,7 +81,11 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
         return
       }
       pollTrend()
-    }, POLL_INTERVAL_MS)
+    }
+
+    // 요청 직후 첫 상태를 가져와야 대기열·예상 시간을 5초 뒤가 아니라 바로 보여 준다.
+    pollStatus()
+    timerRef.current = setInterval(pollStatus, POLL_INTERVAL_MS)
   }
 
   useEffect(() => {
@@ -104,6 +112,8 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
     setStatus('queued')
     setStage(null)
     setProgress({})
+    setQueuePosition(null)
+    setEstimatedWaitMinutes(null)
     requestCrawl(keyword)
       .then(() => {
         if (!cancelledRef.current) startPolling()
@@ -133,8 +143,14 @@ export default function CrawlRequestPanel({ keyword, onDone }) {
       <TrendSummary trend={trend} />
       <p className="loading-line">
         <span className="spinner" aria-hidden="true" />
-        '{keyword}' {headline}... (전체 수십 분 소요)
+        '{keyword}' {headline}...
       </p>
+      {queuePosition && queuePosition > 1 && (
+        <p className="tier-section__caption">앞선 분석 {queuePosition - 1}건 처리 후 시작됩니다.</p>
+      )}
+      {Array.isArray(estimatedWaitMinutes) && (
+        <p className="tier-section__caption">예상 {estimatedWaitMinutes[0]}~{estimatedWaitMinutes[1]}분 소요</p>
+      )}
       {sources.length > 0 && (
         <ul className="progress-list">
           {sources.map(([source, result]) => (

@@ -27,6 +27,9 @@ class _FakeCollection:
         doc.update(update["$set"])
         return doc
 
+    def find_one(self, filter_):
+        return self._docs.get(filter_["_id"])
+
     def update_one(self, filter_, update):
         doc = self._docs[filter_["_id"]]
         doc.update(update["$set"])

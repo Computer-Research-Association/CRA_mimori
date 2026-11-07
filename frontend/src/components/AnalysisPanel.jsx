@@ -20,6 +20,7 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
   const [trend, setTrend] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
   const [citationWarning, setCitationWarning] = useState(false)
+  const [verification, setVerification] = useState(null)
   const displayText = result || partialResult
 
   useEffect(() => {
@@ -33,6 +34,7 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
     setSources([])
     setLowConfidence(false)
     setCitationWarning(false)
+    setVerification(null)
     setTrend(null)
 
     fetchTrend(keyword).then((data) => {
@@ -47,6 +49,7 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
         if (data.sources) setSources(data.sources)
         setLowConfidence(Boolean(data.low_confidence))
         setCitationWarning(Boolean(data.citation_warning))
+        setVerification(data.verification ?? null)
         if (data.partial_result) setPartialResult(data.partial_result)
         if (data.status === 'done') {
           setResult(data.result)
@@ -89,6 +92,10 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
   }
 
   const loading = status === 'queued' || status === 'running'
+  const checkedDate = verification?.checked_at ? new Date(verification.checked_at) : null
+  const checkedDateLabel = checkedDate && !Number.isNaN(checkedDate.valueOf())
+    ? `${checkedDate.getUTCFullYear()}. ${String(checkedDate.getUTCMonth() + 1).padStart(2, '0')}. ${String(checkedDate.getUTCDate()).padStart(2, '0')}`
+    : null
 
   return (
     <div className="entry">
@@ -103,6 +110,12 @@ export default function AnalysisPanel({ keyword, selectedSources }) {
             </p>
           )}
           <p className="tier-section__caption">분석문은 생성 당시 자료에 근거해요. 현재 트렌드는 위 집계일을 확인해 주세요.</p>
+          {checkedDateLabel && verification?.status === 'unchanged' && (
+            <p className="tier-section__caption">근거 검증 기준일 · {checkedDateLabel}<br />이후 수집된 자료를 확인했지만, 답변을 바꿀 만큼 의미 있는 내용 변화는 없습니다.</p>
+          )}
+          {checkedDateLabel && verification?.status === 'updated' && (
+            <p className="tier-section__caption">근거 검증 기준일 · {checkedDateLabel}<br />새 근거를 반영해 분석을 갱신했습니다.</p>
+          )}
           {citationWarning && (
             <p className="low-confidence-note" role="status">일부 설명의 출처를 확인하지 못했어요. 연결된 자료를 직접 확인해 주세요.</p>
           )}

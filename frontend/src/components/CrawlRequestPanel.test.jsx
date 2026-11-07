@@ -13,6 +13,18 @@ afterEach(() => {
 })
 
 describe('CrawlRequestPanel', () => {
+  it('대기열과 예상 시간 범위를 사용자에게 보여준다', async () => {
+    vi.spyOn(api, 'requestCrawl').mockResolvedValue({ keyword: '흘로망', status: 'queued' })
+    vi.spyOn(api, 'fetchCrawlStatus').mockResolvedValue({
+      keyword: '흘로망', status: 'queued', display_stage: '대기 중',
+      queue_position: 2, estimated_wait_minutes: [40, 80],
+    })
+
+    render(<CrawlRequestPanel keyword="흘로망" onDone={vi.fn()} />)
+
+    expect(await screen.findByText(/앞선 분석 1건 처리 후 시작/)).toBeInTheDocument()
+    expect(screen.getByText(/예상 40~80분/)).toBeInTheDocument()
+  })
   it('마운트되면 requestCrawl을 1회 호출한다', async () => {
     const requestCrawlSpy = vi.spyOn(api, 'requestCrawl').mockResolvedValue({ keyword: '흘로망', status: 'queued' })
     vi.spyOn(api, 'fetchCrawlStatus').mockResolvedValue({ keyword: '흘로망', status: 'queued' })
@@ -151,11 +163,11 @@ describe('CrawlRequestPanel', () => {
 
     // 첫번째 틱: running (폴링 계속)
     await vi.advanceTimersByTimeAsync(5000)
-    expect(fetchStatusSpy).toHaveBeenCalledTimes(1)
+    expect(fetchStatusSpy).toHaveBeenCalledTimes(2)
 
     // 두번째 틱 시작: fetchCrawlStatus가 아직 pending인 상태
     await vi.advanceTimersByTimeAsync(5000)
-    expect(fetchStatusSpy).toHaveBeenCalledTimes(2)
+    expect(fetchStatusSpy).toHaveBeenCalledTimes(3)
 
     // 두번째 틱이 in-flight인 상태에서 언마운트
     unmount()

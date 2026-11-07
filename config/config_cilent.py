@@ -29,6 +29,7 @@ CRAWL_REQUESTS_COLLECTION = "crawl_requests"     # 새 키워드 온디맨드 �
 HIDDEN_KEYWORDS_COLLECTION = "hidden_keywords"   # 검색 목록에서 숨긴 키워드 (완전삭제 전 1단계)
 LOCKS_COLLECTION = "locks"                        # heavy_job_lock 등 프로세스 간 락
 LLM_REQUESTS_COLLECTION = "llm_requests"          # analyze/rag 비동기 큐 겸 결과 캐시
+EVIDENCE_VERIFICATION_COLLECTION = "evidence_verification_requests"  # 새 근거 갱신 검토 큐
 
 # llm_request_worker.py는 컨테이너 기동 시 --loop로 한 번만 떠서 계속 상주한다
 # (매 요청마다 새 프로세스를 띄우면 BGE-M3 로드에 수십 초가 반복돼 실제 처리
@@ -212,7 +213,7 @@ RAG_FACET_PROMPT_PATH = os.path.join(_ROOT, "analysis", "rag_facet_prompt_templa
 # facet 검색 결과 병합 단계 튜너블 (rag_pipeline.merge_facet_results / facet_search 기본값).
 # max_per_source는 facet 하나 안에서만 걸리므로, facet 4개가 같은 소스를 2개씩 뽑으면 합계가
 # 8개까지 쏠릴 수 있어 병합(합산) 단계에서 한 번 더 상한을 건다.
-RAG_FACET_MERGED_MAX_PER_SOURCE = 6  # facet 전체 합산 기준 소스당 상한
+RAG_FACET_MERGED_MAX_PER_SOURCE = 3  # facet 전체 합산 기준 소스당 상한
 RAG_FACET_MIN_MERGED_TOTAL = 8       # 소스 상한 때문에 컨텍스트가 비지 않도록 최소 확보 개수
 RAG_FACET_NEAR_DUP_THRESHOLD = 0.8   # 이 이상 유사하면 재게시(미러링)로 보고 제외
 

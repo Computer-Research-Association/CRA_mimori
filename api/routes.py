@@ -275,6 +275,13 @@ def analyze_request_status(job_id):
         [{**s, "title": soften_profanity(s.get("title"))} for s in sources]
         if sources else sources
     )
+    verification = doc.get("verification")
+    if verification and verification.get("checked_at"):
+        verification = {
+            **verification,
+            "checked_at": verification["checked_at"].isoformat()
+            if hasattr(verification["checked_at"], "isoformat") else verification["checked_at"],
+        }
     return jsonify({
         "job_id": doc["_id"],
         "keyword": doc["keyword"],
@@ -285,6 +292,7 @@ def analyze_request_status(job_id):
         "partial_result": link_citations(soften_profanity(result.get("partial_text")), len(sources or [])),
         "citation_warning": result.get("citation_warning", False),
         "low_confidence": result.get("low_confidence", False),
+        "verification": verification,
         "error": doc["error"],
     })
 
@@ -352,6 +360,26 @@ def crawl_request_status(keyword):
         return jsonify({"error": "요청 이력이 없습니다"}), 404
     # stage/progress는 워커가 채우는 진행 표시용 필드다. 이 기능이 생기기 전에
     # 들어온 요청 문서에는 없으므로 get으로 읽는다(없으면 프론트가 스피너만 보여준다).
+    queue_position = None
+    estimated_wait_minutes = None
+    display_stage = {
+        "crawl": "관련 자료 수집 중",
+        "preprocess": "내용 정리 중",
+        "embed": "내용 정리 중",
+    }.get(doc.get("stage"))
+    if doc["status"] == "queued":
+        # 작업 한 건의 실제 소요 시간은 소스 응답과 자료량에 따라 크게 달라서 정확한
+        # 완료 시각을 약속하지 않는다. 앞선 작업당 20~40분의 보수적 범위만 안내한다.
+        queued_docs = list(get_collection(CRAWL_REQUESTS_COLLECTION).find({"status": "queued"}))
+        queued_docs.sort(key=lambda item: item.get("requested_at") or datetime.min.replace(tzinfo=timezone.utc))
+        queue_position = next((index + 1 for index, item in enumerate(queued_docs) if item["_id"] == doc["_id"]), 1)
+        estimated_wait_minutes = [20 * queue_position, 40 * queue_position]
+        display_stage = "대기 중"
+    elif doc["status"] == "done":
+        display_stage = "분석 준비 완료"
+    elif doc["status"] == "running":
+        display_stage = display_stage or "처리 중"
+
     return jsonify({
         "keyword": doc["_id"],
         "status": doc["status"],
@@ -360,4 +388,7 @@ def crawl_request_status(keyword):
         "error": doc["error"],
         "stage": doc.get("stage"),
         "progress": doc.get("progress") or {},
+        "display_stage": display_stage,
+        "queue_position": queue_position,
+        "estimated_wait_minutes": estimated_wait_minutes,
     })

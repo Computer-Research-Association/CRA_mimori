@@ -13,6 +13,19 @@ afterEach(() => {
 })
 
 describe('AnalysisPanel', () => {
+  it('근거 검토 후 변화가 없으면 기준일과 상태를 보여준다', async () => {
+    vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '검증-job', status: 'queued' })
+    vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({
+      job_id: '검증-job', status: 'done', result: '분석 결과', sources: [],
+      verification: { status: 'unchanged', checked_at: '2026-11-06T01:02:00+00:00' },
+    })
+    vi.spyOn(api, 'fetchTrend').mockResolvedValue(null)
+
+    render(<AnalysisPanel keyword="야르" selectedSources={['tavily']} />)
+
+    expect(await screen.findByText(/근거 검증 기준일 · 2026. 11. 06/)).toBeInTheDocument()
+    expect(screen.getByText(/의미 있는 내용 변화는 없습니다/)).toBeInTheDocument()
+  })
   it('마운트되면 선택된 출처와 함께 submitAnalyzeRequest와 fetchTrend를 호출한다', async () => {
     const submitSpy = vi.spyOn(api, 'submitAnalyzeRequest').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })
     vi.spyOn(api, 'fetchAnalyzeStatus').mockResolvedValue({ job_id: '잡아이디', status: 'queued' })

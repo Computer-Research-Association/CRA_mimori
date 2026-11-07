@@ -28,6 +28,9 @@ class _FakeCollection:
     def find_one(self, filter_):
         return self._docs.get(filter_["_id"])
 
+    def find(self, filter_):
+        return [doc for doc in self._docs.values() if all(doc.get(key) == value for key, value in filter_.items())]
+
     def insert_one(self, doc):
         self._docs[doc["_id"]] = doc
 
@@ -249,6 +252,25 @@ def test_GET_상태_조회():
     print("[OK] GET 상태 조회 정상")
 
 
+def test_GET_대기_상태는_사용자용_단계와_예상_범위를_반환한다():
+    fake = _FakeCollection([{
+        "_id": "먼저요청", "status": "queued", "requested_at": datetime(2026, 8, 10, 9, 0, tzinfo=timezone.utc),
+        "started_at": None, "completed_at": None, "error": None,
+    }, {
+        "_id": "흘로망", "status": "queued", "requested_at": datetime(2026, 8, 10, 9, 1, tzinfo=timezone.utc),
+        "started_at": None, "completed_at": None, "error": None,
+    }])
+    original_get_collection = _patch(routes, "get_collection", lambda name: fake)
+    try:
+        body = create_app().test_client().get("/api/crawl-request/흘로망").get_json()
+        assert body["display_stage"] == "대기 중", body
+        assert body["queue_position"] == 2, body
+        assert body["estimated_wait_minutes"] == [40, 80], body
+    finally:
+        routes.get_collection = original_get_collection
+    print("[OK] 대기 상태 -> 단계/대기열/예상 범위 반환")
+
+
 if __name__ == "__main__":
     test_이미_있는_키워드는_400()
     test_새_키워드는_큐에_등록되고_202()
@@ -262,4 +284,5 @@ if __name__ == "__main__":
     test_분당_상한을_넘으면_429()
     test_GET_요청이력_없으면_404()
     test_GET_상태_조회()
+    test_GET_대기_상태는_사용자용_단계와_예상_범위를_반환한다()
     print("\nALL PASS ✅")

@@ -68,9 +68,14 @@ _RETRIEVAL_LOCK = threading.Lock()
 
 
 def _mark_done(collection, job_id: str, result: dict) -> None:
+    existing = collection.find_one({"_id": job_id}) or {}
+    fields = {"status": "done", "completed_at": datetime.now(timezone.utc), "result": result}
+    if existing.get("refresh_reason") == "evidence":
+        fields["verification"] = {"status": "updated", "checked_at": datetime.now(timezone.utc)}
+        fields["refresh_reason"] = None
     collection.update_one(
         {"_id": job_id},
-        {"$set": {"status": "done", "completed_at": datetime.now(timezone.utc), "result": result}},
+        {"$set": fields},
     )
 
 
