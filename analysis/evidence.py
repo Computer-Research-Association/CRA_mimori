@@ -1,5 +1,6 @@
 """분석 근거의 분량·출처 번호와 인용 검증을 관리한다. 사실 여부 판정기는 아니다."""
 import copy
+import math
 import re
 from urllib.parse import unquote, urlsplit
 
@@ -10,7 +11,10 @@ from config.config_cilent import (
 from quality_test.matching import normalize
 
 _CITATION = re.compile(r"\[자료\s*(\d+)\]")
-_TREND_SECTION = re.compile(r"(?m)^(?:#{1,6}\s*)?5[.)]\s*(?:\*\*)?트렌드\s*맥락.*$")
+_TREND_SECTION = re.compile(
+    r'(?m)^(?:#{1,6}[ \t]*)?(?:\*\*)?5[.)][ \t]*(?:\*\*)?트렌드[ \t]*맥락'
+    r'(?:\*\*)?[ \t]*[:：]?[ \t]*(?:\n|$)?'
+)
 
 
 def source_identity(url):
@@ -26,17 +30,29 @@ def source_identity(url):
 
 
 def compose_analysis(text, trend):
-    """수치·집계일은 모델의 인용이 아닌 실제 계산 결과로 표시한다."""
-    body = _TREND_SECTION.split(text, maxsplit=1)[0].strip()
+    """모델의 상세 트렌드 설명을 보존하고, 누락과 집계값 불일치를 거른다."""
     if not trend or not trend.get('date'):
-        return body
-    score = trend.get('final_z', trend.get('z_score'))
-    score_note = f" · z-score {score:+.2f}" if isinstance(score, (int, float)) else ''
-    return (
-        body + '\n\n### 5. 트렌드 맥락\n\n'
-        + f"{trend['date']} 집계 기준 **{trend.get('status', '판정 없음')}**{score_note}. "
-        + '이 값은 검색·언급량의 변화 지표이며 전체 인기도나 사용자 수를 뜻하지 않습니다.'
-    )
+        return text.strip()
+    parts = _TREND_SECTION.split(text, maxsplit=1)
+    if len(parts) != 2 or not parts[1].strip():
+        raise ValueError('트렌드 맥락 설명이 완성되지 않았습니다.')
+    explanation = parts[1]
+    expected_date = tuple(int(part) for part in str(trend['date']).split('-'))
+    mentioned_dates = {
+        tuple(int(part) for part in match)
+        for match in re.findall(r'(\d{4})\s*(?:[-./]|년)\s*(\d{1,2})\s*(?:[-./]|월)\s*(\d{1,2})', explanation)
+    }
+    if expected_date not in mentioned_dates or trend.get('status', '') not in explanation:
+        raise ValueError('트렌드 설명의 집계일·상태가 실제 판정과 일치하지 않습니다.')
+    scores = [trend.get(key) for key in ('final_z', 'z_score', 'naver_z', 'kakao_z', 'google_z')]
+    scores = [value for value in scores if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)]
+    for match in re.finditer(r'(?<![A-Za-z])z(?:[-_ ]*score|값|점수)?\s*[:=]?\s*([+-]?\d+(?:\.\d+)?)', explanation.replace('**', ''), re.I):
+        literal = match.group(1)
+        decimals = len(literal.split('.')[1]) if '.' in literal else 0
+        tolerance = 0.5 * 10 ** -decimals + 1e-8
+        if not any(abs(float(literal) - value) <= tolerance for value in scores):
+            raise ValueError('트렌드 설명의 z-score가 실제 집계값과 일치하지 않습니다.')
+    return text.strip()
 
 
 def prepare_evidence(points, clean_url, keyword=None):
@@ -105,8 +121,9 @@ _SECTION_NAMES = ['의미', '유행 이유', '사용법', '확인된 사용 맥�
 
 
 def normalize_analysis_sections(text):
-    """네 항목의 누락·잘린 끝문장을 거르고 읽기 쉬운 제목 형식으로 통일한다."""
-    body = _TREND_SECTION.split(text, maxsplit=1)[0].strip()
+    """네 기본 항목과 선택적 트렌드 해석의 완성을 확인하고 제목을 통일한다."""
+    parts = _TREND_SECTION.split(text, maxsplit=1)
+    body = parts[0].strip()
     matches = list(_SECTION_TITLE.finditer(body))
     if [m.group(1) for m in matches] != ['1', '2', '3', '4']:
         raise ValueError('분석 항목이 완성되지 않았습니다. 완성된 답변이 필요합니다.')
@@ -117,4 +134,10 @@ def normalize_analysis_sections(text):
         if not ending or not ending.endswith(('.', '!', '?', '다', '요', '죠', '음', '함', '됨', '임')):
             raise ValueError('분석 문장이 중간에 끊겼습니다. 완성된 답변이 필요합니다.')
         sections.append(f'### {index + 1}. {_SECTION_NAMES[index]}\n\n{content}')
+    if len(parts) == 2:
+        content = parts[1].strip()
+        ending = _CITATION.sub('', content).rstrip(' \n\t*`\"\'’”)]')
+        if not ending or not ending.endswith(('.', '!', '?', '다', '요', '죠', '음', '함', '됨', '임')):
+            raise ValueError('트렌드 설명이 중간에 끊겼습니다. 완성된 답변이 필요합니다.')
+        sections.append('### 5. 트렌드 맥락\n\n' + content)
     return '\n\n'.join(sections)

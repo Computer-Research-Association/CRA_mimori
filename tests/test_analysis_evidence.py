@@ -82,10 +82,33 @@ def test_동일_블로그_모바일주소와_인코딩주소를_중복근거로_
     assert len(prepare_evidence(points, clean_source_url)) == 1
 
 
-def test_계산된_트렌드에_블로그를_근거로_붙인_모델_문장을_사용하지_않는다():
+def test_상세_트렌드_해석을_고정문구로_덮어쓰지_않는다():
     from analysis.evidence import compose_analysis
-    text = '1. 의미: 설명 [자료 1]\n\n5. **트렌드 맥락**: 오늘 핫함, z=99 [자료 1]'
+    text = '1. 의미: 설명 [자료 1]\n\n### 5. 트렌드 맥락\n\n2026-11-04 집계 기준 감소(z-score -0.90)입니다.\n\n최근 검색 관심도의 하락과 과거 유행 기록은 양립할 수 있습니다.'
     result = compose_analysis(text, {'date': '2026-11-04', 'status': '감소', 'final_z': -0.9})
-    assert '오늘 핫함' not in result and 'z=99' not in result
-    assert '2026-11-04' in result and '-0.90' in result
-    assert result.count('[자료 1]') == 1
+    assert result == text
+
+
+def test_모델이_집계값을_바꾸면_거부한다():
+    from analysis.evidence import compose_analysis
+    trend = {'date': '2026-11-04', 'status': '감소', 'final_z': -0.9}
+    for explanation in ['오늘 핫함, z=99.', '2026-11-04 감소, z=99.']:
+        with pytest.raises(ValueError):
+            compose_analysis('### 5. 트렌드 맥락\n\n' + explanation, trend)
+
+
+def test_집계일을_한글로_표기해도_동일한_날짜로_인식한다():
+    from analysis.evidence import compose_analysis
+    trend = {'date': '2026-11-06', 'status': '감소', 'final_z': -0.6767}
+    text = '### 5. 트렌드 맥락\n\n2026년 11월 6일 기준 감소이며 종합 z-score는 -0.68입니다.'
+    assert compose_analysis(text, trend) == text
+    with pytest.raises(ValueError, match='집계일'):
+        compose_analysis(text.replace('11월 6일', '11월 5일'), trend)
+
+
+def test_트렌드_항목도_정규화하고_잘린_답변은_거른다():
+    body = '\n\n'.join(f'### {i}. {name}\n\n설명입니다.' for i, name in enumerate(['의미', '유행 이유', '사용법', '확인된 사용 맥락'], 1))
+    result = normalize_analysis_sections(body + '\n\n**5. 트렌드 맥락**\n\n자세한 해석입니다.')
+    assert result.endswith('### 5. 트렌드 맥락\n\n자세한 해석입니다.')
+    with pytest.raises(ValueError, match='트렌드 설명'):
+        normalize_analysis_sections(body + '\n\n### 5. 트렌드 맥락\n\n그 외에는')
