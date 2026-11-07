@@ -1,5 +1,5 @@
 """
-analyze()가 ChatNVIDIA를 생성할 때 max_completion_tokens=8192으로 호출하는지,
+analyze()가 상세 답변용 출력 상한 16384로 ChatNVIDIA를 호출하는지,
 그리고 응답의 finish_reason(특히 "length" = 토큰 상한에 걸려 잘림)을 확인해
 불완전한 답변을 거르는지 검증. 실제 NVIDIA API 호출은 하지 않는다 — ChatNVIDIA 클래스 자체를
 fake로 바꿔치기한다.
@@ -54,12 +54,12 @@ def _run_with_fake(fn):
         pipeline.ChatNVIDIA = original
 
 
-def test_max_completion_tokens는_8192이다():
+def test_상세_트렌드_설명을_위한_출력상한은_16384이다():
     _FakeChatNVIDIA.response = _FakeResponse()
     result = _run_with_fake(lambda: pipeline.analyze("테스트 프롬프트"))
     assert result == "가짜 응답", result
-    assert _FakeChatNVIDIA.captured_kwargs["max_completion_tokens"] == 8192, _FakeChatNVIDIA.captured_kwargs
-    print("[OK] max_completion_tokens=8192")
+    assert _FakeChatNVIDIA.captured_kwargs["max_completion_tokens"] == 16384
+    print("[OK] max_completion_tokens=16384")
 
 
 def test_temperature와_타임아웃은_검증된_설정을_따른다():
@@ -113,7 +113,7 @@ def test_사용량_청크가_뒤따르는_정상_답변은_보존한다():
 
 
 if __name__ == "__main__":
-    test_max_completion_tokens는_8192이다()
+    test_상세_트렌드_설명을_위한_출력상한은_16384이다()
     test_temperature와_타임아웃은_검증된_설정을_따른다()
     test_finish_reason이_length면_경고_로그를_남긴다()
     test_finish_reason이_stop이면_평범하게_로그를_남긴다()

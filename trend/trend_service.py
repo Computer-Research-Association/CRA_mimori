@@ -30,6 +30,7 @@ from datetime import date, datetime, timezone
 from itertools import combinations
 
 from trend.datalab_client import DataLabClient
+from trend.context import format_trend_observations as _trend_observations
 from trend.google_client import GoogleTrendsClient
 from trend.kakao_client import KakaoSearchClient, merge_daily_series
 from trend.zscore import (
@@ -317,13 +318,10 @@ def get_meme_trend(keyword: str, related_keywords: list[str] = None) -> dict:
 
 def format_trend_context(keyword: str, result: dict | None = None) -> str:
     """
-    get_meme_trend() 결과를 LLM 프롬프트에 넣기 좋은 짧은 문자열로 요약한다.
+    get_meme_trend() 결과를 LLM이 해석할 집계값과 관측 추이로 요약한다.
     (analysis/pipeline.py, analysis/rag_pipeline.py 가 프롬프트 조립 시 사용)
 
-    상태가 STATUS_INSUFFICIENT("데이터 부족")이거나 조회 중 예외가 나면 ""을 반환한다.
-    ""으로 통일하는 이유: 트렌드는 어디까지나 보조 지표라, 판정할 근거가 없을 때
-    "데이터 부족" 문구를 그대로 보여주는 것보다 그냥 안 보여주는 편이 프롬프트를
-    깔끔하게 유지한다(LLM이 그 문구 자체를 유행 근거로 오인할 여지도 없앤다).
+    조회 실패 시 빈 문자열을 반환하고, 데이터 부족이면 판정 유보 사실을 명시한다.
     """
     if result is None:
         try:
@@ -333,7 +331,11 @@ def format_trend_context(keyword: str, result: dict | None = None) -> str:
             return ""
 
     if result["status"] == STATUS_INSUFFICIENT:
-        return ""
+        return (
+            f"집계일: {result.get('date') or '미확인'}\n상태: 데이터 부족. "
+            '주 지표인 네이버 검색 신호가 충분하지 않아 판정을 유보했습니다. '
+            '검색이 없거나 인기가 없다는 뜻으로 해석하지 말고, 증감률이나 유행 단계를 추측하지 마세요.'
+        )
 
     sources_str = "+".join(result["sources"]) if result["sources"] else "없음"
     flag_str = f" ({', '.join(result['flags'])})" if result["flags"] else ""
@@ -342,7 +344,8 @@ def format_trend_context(keyword: str, result: dict | None = None) -> str:
         "[참고: 검색/언급량 기반 유행 상태 앙상블 판정 — 정성적 분석의 보조 지표로만 활용]\n"
         f"집계일: {result.get('date') or '미확인'} (이 집계 시점의 판정이며 현재 상태를 보장하지 않음)\n"
         "z-score 기준: z>2=핫함 / z≥0.5=유행 중 / |z|<0.5=평상 / z≥-2=감소 / z<-2=소멸\n"
-        f"상태: {result['status']} (robust z-score: {result['final_z']:.2f}, 반영 소스: {sources_str}){flag_str}"
+        f"상태: {result['status']} (robust z-score: {result['final_z']:.2f}, 반영 소스: {sources_str}){flag_str}\n"
+        + _trend_observations(result)
     )
 
 
