@@ -227,6 +227,23 @@ def test_GET_요청이력_없으면_404():
     print("[OK] GET 요청 이력 없음 -> 404")
 
 
+def test_GET_완료_분석은_근거_검증_상태를_전달한다():
+    job_id = "verification-job"
+    checked_at = datetime(2026, 11, 6, 1, 2, tzinfo=timezone.utc)
+    fake = _FakeCollection([{
+        "_id": job_id, "keyword": "야르", "status": "done", "error": None,
+        "result": {"result": "설명", "sources": []},
+        "verification": {"status": "unchanged", "checked_at": checked_at},
+    }])
+    original_get_collection = _patch(routes, "get_collection", lambda name: fake)
+    try:
+        body = create_app().test_client().get(f"/api/analyze-request/{job_id}").get_json()
+        assert body["verification"] == {"status": "unchanged", "checked_at": checked_at.isoformat()}, body
+    finally:
+        routes.get_collection = original_get_collection
+    print("[OK] 완료 분석 -> 근거 검증 상태 전달")
+
+
 def test_GET_완료된_결과를_반환한다():
     job_id = _analyze_job_id("야르", None)
     fake = _FakeCollection([{
@@ -356,6 +373,7 @@ if __name__ == "__main__":
     test_이미_done이면_기존_상태를_그대로_반환한다()
     test_failed_상태는_재요청시_queued로_리셋된다()
     test_GET_요청이력_없으면_404()
+    test_GET_완료_분석은_근거_검증_상태를_전달한다()
     test_GET_완료된_결과를_반환한다()
     test_GET_응답의_욕설은_마스킹되지만_출처_URL은_그대로다()
     test_GET_low_confidence가_결과에_그대로_실린다()

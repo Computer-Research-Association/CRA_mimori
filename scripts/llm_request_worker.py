@@ -67,10 +67,14 @@ _LOCK_OWNER = "llm_request_worker"
 _RETRIEVAL_LOCK = threading.Lock()
 
 
-def _mark_done(collection, job_id: str, result: dict) -> None:
+def _mark_done(collection, job_id: str, result: dict, refresh_reason: str | None = None) -> None:
+    fields = {"status": "done", "completed_at": datetime.now(timezone.utc), "result": result}
+    if refresh_reason == "evidence":
+        fields["verification"] = {"status": "updated", "checked_at": datetime.now(timezone.utc)}
+        fields["refresh_reason"] = None
     collection.update_one(
         {"_id": job_id},
-        {"$set": {"status": "done", "completed_at": datetime.now(timezone.utc), "result": result}},
+        {"$set": fields},
     )
 
 
@@ -240,7 +244,7 @@ def run_once(collection=None) -> bool:
 
     try:
         result = _process_analyze(doc, collection, job_id)
-        _mark_done(collection, job_id, result)
+        _mark_done(collection, job_id, result, doc.get("refresh_reason"))
     except Exception as e:
         _mark_failed(collection, job_id, str(e))
     finally:
