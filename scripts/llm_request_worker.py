@@ -44,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # 뒤에 DB.mongo_client/config.config_cilent를 임포트할 것.
 from analysis.pipeline import analyze
 from analysis.evidence import citation_warning, compose_analysis, prepare_evidence
+from analysis.web_evidence import enrich_evidence
 from analysis.rag_pipeline import (
     build_facet_prompt,
     clean_source_url,
@@ -169,6 +170,8 @@ def _process_analyze(doc: dict, collection, job_id: str) -> dict:
         points = prepare_evidence(
             [p for p in points if is_content_source(p.payload.get("url"))], clean_source_url, keyword=keyword,
         )
+    # 웹 보충은 임베딩 락 밖에서 수행한다. 필터로 Tavily를 뺀 요청은 검색하지 않는다.
+    points = enrich_evidence(keyword, points, sources=sources_filter)
     if not points:
         # 이 시점의 keyword는 이미 api/routes.py에서 list_analyzable_keywords()로
         # 존재를 확인받은 뒤라, 여기서 못 찾는 건 "키워드 자체가 없음"이 아니라

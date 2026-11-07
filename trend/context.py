@@ -38,7 +38,9 @@ def format_trend_observations(result: dict) -> str:
         peak = max(ordered, key=lambda point: point[1])
         lines.append(
             f'관측 기간 {first[0]}~{last[0]}, 관측일 {len(ordered)}개. '
-            f'마지막 관측값 {last[1]:.2f}; 구간 최고값 {peak[1]:.2f} ({peak[0]}).'
+            f'첫 관측값 {first[1]:.2f} ({first[0]}). '
+            f'마지막 관측일 {last[0]}, 마지막 관측값 {last[1]:.2f}. '
+            f'구간 최고값 {peak[1]:.2f} ({peak[0]}).'
         )
         # 누락일이 있을 때 7개 관측을 7일이라고 잘못 부르지 않는다.
         window = [last[0] - timedelta(days=n) for n in range(13, -1, -1)]
