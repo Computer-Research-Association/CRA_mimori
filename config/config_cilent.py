@@ -5,7 +5,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 정기 수집 목록과 분석 품질 기준이 바뀌었을 때의 캐시 세대.
 BATCH_KEYWORDS_PATH = os.path.join(_ROOT, "crawlers", "Keywords.md")
-ANALYSIS_CACHE_VERSION = "2026-11-07-nemotron35-fast-v1"
+ANALYSIS_CACHE_VERSION = "2026-11-07-nemotron35-fast-v2"
 
 load_dotenv()
 
