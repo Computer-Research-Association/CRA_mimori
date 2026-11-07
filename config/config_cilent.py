@@ -5,7 +5,7 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # 정기 수집 목록과 분석 품질 기준이 바뀌었을 때의 캐시 세대.
 BATCH_KEYWORDS_PATH = os.path.join(_ROOT, "crawlers", "Keywords.md")
-ANALYSIS_CACHE_VERSION = "2026-11-07-nemotron35-fast-v2"
+ANALYSIS_CACHE_VERSION = "2026-11-07-evidence-enrichment-v1"
 
 load_dotenv()
 
@@ -201,6 +201,12 @@ ANALYSIS_MODEL_KWARGS = (
 ANALYSIS_MAX_SOURCES = 6
 ANALYSIS_MAX_SOURCE_CHARS = 1800
 ANALYSIS_MAX_CONTEXT_CHARS = 8000
+# 짧은 제목·댓글만 검색된 분석은 설명형 웹 자료를 한 번 보충한다.
+ANALYSIS_EVIDENCE_MIN_CHARS = 1500
+ANALYSIS_EVIDENCE_MIN_DOCUMENT_CHARS = 500
+ANALYSIS_WEB_MAX_RESULTS = 3  # 기사·일반 검색 각각의 최대 결과 수
+ANALYSIS_WEB_TIMEOUT_SECONDS = 12
+ANALYSIS_WEB_EXCLUDE_DOMAINS = ["youtube.com", "tiktok.com", "instagram.com"]
 # 실제 답변 검토에서 확인한 별개 표현. 해당 키워드를 분석할 때 이 표현이 제목에 있는
 # 문서는 제외한다. 현재 밈의 어원과 동일하다는 검증 없이 사전적 설명을 가져오지 않기 위함이다.
 ANALYSIS_DISTINCT_EXPRESSIONS = {"요이": ("요이 땅",)}

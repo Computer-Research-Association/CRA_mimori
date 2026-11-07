@@ -38,6 +38,13 @@ def test_부분집계와_유효하지않은_관측을_사용하지_않는다():
     assert '관측일 14개' in context
 
 
+def test_최고점과_마지막관측일을_명시적으로_구분한다():
+    context = format_trend_observations(trend([3, 100, 98]))
+    assert '첫 관측값 3.00 (2026-10-01)' in context
+    assert '마지막 관측일 2026-10-03, 마지막 관측값 98.00' in context
+    assert '구간 최고값 100.00 (2026-10-02)' in context
+
+
 def test_실제_집계_설명이_분석_프롬프트에_포함된다():
     prompt = build_facet_prompt('영크크', [], trend_info='검증된 관측 기간 2026-10-01~2026-10-14')
     assert '검증된 관측 기간 2026-10-01~2026-10-14' in prompt

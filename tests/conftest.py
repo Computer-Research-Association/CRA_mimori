@@ -16,6 +16,12 @@ from api.rate_limit import reset as _reset_rate_limit
 
 
 @pytest.fixture(autouse=True)
+def _offline_evidence_search(monkeypatch):
+    """로컬 .env가 있어도 단위 테스트에서 유료 웹 검색을 호출하지 않는다."""
+    monkeypatch.setattr("analysis.web_evidence._search", lambda keyword: [])
+
+
+@pytest.fixture(autouse=True)
 def _reset_api_rate_limit():
     """api/rate_limit.py의 카운터는 프로세스 전역이다. pytest는 모든 테스트
     파일을 한 프로세스 안에서 돌리므로, 리셋 없이 두면 한 테스트에서 쌓인
