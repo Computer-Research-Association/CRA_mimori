@@ -59,7 +59,7 @@ def test_출처를_전부_명시해도_생략한것과_같은_job_id():
     # 프론트 기본값(체크박스 전부 선택)은 항상 6개를 명시해서 보내는데, sources를
     # 아예 생략한 요청(스크립트 등)과 캐시가 안 섞이면 똑같은 키워드를 두 번
     # 분석하는 낭비가 생긴다 — 전체 집합 명시와 생략은 같은 job_id여야 한다.
-    all_explicit = ["tavily", "youtube", "namuwiki", "natepann", "dcinside", "todayhumor"]
+    all_explicit = ["tavily", "youtube", "namuwiki", "natepann", "dcinside", "todayhumor", "naver_blog"]
     omitted = _analyze_job_id("야르", None)
     explicit_all = _analyze_job_id("야르", all_explicit)
     explicit_all_shuffled = _analyze_job_id("야르", list(reversed(all_explicit)))

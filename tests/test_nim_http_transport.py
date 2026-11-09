@@ -65,3 +65,22 @@ def test_실제SDK에서도_사용량청크_뒤의_길이제한을_놓치지_않
     with pytest.raises(pipeline.IncompleteAnalysisError, match='길이 제한'):
         pipeline.analyze('분석', on_chunk=lambda text: None)
     assert len(calls()) == 1
+
+
+def test_429_일시제한은_재시도하여_복구한다(transport):
+    transport('limited-once')
+    assert pipeline.analyze('분석', on_chunk=lambda text: None)
+    assert len(calls()) == 2
+
+
+def test_종료신호_없는_스트림은_완료로_반환하지_않는다(transport):
+    transport('unfinished')
+    with pytest.raises(Exception, match='정상 종료 신호'):
+        pipeline.analyze('분석', on_chunk=lambda text: None)
+    assert len(calls()) == 3
+
+
+def test_일반응답도_실제_HTTP로_완료된다(transport):
+    transport('success')
+    assert pipeline.analyze('분석') == '근거에 있는 설명입니다. [자료 1]'
+    assert len(calls()) == 1

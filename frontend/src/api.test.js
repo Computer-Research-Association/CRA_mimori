@@ -18,9 +18,9 @@ function jsonResponse(body, ok = true, status = ok ? 200 : 400) {
 }
 
 describe('AVAILABLE_SOURCES', () => {
-  it('6개 소스를 포함한다', () => {
+  it('7개 소스를 포함한다', () => {
     expect(AVAILABLE_SOURCES).toEqual([
-      'tavily', 'youtube', 'namuwiki', 'natepann', 'dcinside', 'todayhumor',
+      'tavily', 'youtube', 'namuwiki', 'natepann', 'dcinside', 'todayhumor', 'naver_blog',
     ])
   })
 })

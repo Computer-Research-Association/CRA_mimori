@@ -2,7 +2,7 @@ const BASE = '/api'
 const ADMIN_KEY_STORAGE = 'mimori_admin_key'
 
 export const AVAILABLE_SOURCES = [
-  'tavily', 'youtube', 'namuwiki', 'natepann', 'dcinside', 'todayhumor',
+  'tavily', 'youtube', 'namuwiki', 'natepann', 'dcinside', 'todayhumor', 'naver_blog',
 ]
 
 // 관리자 전용 엔드포인트(hide/unhide/완전삭제/admin stats)에 실어 보낼 키.

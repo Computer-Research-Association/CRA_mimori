@@ -189,7 +189,7 @@ ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "nvidia/nemotron-3.5-super-vl-120b-
 # 실제 생성 확인에 사용한 샘플링 설정.
 ANALYSIS_TEMPERATURE = 0.1
 ANALYSIS_BASE_URL = os.getenv("ANALYSIS_BASE_URL", "https://integrate.api.nvidia.com/v1")
-ANALYSIS_TIMEOUT_SECONDS = 120
+ANALYSIS_TIMEOUT_SECONDS = float(os.getenv("ANALYSIS_TIMEOUT_SECONDS", "120"))
 # 추론 토큰도 같은 예산을 사용한다. 본문이 중간에 잘리지 않도록 여유를 둔다.
 ANALYSIS_MAX_TOKENS = 16384
 # 근거 요약·상세 설명은 유지하고 내부 추론 생성을 꺼 첫 본문 대기를 줄인다.
@@ -248,3 +248,9 @@ MIN_HANGUL_RATIO = 0.3      # 국내 소스인데 이 미만이면 본문 추출
 DOMESTIC_SOURCES = ("natepann", "dcinside", "namuwiki", "todayhumor")  # 한글 비율 규칙을 적용할 소스
 
 
+
+# 네이버 검색 API: 데이터랩과 같은 앱이라도 별도의 '검색' 사용 권한이 필요하다.
+NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID", "")
+NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET", "")
+NAVER_BLOG_ENABLED = os.getenv("NAVER_BLOG_ENABLED", "false").lower() == "true"
+NAVER_BLOG_MAX_RESULTS = min(100, max(1, int(os.getenv("NAVER_BLOG_MAX_RESULTS", "10"))))
