@@ -18,6 +18,7 @@ from crawlers.namuwiki_crawler import crawl_namuwiki
 from crawlers.natepann_crawler import crawl_natepann
 from crawlers.dcinside_crawler import crawl_dcinside
 from crawlers.todayhumor_crawler import crawl_todayhumor
+from crawlers.naver_blog_crawler import crawl_naver_blog
 from config.config_cilent import CRAWL_WORKERS, MIN_COMMUNITY_DOCS_FOR_TAVILY, ON_DEMAND_MAX_POSTS
 from trend.trend_service import get_meme_trend, save_trend_score
 
@@ -31,6 +32,7 @@ COMMUNITY_CRAWLERS = {
     "natepann":   crawl_natepann,
     "dcinside":   crawl_dcinside,
     "todayhumor": crawl_todayhumor,
+    "naver_blog": crawl_naver_blog,
 }
 
 # 요약표 출력 순서 고정용(judge_and_report). 실제로 호출됐는지와 무관하게 항상
@@ -39,7 +41,7 @@ CRAWLERS = {**COMMUNITY_CRAWLERS, "tavily": crawl, "duckduckgo": crawl_duckduckg
 
 # 게시글 1건당 요청 2회(본문+댓글)를 도는 크롤러만 max_posts로 시간을 줄일 수 있다.
 # namuwiki(문서 1건)/youtube(자체 API 쿼터)는 대상이 아니라 시그니처에 없다.
-_SUPPORTS_MAX_POSTS = {"dcinside", "natepann", "todayhumor"}
+_SUPPORTS_MAX_POSTS = {"dcinside", "natepann", "todayhumor", "naver_blog"}
 
 KEYWORDS_PATH = os.path.join(BASE_DIR, "crawlers", "Keywords.md")
 

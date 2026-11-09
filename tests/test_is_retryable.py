@@ -45,3 +45,11 @@ if __name__ == "__main__":
     test_코드_없이_키워드로만_판단되는_경우도_그대로다()
     test_재시도_불가능한_오류는_여전히_False다()
     print("\nALL PASS ✅")
+
+
+def test_429와_전송_오류는_재시도한다():
+    import requests
+    assert _is_retryable('[429] Too Many Requests')
+    assert _is_retryable(requests.exceptions.ReadTimeout('연결 시간 초과'))
+    assert _is_retryable(requests.exceptions.ChunkedEncodingError('스트림 중단'))
+    assert not _is_retryable(ValueError('[403] Forbidden'))

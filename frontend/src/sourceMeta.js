@@ -2,6 +2,7 @@
 // tavily는 특정 사이트가 아니라 여러 블로그/뉴스를 긁어오는 검색 API라
 // domain이 없다 — 이 경우 파비콘 대신 이모지만 쓴다(faviconUrl이 null 반환).
 export const SOURCE_META = {
+  naver_blog: { label: '네이버 블로그 검색 요약', domain: 'blog.naver.com', emoji: '📝' },
   tavily: { label: '웹 검색', domain: null, emoji: '🌐' },
   youtube: { label: '유튜브', domain: 'youtube.com', emoji: '📺' },
   namuwiki: { label: '나무위키', domain: 'namu.wiki', emoji: '📖' },

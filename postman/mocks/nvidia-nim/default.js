@@ -2,7 +2,7 @@
 const http = require('http');
 let mode = 'success';
 let calls = [];
-const model = 'minimaxai/minimax-m3.1-flash';
+const model = 'nvidia/nemotron-3.5-super-vl-120b-a12b';
 http.createServer(async (req, res) => {
   let body = req.body;
   if (!body) {
@@ -26,6 +26,7 @@ http.createServer(async (req, res) => {
   }
   // 인증 헤더와 원문 프롬프트는 기록하지 않는다.
   calls.push({model:body.model, temperature:body.temperature, stream:body.stream, max_tokens:body.max_tokens, chat_template_kwargs:body.chat_template_kwargs});
+  if (mode === 'limited-once' && calls.length === 1) return json(429, {error:{message:'Rate limit exceeded'}});
   if (mode === 'unavailable') return json(503, {error: {message:'Service Unavailable'}});
   if (mode === 'retired') return json(410, {error:{message:'Model retired'}});
   const text = mode === 'empty' ? '' : '근거에 있는 설명입니다. [자료 1]';
@@ -34,7 +35,7 @@ http.createServer(async (req, res) => {
   for (const content of [text.slice(0,10), text.slice(10)]) {
     res.write('data: '+JSON.stringify({id:'test',object:'chat.completion.chunk',model,choices:[{index:0,delta:{role:'assistant',content},finish_reason:null}]})+'\n\n');
   }
-  res.write('data: '+JSON.stringify({id:'test',object:'chat.completion.chunk',model,choices:[{index:0,delta:{},finish_reason:mode === 'truncated' ? 'length' : 'stop'}]})+'\n\n');
+  if (mode !== 'unfinished') res.write('data: '+JSON.stringify({id:'test',object:'chat.completion.chunk',model,choices:[{index:0,delta:{},finish_reason:mode === 'truncated' ? 'length' : 'stop'}]})+'\n\n');
   res.write('data: '+JSON.stringify({id:'test',object:'chat.completion.chunk',model,choices:[],usage:{prompt_tokens:10,completion_tokens:20,total_tokens:30}})+'\n\n');
   res.end('data: [DONE]\n\n');
 }).listen(process.env.PORT || 4617);

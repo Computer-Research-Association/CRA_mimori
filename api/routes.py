@@ -197,7 +197,7 @@ def trend(keyword):
 
 # 프론트(frontend/src/api.js의 AVAILABLE_SOURCES)와 반드시 같은 집합을 유지해야
 # 한다 — 둘이 어긋나면 아래 "전체 선택 = 미필터" 정규화가 조용히 무력화된다.
-_ALL_ANALYZE_SOURCES = frozenset({"tavily", "youtube", "namuwiki", "natepann", "dcinside", "todayhumor"})
+_ALL_ANALYZE_SOURCES = frozenset({"tavily", "youtube", "namuwiki", "natepann", "dcinside", "todayhumor", "naver_blog"})
 
 
 def _analyze_job_id(keyword: str, sources: list[str] | None) -> str:

@@ -17,6 +17,7 @@ const SOURCE_LABELS = {
   namuwiki: '나무위키',
   natepann: '네이트판',
   todayhumor: '오늘의유머',
+  naver_blog: '네이버 블로그 검색 요약',
   youtube: '유튜브',
   tavily: 'Tavily 검색',
   duckduckgo: 'DuckDuckGo 검색',

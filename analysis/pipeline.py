@@ -7,6 +7,8 @@ import re
 import time
 from typing import Callable
 
+import requests
+
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from qdrant_client.http import models
 
@@ -190,7 +192,7 @@ def build_prompt(keyword: str, chunks: list[str], trend_info: str | None = None)
 # 상태 코드가 메시지에 "[529]"처럼 대괄호로 박혀 나오는 경우, 5xx 전부를 서버 쪽
 # 일시적 오류로 간주한다 (503 ResourceExhausted, 529 Overloaded 등 매번 새 코드가
 # 나올 수 있어 코드 목록을 하드코딩하는 대신 패턴으로 잡는다).
-_RETRYABLE_CODE_PATTERN = re.compile(r"\[(5\d{2})\]")
+_RETRYABLE_CODE_PATTERN = re.compile(r"\[(429|5\d{2})\]")
 _RETRYABLE_KEYWORDS = ("ResourceExhausted", "Service Unavailable", "Overloaded")
 
 # 504는 "서버가 혼잡해서 잠깐 못 받았다"가 아니라 "생성 자체가 5분 넘게 안
@@ -212,7 +214,21 @@ def _check_finish_reason(reason):
         raise IncompleteAnalysisError("분석이 정상적으로 완료되지 않았습니다.")
 
 
-def _is_retryable(error_message: str) -> bool:
+def _is_retryable(error_message: str | Exception) -> bool:
+    # SDK가 감싼 예외도 원인 체인을 확인한다. 인증/입력 오류는 재시도하지 않는다.
+    if isinstance(error_message, Exception):
+        status = getattr(getattr(error_message, "response", None), "status_code", None)
+        if status is not None:
+            return status == 429 or (500 <= status < 600 and status != 504)
+        error = error_message
+        seen = set()
+        while error is not None and id(error) not in seen:
+            seen.add(id(error))
+            if isinstance(error, (requests.exceptions.Timeout, requests.exceptions.ConnectionError,
+                                  requests.exceptions.ChunkedEncodingError)):
+                return True
+            error = error.__cause__ or error.__context__
+        error_message = str(error_message)
     code_match = _RETRYABLE_CODE_PATTERN.search(error_message)
     if code_match:
         return code_match.group(1) not in _NON_RETRYABLE_CODES
@@ -246,7 +262,7 @@ def invoke_with_retry(nvidia_client, messages, max_retries: int = 3, base_delay:
                 print(f"[analyze] 시도 {attempt}에서 성공")
             return response
         except Exception as e:
-            retryable = _is_retryable(str(e))
+            retryable = _is_retryable(e)
             print(f"[analyze] 시도 {attempt}/{max_retries} 실패: {e}")
 
             if not retryable:
@@ -271,6 +287,8 @@ def _stream_with_retry(
         try:
             print(f"[analyze] LLM 스트리밍 호출 시도 {attempt}/{max_retries}...")
             accumulated = ""
+            if attempt > 1:
+                on_chunk("")  # 재시도 중 이전 시도의 미완성 답변을 지운다.
             finish_reason = None
             for chunk in nvidia_client.stream(messages):
                 accumulated += chunk.content
@@ -281,12 +299,14 @@ def _stream_with_retry(
                     finish_reason = reason
             if not accumulated.strip():
                 raise ValueError("분석 답변을 받지 못했습니다. 잠시 후 다시 시도해 주세요.")
+            if finish_reason is None:
+                raise requests.exceptions.ChunkedEncodingError("스트림 정상 종료 신호 없이 연결이 끝났습니다.")
             _check_finish_reason(finish_reason)
             if attempt > 1:
                 print(f"[analyze] 시도 {attempt}에서 성공")
             return accumulated
         except Exception as e:
-            retryable = _is_retryable(str(e))
+            retryable = _is_retryable(e)
             print(f"[analyze] 스트리밍 시도 {attempt}/{max_retries} 실패: {e}")
 
             if not retryable:
