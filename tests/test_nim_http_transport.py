@@ -34,9 +34,9 @@ def test_실제_HTTP_스트림과_요약_설정이_전달된다(transport):
     sent = calls()
     assert len(sent) == 1
     assert sent[0]['stream'] is True
-    assert sent[0]['max_tokens'] == 8192
+    assert sent[0]['max_tokens'] == 16384
     assert sent[0]['temperature'] == 0.1
-    assert sent[0].get('chat_template_kwargs') in (None, {})
+    assert sent[0].get('chat_template_kwargs') == {'enable_thinking': False}
 
 
 def test_종료된모델_오류는_재시도하지_않는다(transport):

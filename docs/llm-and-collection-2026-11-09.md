@@ -34,12 +34,30 @@ LLM은 NVIDIA Build만 사용한다. 기존 NIM_KEY를 그대로 사용하며 �
 | qwen/qwen3-next-80b-a3b-instruct | HTTP 410 |
 | nvidia/nemotron-3-nano-30b-a3b | HTTP 410 |
 
+추가로 현재 목록에서 확인한 NVIDIA Build 모델을 같은 입력으로 생성했다.
+
+| NVIDIA 모델 | 첫 본문 / 전체 완료 | 결과 |
+| --- | --- | --- |
+| nvidia/nemotron-3.5-lightning-30b-a3b | 15.10초 / 16.65초 | stop, 한국어 설명 완료 |
+| z-ai/glm-5.3-flash | 31.49초 / 33.88초 | stop, 한국어 설명·자료 인용 완료 |
+| deepseek-ai/deepseek-v4.1-flash | 45.07초 | 읽기 타임아웃 |
+
+Lightning 실제 출력 일부:
+> 자료 1에 따르면, 럭키비키는 좋지 않은 상황도 긍정적으로 해석하는 표현이다.
+
+각 1회 짧은 요청이므로 이 결과만으로 상세 분석 모델을 교체하지 않았다.
+최신 dev의 NVIDIA Nemotron 3.5 Super 기본 모델, 16384 토큰 및 추론 비활성 설정을 유지한다.
+처음 MiniMax 실측은 최신 dev 반영 전 모델에 대한 결과다.
+
 ## 검증
 
 기존 로컬 Postman HTTP 대역을 재사용하여 실제 ChatNVIDIA SDK의 JSON/SSE,
 410, 503, 빈 답변, 길이 제한, 429 복구, 종료 신호 누락을 검증한다.
 모의 응답은 실제 모델 품질이나 NVIDIA의 장기 가용성을 보장하지 않는다.
 CLI 1.69.0은 status/simulation을 지원하지 않아 기존 mock run을 사용한다.
+
+검증 결과: Python 328개 통과(HTTP 별도 실행 8개), NVIDIA HTTP 전송 8개 통과,
+프론트엔드 115개 통과.
 
 ## 설정과 출처
 

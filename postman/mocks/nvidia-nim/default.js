@@ -2,7 +2,7 @@
 const http = require('http');
 let mode = 'success';
 let calls = [];
-const model = 'minimaxai/minimax-m3.1-flash';
+const model = 'nvidia/nemotron-3.5-super-vl-120b-a12b';
 http.createServer(async (req, res) => {
   let body = req.body;
   if (!body) {
